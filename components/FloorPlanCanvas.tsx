@@ -10,6 +10,7 @@ import type {
   Wall,
   Window as PlanWindow,
 } from "@/lib/types";
+import { FURNITURE_SVGS } from "@/lib/furniture-svgs";
 
 interface Props {
   plan: FloorPlan;
@@ -116,6 +117,8 @@ export function FloorPlanCanvas({
   // Track local "appear" progress per room id for the entrance animation.
   const appearRef = useRef<Record<string, number>>({});
   const rafRef = useRef<number | null>(null);
+  // Path2D cache so we don't reparse SVG path strings every frame.
+  const path2DCache = useRef<Map<string, Path2D>>(new Map());
 
   // Resize observer
   useEffect(() => {
@@ -647,13 +650,36 @@ export function FloorPlanCanvas({
     const liveRoomById: Record<string, { x: number; y: number; width: number; height: number }> = {};
     if (it.kind === "resize-wall") liveRoomById[it.roomId] = it.live;
 
+    const draggedFurnitureId = it.kind === "drag-furniture" ? it.id : null;
+
+    const liveRoom = (room: Room): Room => {
+      const live = liveRoomById[room.id];
+      return live ? { ...room, x: live.x, y: live.y, width: live.width, height: live.height } : room;
+    };
+
+    // Pass 1: floors and contents per-room (with proper clipping).
     for (const room of plan.rooms) {
       const t = appearRef.current[room.id] ?? 1;
-      const live = liveRoomById[room.id];
-      const r2: Room = live
-        ? { ...room, x: live.x, y: live.y, width: live.width, height: live.height }
-        : room;
-      drawRoom(ctx, r2, plan, t);
+      drawRoomContents(ctx, liveRoom(room), plan, t, draggedFurnitureId);
+    }
+
+    // Pass 2: walls drawn AFTER all room contents so wall lines never get
+    // overdrawn by floor patterns or labels of neighbors.
+    for (const room of plan.rooms) {
+      const t = appearRef.current[room.id] ?? 1;
+      drawRoomWalls(ctx, liveRoom(room), plan, t);
+    }
+
+    // Pass 3: doors and windows on top of walls.
+    for (const room of plan.rooms) {
+      const t = appearRef.current[room.id] ?? 1;
+      drawRoomOpenings(ctx, liveRoom(room), plan, t);
+    }
+
+    // Pass 4: dimensions / labels on top of everything.
+    for (const room of plan.rooms) {
+      const t = appearRef.current[room.id] ?? 1;
+      drawRoomLabelAndDims(ctx, liveRoom(room), t);
     }
 
     // Selection highlights
@@ -711,27 +737,44 @@ export function FloorPlanCanvas({
     ctx.restore();
   }
 
-  function drawRoom(ctx: CanvasRenderingContext2D, room: Room, planRef: FloorPlan, appear: number) {
+  function applyAppearTransform(ctx: CanvasRenderingContext2D, room: Room, appear: number) {
+    if (appear >= 1) return;
+    const x = room.x * PX_PER_M;
+    const y = room.y * PX_PER_M;
+    const w = room.width * PX_PER_M;
+    const h = room.height * PX_PER_M;
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const s = 0.85 + 0.15 * appear;
+    ctx.globalAlpha = appear;
+    ctx.translate(cx, cy);
+    ctx.scale(s, s);
+    ctx.translate(-cx, -cy);
+  }
+
+  // Pass 1: floors and furniture — strictly clipped to the room rectangle so
+  // patterns / svg overflow never bleed into adjacent rooms.
+  function drawRoomContents(
+    ctx: CanvasRenderingContext2D,
+    room: Room,
+    planRef: FloorPlan,
+    appear: number,
+    draggedFurnitureId: string | null
+  ) {
+    ctx.save();
+    applyAppearTransform(ctx, room, appear);
+
     const x = room.x * PX_PER_M;
     const y = room.y * PX_PER_M;
     const w = room.width * PX_PER_M;
     const h = room.height * PX_PER_M;
 
-    ctx.save();
-    if (appear < 1) {
-      ctx.globalAlpha = appear;
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const s = 0.85 + 0.15 * appear;
-      ctx.translate(cx, cy);
-      ctx.scale(s, s);
-      ctx.translate(-cx, -cy);
-    }
+    // Hard clip to room rectangle. Everything drawn until restore() is bounded.
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
 
-    // Floor fill — corridors get a much lighter, more uniform tint so they
-    // read as circulation, not "rooms".
     if (isCorridorRoom(room.name)) {
-      ctx.save();
       ctx.fillStyle = "rgba(198,169,98,0.10)";
       ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = "rgba(198,169,98,0.18)";
@@ -743,35 +786,48 @@ export function FloorPlanCanvas({
         ctx.lineTo(px + h, y + h);
       }
       ctx.stroke();
-      ctx.restore();
     } else {
       drawFloorPattern(ctx, x, y, w, h, room.floor);
     }
 
-    drawWalls(ctx, room, planRef);
+    for (const f of planRef.furniture.filter((ff) => ff.roomId === room.id)) {
+      const beingDragged = draggedFurnitureId === f.id;
+      drawFurniture(ctx, f, { faded: beingDragged });
+    }
 
+    ctx.restore();
+  }
+
+  // Pass 2: walls — drawn after all rooms' contents so neighboring floor
+  // patterns can't overdraw wall strokes.
+  function drawRoomWalls(ctx: CanvasRenderingContext2D, room: Room, planRef: FloorPlan, appear: number) {
+    ctx.save();
+    applyAppearTransform(ctx, room, appear);
+    drawWalls(ctx, room, planRef);
+    ctx.restore();
+  }
+
+  function drawRoomOpenings(ctx: CanvasRenderingContext2D, room: Room, planRef: FloorPlan, appear: number) {
+    ctx.save();
+    applyAppearTransform(ctx, room, appear);
     for (const d of planRef.doors.filter((d) => d.roomId === room.id)) {
       drawDoor(ctx, room, d);
     }
     for (const win of planRef.windows.filter((w) => w.roomId === room.id)) {
       drawWindow(ctx, room, win);
     }
-    for (const f of planRef.furniture.filter((f) => f.roomId === room.id)) {
-      // Skip the dragged furniture from solid render — ghost is drawn separately
-      const it = interactionRef.current;
-      const beingDragged = it.kind === "drag-furniture" && it.id === f.id;
-      drawFurniture(ctx, f, room, { faded: beingDragged });
-    }
+    ctx.restore();
+  }
 
-    // Label & dimensions — corridors get a smaller italic label and no
-    // dimension callouts (they'd clutter the plan).
+  function drawRoomLabelAndDims(ctx: CanvasRenderingContext2D, room: Room, appear: number) {
+    ctx.save();
+    applyAppearTransform(ctx, room, appear);
     if (isCorridorRoom(room.name)) {
       drawCorridorLabel(ctx, room);
     } else {
       drawRoomLabel(ctx, room);
       drawRoomDimensions(ctx, room);
     }
-
     ctx.restore();
   }
 
@@ -784,10 +840,6 @@ export function FloorPlanCanvas({
     floor: Room["floor"]
   ) {
     const c = FLOOR_COLORS[floor];
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x, y, w, h);
-    ctx.clip();
 
     ctx.fillStyle = c.base;
     ctx.fillRect(x, y, w, h);
@@ -797,31 +849,33 @@ export function FloorPlanCanvas({
 
     if (floor === "madeira") {
       const plank = PX_PER_M * 0.25;
-      for (let py = y; py < y + h; py += plank) {
+      // Inset by half a pixel so antialiasing on the boundary line never
+      // shows past the room rectangle.
+      for (let py = y + plank; py < y + h - 0.5; py += plank) {
         ctx.beginPath();
         ctx.moveTo(x, py);
         ctx.lineTo(x + w, py);
         ctx.stroke();
       }
       ctx.lineWidth = 0.7;
-      for (let py = y; py < y + h; py += plank) {
+      for (let py = y; py < y + h - 0.5; py += plank) {
         const offset = ((py * 13) % (PX_PER_M * 1.2)) + PX_PER_M * 0.6;
-        for (let px = x + offset; px < x + w; px += PX_PER_M * 1.2) {
+        for (let px = x + offset; px < x + w - 0.5; px += PX_PER_M * 1.2) {
           ctx.beginPath();
           ctx.moveTo(px, py);
-          ctx.lineTo(px, py + plank);
+          ctx.lineTo(px, Math.min(py + plank, y + h));
           ctx.stroke();
         }
       }
     } else if (floor === "porcelanato") {
       const tile = PX_PER_M * 0.6;
-      for (let px = x; px < x + w; px += tile) {
+      for (let px = x + tile; px < x + w - 0.5; px += tile) {
         ctx.beginPath();
         ctx.moveTo(px, y);
         ctx.lineTo(px, y + h);
         ctx.stroke();
       }
-      for (let py = y; py < y + h; py += tile) {
+      for (let py = y + tile; py < y + h - 0.5; py += tile) {
         ctx.beginPath();
         ctx.moveTo(x, py);
         ctx.lineTo(x + w, py);
@@ -829,13 +883,13 @@ export function FloorPlanCanvas({
       }
     } else if (floor === "ceramica") {
       const tile = PX_PER_M * 0.3;
-      for (let px = x; px < x + w; px += tile) {
+      for (let px = x + tile; px < x + w - 0.5; px += tile) {
         ctx.beginPath();
         ctx.moveTo(px, y);
         ctx.lineTo(px, y + h);
         ctx.stroke();
       }
-      for (let py = y; py < y + h; py += tile) {
+      for (let py = y + tile; py < y + h - 0.5; py += tile) {
         ctx.beginPath();
         ctx.moveTo(x, py);
         ctx.lineTo(x + w, py);
@@ -851,8 +905,6 @@ export function FloorPlanCanvas({
         ctx.stroke();
       }
     }
-
-    ctx.restore();
   }
 
   function drawWalls(ctx: CanvasRenderingContext2D, room: Room, planRef: FloorPlan) {
@@ -863,6 +915,7 @@ export function FloorPlanCanvas({
 
     ctx.save();
     ctx.strokeStyle = "#3a5a8c";
+    ctx.fillStyle = "#3a5a8c";
     ctx.lineWidth = WALL_PX;
     ctx.lineCap = "butt";
 
@@ -885,6 +938,15 @@ export function FloorPlanCanvas({
       const openings = collectOpenings(room, wseg, planRef);
       drawSegmentedLine(ctx, wseg.x1, wseg.y1, wseg.x2, wseg.y2, openings);
     }
+
+    // Filled corner squares: ensure clean L-joints and T-joints regardless of
+    // the surrounding rooms. A WALL_PX × WALL_PX square centered on each
+    // rectangle corner closes any gap left by butt-capped wall strokes.
+    const t = WALL_PX;
+    ctx.fillRect(x - t / 2, y - t / 2, t, t);
+    ctx.fillRect(x + w - t / 2, y - t / 2, t, t);
+    ctx.fillRect(x - t / 2, y + h - t / 2, t, t);
+    ctx.fillRect(x + w - t / 2, y + h - t / 2, t, t);
 
     ctx.restore();
   }
@@ -1017,19 +1079,25 @@ export function FloorPlanCanvas({
   }
 
   function drawDoor(ctx: CanvasRenderingContext2D, room: Room, door: Door) {
+    // Door swing/leaf is drawn ONLY for the room the door swings into.
+    // Both rooms in a shared doorway get a Door record so each room's wall is
+    // properly cut, but only the non-silent record renders the arc & leaf.
+    if (door.silent) return;
+
     const ep = wallEndpoints(room, door.wall);
     const lengthM = door.wall === "north" || door.wall === "south" ? room.width : room.height;
     const sizePx = door.size * PX_PER_M;
     const t = door.position;
     const cx = ep.x1 + (ep.x2 - ep.x1) * t;
     const cy = ep.y1 + (ep.y2 - ep.y1) * t;
-    const dx = (ep.x2 - ep.x1) / (lengthM * PX_PER_M);
-    const dy = (ep.y2 - ep.y1) / (lengthM * PX_PER_M);
+    const wallLenPx = lengthM * PX_PER_M;
+    const wdx = (ep.x2 - ep.x1) / wallLenPx;
+    const wdy = (ep.y2 - ep.y1) / wallLenPx;
     // hinge (sx,sy) and free-end (ex,ey) along the wall
-    const sx = cx - dx * (sizePx / 2);
-    const sy = cy - dy * (sizePx / 2);
-    const ex = cx + dx * (sizePx / 2);
-    const ey = cy + dy * (sizePx / 2);
+    const sx = cx - wdx * (sizePx / 2);
+    const sy = cy - wdy * (sizePx / 2);
+    const ex = cx + wdx * (sizePx / 2);
+    const ey = cy + wdy * (sizePx / 2);
 
     const inward = inwardNormal(door.wall);
     const FRAME = "rgba(20,24,38,0.95)";
@@ -1061,14 +1129,19 @@ export function FloorPlanCanvas({
     ctx.lineTo(leafEndX, leafEndY);
     ctx.stroke();
 
-    // Swing arc — dashed quarter circle from leaf-end back to wall position
+    // Swing arc — dashed quarter circle from leaf-end back to wall position.
+    // Pick the COUNTERCLOCKWISE flag based on the cross product of (wallDir × inwardDir):
+    // sign decides whether the 90° sweep is ccw or cw. Fixes inverted arcs on
+    // south & west walls.
     ctx.strokeStyle = ARC;
     ctx.lineWidth = 0.9;
     ctx.setLineDash([3, 2]);
     ctx.beginPath();
     const startAngle = Math.atan2(ey - sy, ex - sx);
     const endAngle = Math.atan2(inward.y, inward.x);
-    ctx.arc(sx, sy, sizePx, startAngle, endAngle, false);
+    const cross = wdx * inward.y - wdy * inward.x;
+    const counterclockwise = cross < 0;
+    ctx.arc(sx, sy, sizePx, startAngle, endAngle, counterclockwise);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -1216,7 +1289,6 @@ export function FloorPlanCanvas({
   function drawFurniture(
     ctx: CanvasRenderingContext2D,
     f: Furniture,
-    room: Room,
     opts?: { faded?: boolean }
   ) {
     const x = f.x * PX_PER_M;
@@ -1224,510 +1296,75 @@ export function FloorPlanCanvas({
     const w = f.width * PX_PER_M;
     const h = f.height * PX_PER_M;
 
-    // Architectural pen weights
-    const PEN_HEAVY = 1.7;
-    const PEN_MEDIUM = 1.0;
-    const PEN_FINE = 0.55;
-
-    const FILL_BODY = "rgba(245,243,236,0.92)";
-    const FILL_BODY_DARK = "rgba(60,55,48,0.88)";
-    const STROKE_HEAVY = "rgba(20,24,38,0.95)";
-    const STROKE_FINE = "rgba(40,52,80,0.6)";
-
-    const isKitchen = /cozinha/i.test(room.name);
-
     ctx.save();
     if (opts?.faded) ctx.globalAlpha = 0.35;
 
-    switch (f.type) {
-      case "sofa": {
-        const armW = Math.min(w * 0.1, 8);
-        const backH = Math.min(h * 0.32, 10);
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x, y, w, h, 5);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "rgba(225,220,210,0.95)";
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        roundRect(ctx, x + armW * 0.5, y + 1.5, w - armW, backH, 3);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "rgba(220,215,205,0.95)";
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        roundRect(ctx, x + 1, y + 1, armW, h - 2, 3);
-        ctx.fill();
-        ctx.stroke();
-        roundRect(ctx, x + w - armW - 1, y + 1, armW, h - 2, 3);
-        ctx.fill();
-        ctx.stroke();
-        const seatTop = y + backH + 2;
-        const seatBot = y + h - 2;
-        const seatL = x + armW + 1;
-        const seatR = x + w - armW - 1;
-        const seatW = seatR - seatL;
-        const cushions = w > 80 ? 3 : 2;
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_MEDIUM;
-        for (let i = 0; i < cushions; i++) {
-          const cx = seatL + (seatW / cushions) * i;
-          const cw = seatW / cushions - 1;
-          roundRect(ctx, cx + 1, seatTop, cw, seatBot - seatTop - 1, 3);
-          ctx.stroke();
+    const svg = FURNITURE_SVGS[f.type];
+    if (svg) {
+      const sx = w / svg.viewBox.w;
+      const sy = h / svg.viewBox.h;
+      // Average scale used to counter-scale stroke widths so pen weights stay
+      // roughly constant in screen pixels regardless of furniture size.
+      const sAvg = (sx + sy) / 2;
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(sx, sy);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      for (const p of svg.paths) {
+        const path = getPath2D(p.d);
+        if (!path) continue;
+        if (p.fill) {
+          ctx.fillStyle = p.fill;
+          ctx.fill(path);
         }
-        break;
-      }
-      case "bed": {
-        const isDouble = f.width >= 1.3;
-        const headH = Math.min(h * 0.07, 5);
-        ctx.fillStyle = "rgba(120,105,85,0.88)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, headH);
-        ctx.strokeRect(x, y, w, headH);
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x + 1.5, y + headH, w - 3, h - headH - 1, 4);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.92)";
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        const pillowH = Math.min((h - headH) * 0.18, 14);
-        const pillowGap = 3;
-        const pillowMarginX = w * 0.08;
-        if (isDouble) {
-          const pw = (w - 2 * pillowMarginX - pillowGap) / 2;
-          roundRect(ctx, x + pillowMarginX, y + headH + 3, pw, pillowH, 3);
-          ctx.fill();
-          ctx.stroke();
-          roundRect(ctx, x + pillowMarginX + pw + pillowGap, y + headH + 3, pw, pillowH, 3);
-          ctx.fill();
-          ctx.stroke();
+        if (p.noStroke) continue;
+        ctx.strokeStyle = p.stroke ?? "rgba(198,169,98,0.95)";
+        ctx.lineWidth = (p.weight ?? 1.0) / sAvg;
+        if (p.dash && p.dash.length) {
+          ctx.setLineDash(p.dash.map((v) => v / sAvg));
         } else {
-          roundRect(ctx, x + pillowMarginX, y + headH + 3, w - 2 * pillowMarginX, pillowH, 3);
-          ctx.fill();
-          ctx.stroke();
+          ctx.setLineDash([]);
         }
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        const foldY = y + h * 0.62;
-        ctx.beginPath();
-        ctx.moveTo(x + 3, foldY);
-        ctx.lineTo(x + w - 3, foldY);
-        ctx.moveTo(x + 3, foldY + 2);
-        ctx.lineTo(x + w - 3, foldY + 2);
-        ctx.stroke();
-        break;
+        ctx.stroke(path);
       }
-      case "table": {
-        const dining = w >= 40 && h >= 28;
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x, y, w, h, 3);
-        ctx.fill();
-        ctx.stroke();
-        if (dining) {
-          ctx.strokeStyle = STROKE_FINE;
-          ctx.fillStyle = "rgba(245,243,236,0.85)";
-          ctx.lineWidth = PEN_MEDIUM;
-          const chairR = Math.min(w, h) * 0.14;
-          const along = w > h ? "x" : "y";
-          if (along === "x") {
-            const seats = Math.max(2, Math.floor(w / (chairR * 3)));
-            for (let i = 0; i < seats; i++) {
-              const t = (i + 1) / (seats + 1);
-              const cx = x + w * t;
-              ctx.beginPath();
-              ctx.arc(cx, y - chairR - 1, chairR, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.stroke();
-              ctx.beginPath();
-              ctx.arc(cx, y + h + chairR + 1, chairR, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.stroke();
-            }
-            ctx.beginPath();
-            ctx.arc(x - chairR - 1, y + h / 2, chairR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(x + w + chairR + 1, y + h / 2, chairR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-          } else {
-            const seats = Math.max(2, Math.floor(h / (chairR * 3)));
-            for (let i = 0; i < seats; i++) {
-              const t = (i + 1) / (seats + 1);
-              const cy = y + h * t;
-              ctx.beginPath();
-              ctx.arc(x - chairR - 1, cy, chairR, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.stroke();
-              ctx.beginPath();
-              ctx.arc(x + w + chairR + 1, cy, chairR, 0, Math.PI * 2);
-              ctx.fill();
-              ctx.stroke();
-            }
-            ctx.beginPath();
-            ctx.arc(x + w / 2, y - chairR - 1, chairR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(x + w / 2, y + h + chairR + 1, chairR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-          }
-        }
-        break;
-      }
-      case "tv": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        const tvW = w * 0.7;
-        const tvH = Math.min(h * 0.45, 5);
-        const tvX = x + (w - tvW) / 2;
-        const tvY = y + (h - tvH) / 2;
-        ctx.fillStyle = "rgba(15,18,25,0.95)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.fillRect(tvX, tvY, tvW, tvH);
-        ctx.strokeRect(tvX, tvY, tvW, tvH);
-        ctx.fillStyle = "rgba(126,182,255,0.18)";
-        ctx.fillRect(tvX + 1, tvY + 1, tvW - 2, tvH - 2);
-        break;
-      }
-      case "sink": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x, y, w, h, 2);
-        ctx.fill();
-        ctx.stroke();
-        if (isKitchen || w > 30) {
-          const pad = Math.min(3, w * 0.06);
-          const innerW = (w - pad * 3) / 2;
-          const innerH = h - pad * 2;
-          ctx.strokeStyle = STROKE_HEAVY;
-          ctx.lineWidth = PEN_MEDIUM;
-          roundRect(ctx, x + pad, y + pad, innerW, innerH, 2);
-          ctx.stroke();
-          roundRect(ctx, x + pad * 2 + innerW, y + pad, innerW, innerH, 2);
-          ctx.stroke();
-          ctx.fillStyle = STROKE_HEAVY;
-          ctx.beginPath();
-          ctx.arc(x + pad + innerW / 2, y + pad + innerH / 2, 1.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(x + pad * 2 + innerW * 1.5, y + pad + innerH / 2, 1.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "rgba(120,130,150,0.9)";
-          ctx.strokeStyle = STROKE_HEAVY;
-          ctx.lineWidth = PEN_FINE;
-          ctx.beginPath();
-          ctx.arc(x + w / 2, y + 2.5, 1.6, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        } else {
-          ctx.strokeStyle = STROKE_HEAVY;
-          ctx.lineWidth = PEN_MEDIUM;
-          ctx.beginPath();
-          ctx.ellipse(x + w / 2, y + h * 0.55, w * 0.35, h * 0.32, 0, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillStyle = "rgba(120,130,150,0.9)";
-          ctx.strokeStyle = STROKE_HEAVY;
-          ctx.lineWidth = PEN_FINE;
-          ctx.beginPath();
-          ctx.arc(x + w / 2, y + 2.5, 1.4, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        }
-        break;
-      }
-      case "toilet": {
-        const tankH = h * 0.32;
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, tankH);
-        ctx.strokeRect(x, y, w, tankH);
-        ctx.fillStyle = FILL_BODY;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + tankH + (h - tankH) * 0.55, w * 0.42, (h - tankH) * 0.48, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + tankH + (h - tankH) * 0.58, w * 0.32, (h - tankH) * 0.36, 0, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.fillStyle = STROKE_FINE;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, y + tankH * 0.5, 0.9, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-      }
-      case "shower": {
-        ctx.fillStyle = "rgba(220,228,238,0.55)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.moveTo(x + 2, y + 2);
-        ctx.lineTo(x + w - 2, y + h - 2);
-        ctx.moveTo(x + w - 2, y + 2);
-        ctx.lineTo(x + 2, y + h - 2);
-        ctx.stroke();
-        ctx.fillStyle = "rgba(60,70,90,0.9)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, y + h / 2, 2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        const hd = Math.min(w, h) * 0.18;
-        ctx.fillStyle = "rgba(120,130,150,0.95)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.arc(x + w - hd, y + hd, hd * 0.55, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = "rgba(126,182,255,0.85)";
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.moveTo(x + 1, y + h);
-        ctx.lineTo(x + w - 1, y + h);
-        ctx.stroke();
-        break;
-      }
-      case "stove": {
-        ctx.fillStyle = FILL_BODY_DARK;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        const burnerR = Math.min(w, h) * 0.16;
-        for (let i = 0; i < 2; i++) {
-          for (let j = 0; j < 2; j++) {
-            const cx = x + w * (0.28 + 0.44 * i);
-            const cy = y + h * (0.28 + 0.44 * j);
-            ctx.strokeStyle = "rgba(220,215,205,0.9)";
-            ctx.lineWidth = PEN_MEDIUM;
-            ctx.fillStyle = "rgba(40,40,40,0.9)";
-            ctx.beginPath();
-            ctx.arc(cx, cy, burnerR, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.strokeStyle = "rgba(220,215,205,0.7)";
-            ctx.lineWidth = PEN_FINE;
-            ctx.beginPath();
-            ctx.arc(cx, cy, burnerR * 0.55, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-        }
-        break;
-      }
-      case "fridge": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.moveTo(x, y + h * 0.35);
-        ctx.lineTo(x + w, y + h * 0.35);
-        ctx.stroke();
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.beginPath();
-        ctx.moveTo(x + w - 3, y + h * 0.5);
-        ctx.lineTo(x + w - 3, y + h * 0.92);
-        ctx.stroke();
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.moveTo(x + w - 3, y + h * 0.08);
-        ctx.lineTo(x + w - 3, y + h * 0.28);
-        ctx.stroke();
-        break;
-      }
-      case "counter": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
-        break;
-      }
-      case "island": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x, y, w, h, 4);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        roundRect(ctx, x + 2, y + 2, w - 4, h - 4, 3);
-        ctx.stroke();
-        const stoolR = Math.min(w, h) * 0.12;
-        const numStools = Math.max(2, Math.floor(w / (stoolR * 3.5)));
-        ctx.fillStyle = "rgba(140,125,100,0.9)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        for (let i = 0; i < numStools; i++) {
-          const t = (i + 1) / (numStools + 1);
-          const cx = x + w * t;
-          const cy = y + h + stoolR + 1;
-          ctx.beginPath();
-          ctx.arc(cx, cy, stoolR, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        }
-        break;
-      }
-      case "wardrobe": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.moveTo(x + 1, y + 2);
-        ctx.lineTo(x + w - 1, y + 2);
-        ctx.moveTo(x + 1, y + h - 2);
-        ctx.lineTo(x + w - 1, y + h - 2);
-        ctx.stroke();
-        const segments = Math.max(2, Math.floor(w / 24));
-        ctx.lineWidth = PEN_FINE;
-        for (let i = 0; i < segments; i++) {
-          const sx = x + (w / segments) * i + 2;
-          const ex = x + (w / segments) * (i + 1) - 2;
-          ctx.beginPath();
-          ctx.moveTo(sx, y + h - 3);
-          ctx.lineTo(ex, y + 3);
-          ctx.stroke();
-        }
-        break;
-      }
-      case "desk": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        roundRect(ctx, x, y, w, h, 2);
-        ctx.fill();
-        ctx.stroke();
-        const chairR = Math.min(w, h) * 0.28;
-        ctx.fillStyle = "rgba(220,215,205,0.92)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, y + h + chairR + 1, chairR, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, y + h + chairR + 1, chairR * 0.7, Math.PI, 0, false);
-        ctx.stroke();
-        break;
-      }
-      case "chair": {
-        ctx.fillStyle = "rgba(245,243,236,0.9)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        roundRect(ctx, x, y, w, h, 3);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.arc(x + w / 2, y + h, w * 0.45, Math.PI, 0, false);
-        ctx.stroke();
-        break;
-      }
-      case "bookshelf": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        const shelves = 4;
-        for (let i = 1; i < shelves; i++) {
-          ctx.beginPath();
-          ctx.moveTo(x + 1, y + (h / shelves) * i);
-          ctx.lineTo(x + w - 1, y + (h / shelves) * i);
-          ctx.stroke();
-        }
-        break;
-      }
-      case "washing_machine": {
-        ctx.fillStyle = FILL_BODY;
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_HEAVY;
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeRect(x, y, w, h);
-        ctx.fillStyle = "rgba(220,215,205,0.95)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        const panelH = Math.min(h * 0.16, 6);
-        ctx.fillRect(x, y, w, panelH);
-        ctx.strokeRect(x, y, w, panelH);
-        ctx.fillStyle = STROKE_HEAVY;
-        ctx.beginPath();
-        ctx.arc(x + w * 0.85, y + panelH / 2, panelH * 0.3, 0, Math.PI * 2);
-        ctx.fill();
-        const cx = x + w / 2;
-        const cy = y + panelH + (h - panelH) / 2;
-        const r = Math.min(w, h - panelH) * 0.42;
-        ctx.fillStyle = "rgba(220,228,238,0.6)";
-        ctx.strokeStyle = STROKE_HEAVY;
-        ctx.lineWidth = PEN_MEDIUM;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        ctx.strokeStyle = STROKE_FINE;
-        ctx.lineWidth = PEN_FINE;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r * 0.7, 0, Math.PI * 2);
-        ctx.stroke();
-        break;
-      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    } else {
+      // Fallback: simple outlined rectangle for unknown types.
+      ctx.fillStyle = "rgba(28,38,66,0.78)";
+      ctx.strokeStyle = "rgba(198,169,98,0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
     }
 
-    // Subtle label inside or below
-    ctx.font = "500 9px ui-sans-serif, system-ui";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    if (f.type === "stove" || f.type === "tv" || f.type === "washing_machine" || f.type === "fridge") {
-      ctx.fillStyle = "rgba(245,243,236,0.85)";
-      if (w > 30 && h > 18) ctx.fillText(f.label, x + w / 2, y + h / 2);
-    } else if (w > 50 && h > 26 && f.type !== "shower" && f.type !== "toilet" && f.type !== "table") {
-      ctx.fillStyle = "rgba(40,52,80,0.7)";
-      ctx.fillText(f.label, x + w / 2, y + h - 7);
+    // Label sits below the furniture symbol so it never overlaps SVG details.
+    if (w > 28 && h > 14) {
+      ctx.fillStyle = "rgba(230,233,240,0.92)";
+      ctx.font = "500 9px ui-sans-serif, system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(f.label, x + w / 2, y + h - 3);
     }
 
     ctx.restore();
+  }
+
+  function getPath2D(d: string): Path2D | null {
+    const cache = path2DCache.current;
+    let p = cache.get(d);
+    if (!p) {
+      try {
+        p = new Path2D(d);
+      } catch {
+        return null;
+      }
+      cache.set(d, p);
+    }
+    return p;
   }
 
   function drawGhostFurniture(ctx: CanvasRenderingContext2D, f: Furniture) {
@@ -1877,21 +1514,6 @@ export function FloorPlanCanvas({
       ctx.strokeRect(x - 1, y - 1, w + 2, h + 2);
       ctx.restore();
     }
-  }
-
-  function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-    const rr = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.lineTo(x + w - rr, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
-    ctx.lineTo(x + w, y + h - rr);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-    ctx.lineTo(x + rr, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
-    ctx.lineTo(x, y + rr);
-    ctx.quadraticCurveTo(x, y, x + rr, y);
-    ctx.closePath();
   }
 
   function drawFooter(ctx: CanvasRenderingContext2D) {

@@ -18,7 +18,6 @@ import type {
 let idCounter = 0;
 export function nextId(prefix: string): string {
   idCounter += 1;
-  // include time so client/server collisions are unlikely on remount
   return `${prefix}_${Date.now().toString(36)}_${idCounter}`;
 }
 
@@ -31,12 +30,18 @@ function findRoom(plan: FloorPlan, name: string): Room | undefined {
   return plan.rooms.find((r) => r.name.trim().toLowerCase() === norm);
 }
 
+function clamp(n: number, mn: number, mx: number): number {
+  return Math.max(mn, Math.min(mx, n));
+}
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
 function bestSpot(plan: FloorPlan, w: number, h: number): { x: number; y: number } {
-  // Place new room next to existing ones, scanning a coarse grid for non-overlap.
   if (plan.rooms.length === 0) return { x: 0, y: 0 };
   const margin = 0;
   const step = 0.5;
-  // Try rightward, then downward
   const minX = Math.min(...plan.rooms.map((r) => r.x));
   const maxX = Math.max(...plan.rooms.map((r) => r.x + r.width));
   const minY = Math.min(...plan.rooms.map((r) => r.y));
@@ -47,7 +52,6 @@ function bestSpot(plan: FloorPlan, w: number, h: number): { x: number; y: number
     { x: minX, y: maxY + margin },
     { x: maxX + margin, y: maxY + margin },
   ];
-  // Grid scan within bounding box if any of the above overlap
   for (let y = minY; y <= maxY + h; y += step) {
     for (let x = minX; x <= maxX + w; x += step) {
       candidates.push({ x, y });
@@ -56,7 +60,6 @@ function bestSpot(plan: FloorPlan, w: number, h: number): { x: number; y: number
   for (const c of candidates) {
     if (!overlapsAny(plan, c.x, c.y, w, h)) return c;
   }
-  // fallback: extend right
   return { x: maxX + margin, y: minY };
 }
 
@@ -68,19 +71,20 @@ function overlapsAny(plan: FloorPlan, x: number, y: number, w: number, h: number
 }
 
 // ---------- Default furniture sizes (meters) ----------
+// Brazilian / Neufert standard plan dimensions.
 
 const FURN_SIZE: Record<FurnitureType, { w: number; h: number }> = {
-  sofa: { w: 2.0, h: 0.9 },
-  bed: { w: 1.6, h: 2.0 },
-  table: { w: 1.2, h: 0.8 },
-  tv: { w: 1.6, h: 0.4 },
+  sofa: { w: 2.1, h: 0.9 },
+  bed: { w: 1.6, h: 2.0 }, // queen / casal
+  table: { w: 1.4, h: 0.9 }, // dining table 4-6 people
+  tv: { w: 1.6, h: 0.45 }, // TV rack
   sink: { w: 0.6, h: 0.45 },
-  toilet: { w: 0.4, h: 0.6 },
+  toilet: { w: 0.4, h: 0.65 },
   shower: { w: 0.9, h: 0.9 },
   stove: { w: 0.6, h: 0.6 },
   fridge: { w: 0.7, h: 0.7 },
   counter: { w: 1.5, h: 0.6 },
-  island: { w: 1.5, h: 0.9 },
+  island: { w: 1.6, h: 0.9 },
   wardrobe: { w: 2.0, h: 0.6 },
   desk: { w: 1.2, h: 0.6 },
   chair: { w: 0.5, h: 0.5 },
@@ -104,7 +108,7 @@ const FURN_LABEL_PT: Record<FurnitureType, string> = {
   desk: "Escrivaninha",
   chair: "Cadeira",
   bookshelf: "Estante",
-  washing_machine: "Máquina de Lavar",
+  washing_machine: "Máq. Lavar",
 };
 
 export function defaultFurnitureSize(t: FurnitureType): { w: number; h: number } {
@@ -167,8 +171,7 @@ export function applyTool<T extends ToolName>(
 function defaultFloorFor(name: string): FloorMaterial {
   const n = name.toLowerCase();
   if (/(banheiro|lavabo)/.test(n)) return "porcelanato";
-  if (/(cozinha|área|servico|serviço|lavanderia)/.test(n)) return "porcelanato";
-  if (/(corredor|hall|circula)/.test(n)) return "madeira";
+  if (/(cozinha|área|servico|serviço|lavanderia|corredor|hall|circula)/.test(n)) return "porcelanato";
   return "madeira";
 }
 
@@ -238,10 +241,6 @@ function doAddWindow(plan: FloorPlan, input: ToolInputs["add_window"]): ApplyRes
   return { ok: true, message: `Janela adicionada em '${room.name}'.` };
 }
 
-function clamp01(n: number): number {
-  return Math.max(0, Math.min(1, n));
-}
-
 function doAddFurniture(plan: FloorPlan, input: ToolInputs["add_furniture"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
@@ -250,8 +249,8 @@ function doAddFurniture(plan: FloorPlan, input: ToolInputs["add_furniture"]): Ap
   if (!size) return { ok: false, message: `Tipo de móvel desconhecido: ${t}` };
   const rx = clamp01(input.relative_x ?? 0.5);
   const ry = clamp01(input.relative_y ?? 0.5);
-  const fx = room.x + rx * (room.width - size.w);
-  const fy = room.y + ry * (room.height - size.h);
+  const fx = room.x + rx * Math.max(0, room.width - size.w);
+  const fy = room.y + ry * Math.max(0, room.height - size.h);
   const item: Furniture = {
     id: nextId("furn"),
     roomId: room.id,
@@ -294,235 +293,274 @@ function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): 
 }
 
 // ---------- Apartment layout generator ----------
+//
+// Topology (Brazilian residential pattern):
+//
+//   +--leftW (Sala/Hall/Bedrooms)--+--colW (Cozinha+AS)--+
+//   |   Sala             topH      |   Cozinha    cozH    |
+//   +-----------------------------+                       |
+//   |   Hall (only if useHall)    |                       |
+//   |                   hallH      |                       |
+//   +-----------------------------+----------------------+
+//   |   Quarto / Suite / Banh.    |   AS         aserH    |
+//   |                bottomH       |                       |
+//   +------------------------------+-----------------------+
+//
+// - Sala/Hall/Bedrooms occupy the LEFT column (multiple rows).
+// - Cozinha + Área de Serviço form a vertical SERVICE column on the right.
+// - The Hall (when present) is a real labeled room — never an implicit corridor.
+//   It is bounded EAST by the kitchen wall, so it is NOT wall-to-wall.
+// - Bedroom doors face NORTH into the Hall (or directly into Sala for small apts).
+// - Kitchen is "americana" (open) via a wide opening on Sala's east wall.
+
+function pushRoom(
+  plan: FloorPlan,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  floor: FloorMaterial
+): Room {
+  const r: Room = {
+    id: nextId("room"),
+    name,
+    x,
+    y,
+    width: w,
+    height: h,
+    floor,
+    appear: 0,
+  };
+  plan.rooms.push(r);
+  return r;
+}
+
+// Push a doorway shared by two adjacent rooms. Both rooms get a Door so each
+// room's wall is properly cut, but only the room the door swings INTO renders
+// the arc/leaf (so the swing isn't drawn twice).
+function pushSharedDoor(
+  plan: FloorPlan,
+  roomA: Room,
+  wallA: Wall,
+  roomB: Room,
+  wallB: Wall,
+  worldPos: number,
+  size: number,
+  swingsInto: "A" | "B"
+): void {
+  const compute = (room: Room, wall: Wall) => {
+    const isHor = wall === "north" || wall === "south";
+    const length = isHor ? room.width : room.height;
+    const start = isHor ? room.x : room.y;
+    return clamp01((worldPos - start) / length);
+  };
+  plan.doors.push({
+    id: nextId("door"),
+    roomId: roomA.id,
+    wall: wallA,
+    position: compute(roomA, wallA),
+    size,
+    silent: swingsInto !== "A",
+  });
+  plan.doors.push({
+    id: nextId("door"),
+    roomId: roomB.id,
+    wall: wallB,
+    position: compute(roomB, wallB),
+    size,
+    silent: swingsInto !== "B",
+  });
+}
 
 function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_layout"]): ApplyResult {
-  const { total_area, num_bedrooms, num_bathrooms } = input;
+  const total_area = input.total_area;
   if (!total_area || total_area < 20) {
-    return { ok: false, message: "Área total muito pequena." };
+    return { ok: false, message: "Área total muito pequena (mín. 20m²)." };
   }
-  // Clear current plan first
   plan.rooms.length = 0;
   plan.doors.length = 0;
   plan.windows.length = 0;
   plan.furniture.length = 0;
 
-  // Allocate areas (m²) heuristically.
-  const bath = Math.min(num_bathrooms, 3);
-  const bedr = Math.max(1, Math.min(num_bedrooms, 4));
+  const bedr = Math.max(1, Math.min(input.num_bedrooms ?? 1, 4));
+  const bath = Math.max(1, Math.min(input.num_bathrooms ?? 1, 3));
 
-  // Rough fractions of total area
-  const livingDiningArea = Math.max(12, total_area * 0.28);
-  const kitchenArea = Math.max(6, total_area * 0.12);
-  const bathArea = bath > 0 ? Math.max(3, total_area * 0.05) : 0;
-  const suiteBathArea = bedr >= 1 && bath >= 2 ? Math.max(4, total_area * 0.05) : 0;
-  const laundryArea = Math.max(2.5, total_area * 0.04);
-  const masterBedArea = Math.max(10, total_area * 0.14);
-  const otherBedArea = bedr > 1 ? Math.max(8, total_area * 0.1) : 0;
-  // hallway is implicit
+  // Hall is added when:
+  //  - There are 3+ bedrooms (always needs a hall), OR
+  //  - 2 bedrooms with enough total area (≥80m²).
+  // Smaller apartments (≤70m² 2BR, all 1BR) skip the hall — bedroom doors open
+  // directly into the social area, matching Brazilian compact-apt layouts.
+  const useHall = bedr >= 3 || (bedr >= 2 && total_area >= 80);
 
-  // Choose a target overall bounding box: aspect ~4:3
-  const w = Math.max(7, Math.sqrt(total_area * 1.33));
-  const h = total_area / w;
+  // Target room areas (m²) — heuristics tuned to Brazilian residential standards.
+  const sA = Math.max(14, total_area * 0.25); // sala+jantar
+  const cA = Math.max(6, total_area * 0.10); // cozinha
+  const asA = Math.max(2.5, total_area * 0.04); // área de serviço
+  const mA = Math.max(11, total_area * 0.16); // master bedroom
+  const oA = bedr > 1 ? Math.max(8, total_area * 0.09) : 0; // other bedrooms
+  const sBA = bath >= 2 ? Math.max(3.2, total_area * 0.045) : 0; // suite bath
+  const socBA = bath >= 1 ? Math.max(3, total_area * 0.04) : 0; // social bath
 
-  // Layout strategy:
-  // - Top row: Sala+Jantar (left, big), Cozinha (right), Lavanderia (far right small)
-  // - Bottom row: Quarto principal (left), Banheiro suíte, Quarto 2..N, Banheiro social
-  // We compute widths to fit the bounding box approximately.
+  // Row heights
+  const bottomH = clamp(Math.sqrt(Math.max(mA, oA) * 0.85), 3.0, 4.2);
+  const topH = clamp(Math.sqrt(sA * 0.55), 3.4, 4.5);
+  const hallH = useHall ? 1.4 : 0;
+  const totalH = topH + hallH + bottomH;
 
-  const topH = Math.max(4, Math.min(h * 0.5, Math.sqrt(livingDiningArea * 1.2)));
-  const bottomH = Math.max(3.5, h - topH);
-
-  // Top row widths
-  const livingW = Math.max(4, livingDiningArea / topH);
-  const kitchenW = Math.max(2.5, kitchenArea / topH);
-  const laundryW = Math.max(1.6, laundryArea / topH);
-  const topTotalW = livingW + kitchenW + laundryW;
-
-  // Bottom row: master bed + suite bath + (other bedrooms) + social bath
-  const masterW = Math.max(3, masterBedArea / bottomH);
-  const suiteBathW = suiteBathArea > 0 ? Math.max(1.6, suiteBathArea / bottomH) : 0;
-  const otherBedCount = Math.max(0, bedr - 1);
-  const otherBedW = otherBedCount > 0 ? Math.max(2.8, otherBedArea / bottomH) : 0;
-  const socialBathW = bath > (suiteBathArea > 0 ? 1 : 0) ? Math.max(1.6, bathArea / bottomH) : 0;
-  const bottomTotalW = masterW + suiteBathW + otherBedW * otherBedCount + socialBathW;
-
-  // Use the wider row as the canvas width and stretch the other to match.
-  const canvasW = Math.max(topTotalW, bottomTotalW);
-
-  // Stretch top
-  const topScale = canvasW / topTotalW;
-  const topRow: { name: string; w: number; floor: FloorMaterial }[] = [
-    { name: "Sala", w: livingW * topScale, floor: "madeira" },
-    { name: "Cozinha", w: kitchenW * topScale, floor: "porcelanato" },
-    { name: "Área de Serviço", w: laundryW * topScale, floor: "porcelanato" },
-  ];
-
-  const bottomRow: { name: string; w: number; floor: FloorMaterial }[] = [];
-  bottomRow.push({ name: "Suíte Master", w: masterW * (canvasW / bottomTotalW), floor: "madeira" });
-  if (suiteBathW > 0)
-    bottomRow.push({
-      name: "Banheiro Suíte",
-      w: suiteBathW * (canvasW / bottomTotalW),
-      floor: "porcelanato",
-    });
-  for (let i = 0; i < otherBedCount; i++) {
-    bottomRow.push({
-      name: otherBedCount === 1 ? "Quarto" : `Quarto ${i + 2}`,
-      w: otherBedW * (canvasW / bottomTotalW),
+  // Bedroom block cells. Min widths reflect realistic minimums (Neufert).
+  type Cell = { name: string; area: number; minW: number; floor: FloorMaterial };
+  const cells: Cell[] = [];
+  cells.push({
+    name: bedr === 1 ? "Quarto" : "Suíte",
+    area: mA,
+    minW: 2.7,
+    floor: "madeira",
+  });
+  if (sBA > 0) {
+    cells.push({ name: "Banheiro Suíte", area: sBA, minW: 1.4, floor: "porcelanato" });
+  }
+  for (let i = 0; i < bedr - 1; i++) {
+    cells.push({
+      name: bedr === 2 ? "Quarto 2" : `Quarto ${i + 2}`,
+      area: oA,
+      minW: 2.5,
       floor: "madeira",
     });
   }
-  if (socialBathW > 0)
-    bottomRow.push({
-      name: "Banheiro Social",
-      w: socialBathW * (canvasW / bottomTotalW),
-      floor: "porcelanato",
-    });
-
-  // Place rooms — top (social) row at y=0, then a corridor strip,
-  // then the bottom (intimate) row. Bedrooms have to access the corridor,
-  // not the social area directly — that's how a real apartment flows.
-  const corridorH = 1.2;
-  // Only insert corridor when there are private rooms that need it.
-  const hasIntimateRow = bottomRow.length > 0;
-  // Shrink the bottom row's height so total height stays ≈ h.
-  const adjBottomH = hasIntimateRow ? Math.max(3, bottomH - corridorH * 0.5) : bottomH;
-  const adjTopH = hasIntimateRow ? Math.max(3.5, topH - corridorH * 0.5) : topH;
-
-  let cursorX = 0;
-  for (const r of topRow) {
-    const room: Room = {
-      id: nextId("room"),
-      name: r.name,
-      x: cursorX,
-      y: 0,
-      width: r.w,
-      height: adjTopH,
-      floor: r.floor,
-      appear: 0,
-    };
-    plan.rooms.push(room);
-    cursorX += r.w;
+  // Add social bath if there's a bathroom not already covered by the suite.
+  if (socBA > 0 && bath > (sBA > 0 ? 1 : 0)) {
+    cells.push({ name: "Banheiro Social", area: socBA, minW: 1.4, floor: "porcelanato" });
   }
 
-  let corridor: Room | undefined;
-  if (hasIntimateRow) {
-    // The corridor spans the full width of the intimate row, so every private
-    // room can open onto it. It's narrow (1.2m — Neufert minimum).
-    corridor = {
-      id: nextId("room"),
-      name: "Corredor",
-      x: 0,
-      y: adjTopH,
-      width: canvasW,
-      height: corridorH,
-      floor: "madeira",
-      appear: 0,
-    };
-    plan.rooms.push(corridor);
+  const bWidths = cells.map((c) => Math.max(c.minW, c.area / bottomH));
+  const leftW = bWidths.reduce((a, b) => a + b, 0);
+
+  // Right column (Cozinha + Área de Serviço)
+  const colW = clamp(Math.sqrt((cA + asA) * 0.85), 2.4, 3.6);
+  // AS sits at the bottom of the right column at the same y as the bedroom row.
+  // Cozinha fills the rest above it.
+  let aserH = clamp(asA / colW, 1.2, Math.min(2.4, bottomH));
+  let cozH = totalH - aserH;
+  if (cozH < 3.0) {
+    cozH = 3.0;
+    aserH = totalH - cozH;
   }
 
-  cursorX = 0;
-  const bottomY = adjTopH + (hasIntimateRow ? corridorH : 0);
-  for (const r of bottomRow) {
-    const room: Room = {
-      id: nextId("room"),
-      name: r.name,
-      x: cursorX,
-      y: bottomY,
-      width: r.w,
-      height: adjBottomH,
-      floor: r.floor,
-      appear: 0,
-    };
-    plan.rooms.push(room);
-    cursorX += r.w;
+  // Place top-left: Sala
+  const sala = pushRoom(plan, "Sala", 0, 0, leftW, topH, "madeira");
+
+  // Hall (when needed)
+  let hall: Room | undefined;
+  if (useHall) {
+    hall = pushRoom(plan, "Hall", 0, topH, leftW, hallH, "porcelanato");
   }
 
-  // Doors: each room gets a door connecting to a sensible neighbor.
-  // Sala has the entrance door (south wall). Cozinha is "americana" -> open to sala (we'll add a door between).
-  // Each bedroom/bathroom has a door to the top row (its north wall).
-  const sala = plan.rooms.find((r) => r.name === "Sala");
-  const cozinha = plan.rooms.find((r) => r.name === "Cozinha");
-  const areaServ = plan.rooms.find((r) => r.name === "Área de Serviço");
+  // Right column: Cozinha then Área de Serviço
+  const cozinha = pushRoom(plan, "Cozinha", leftW, 0, colW, cozH, "porcelanato");
+  const aserv = pushRoom(plan, "Área de Serviço", leftW, cozH, colW, aserH, "porcelanato");
 
-  if (sala) {
-    // Entrance door — on the exterior west wall (south borders the corridor
-    // when there are bedrooms, so we can't put it there).
-    plan.doors.push({
-      id: nextId("door"),
-      roomId: sala.id,
-      wall: hasIntimateRow ? "west" : "south",
-      position: hasIntimateRow ? 0.6 : 0.15,
-      size: 1.0,
-    });
-    // Big sala window — exterior north wall, facing the sun (hemisphere sul)
+  // Bottom row: bedrooms + bathrooms
+  let cx = 0;
+  const cy = topH + hallH;
+  const bottomRoomRefs: Room[] = [];
+  for (let i = 0; i < cells.length; i++) {
+    const r = pushRoom(plan, cells[i].name, cx, cy, bWidths[i], bottomH, cells[i].floor);
+    bottomRoomRefs.push(r);
+    cx += bWidths[i];
+  }
+
+  // ---------- Doors and windows ----------
+
+  // Sala: entrance door on north (apartment door); large social window on north;
+  // optional secondary window on west (external wall).
+  plan.doors.push({
+    id: nextId("door"),
+    roomId: sala.id,
+    wall: "north",
+    position: 0.18,
+    size: 0.95,
+  });
+  plan.windows.push({
+    id: nextId("win"),
+    roomId: sala.id,
+    wall: "north",
+    position: 0.7,
+    size: Math.min(2.2, sala.width * 0.4),
+  });
+  if (sala.height >= 3.5) {
     plan.windows.push({
       id: nextId("win"),
       roomId: sala.id,
-      wall: "north",
-      position: 0.5,
-      size: Math.min(2.4, sala.width * 0.5),
-    });
-  }
-  if (cozinha && sala) {
-    // door between sala and cozinha (cozinha west wall)
-    plan.doors.push({
-      id: nextId("door"),
-      roomId: cozinha.id,
       wall: "west",
       position: 0.5,
-      size: 1.2,
-    });
-  }
-  if (areaServ && cozinha) {
-    plan.doors.push({
-      id: nextId("door"),
-      roomId: areaServ.id,
-      wall: "west",
-      position: 0.5,
-      size: 0.8,
+      size: Math.min(1.6, sala.height * 0.4),
     });
   }
 
-  // Corridor — gets a door connecting it to the social area (sala/cozinha).
-  // The door is on the north wall, near the sala, so the user walks from the
-  // living area into the corridor and from there into the bedrooms.
-  if (corridor) {
-    plan.doors.push({
-      id: nextId("door"),
-      roomId: corridor.id,
-      wall: "north",
-      position: sala ? Math.min(0.9, (sala.x + sala.width * 0.85) / corridor.width) : 0.5,
-      size: 1.0,
-    });
+  // Sala ↔ Cozinha (open kitchen): wide opening; "swings" into Sala.
+  {
+    const overlapStart = Math.max(sala.y, cozinha.y);
+    const overlapEnd = Math.min(sala.y + sala.height, cozinha.y + cozinha.height);
+    const midY = (overlapStart + overlapEnd) / 2;
+    pushSharedDoor(plan, sala, "east", cozinha, "west", midY, 1.6, "A");
   }
 
-  // Bottom-row rooms: each opens onto the corridor (north wall door).
-  for (const r of plan.rooms.filter((rr) => rr.y >= bottomY - 0.001 && !isCorridor(rr.name))) {
-    plan.doors.push({
-      id: nextId("door"),
-      roomId: r.id,
-      wall: "north",
-      position: 0.5,
-      size: r.name.toLowerCase().includes("banheiro") ? 0.7 : 0.9,
-    });
-    // Window on south wall for bedrooms (south = exterior wall)
-    if (r.name.toLowerCase().includes("quarto") || r.name.toLowerCase().includes("suíte")) {
+  // Cozinha ↔ Área de Serviço (small service door)
+  {
+    const midX = aserv.x + aserv.width / 2;
+    pushSharedDoor(plan, cozinha, "south", aserv, "north", midX, 0.8, "B");
+  }
+  // Service window on AS east wall (external)
+  plan.windows.push({
+    id: nextId("win"),
+    roomId: aserv.id,
+    wall: "east",
+    position: 0.5,
+    size: Math.min(0.8, aserv.height * 0.5),
+  });
+
+  // Sala ↔ Hall (only when hall exists). Door near the right edge of Sala so
+  // entering the apartment leads naturally toward the intimate zone.
+  if (hall) {
+    const midX = sala.x + sala.width * 0.75;
+    pushSharedDoor(plan, sala, "south", hall, "north", midX, 0.9, "B");
+  }
+
+  // Bedroom + bathroom doors face NORTH into Hall (or Sala if no hall).
+  for (const r of bottomRoomRefs) {
+    const isBath = /banheiro/i.test(r.name);
+    const doorSize = isBath ? 0.7 : 0.85;
+    const worldX = r.x + r.width / 2;
+
+    if (hall) {
+      pushSharedDoor(plan, hall, "south", r, "north", worldX, doorSize, "B");
+    } else {
+      // No hall: door connects to whichever top-row room is directly above.
+      // For small apts the bedroom block fits within Sala, so doors land on Sala.
+      let upRoom: Room | undefined;
+      if (worldX <= sala.x + sala.width) upRoom = sala;
+      else upRoom = cozinha; // fallback (rare)
+      const upWall: Wall = "south";
+      pushSharedDoor(plan, upRoom, upWall, r, "north", worldX, doorSize, "B");
+    }
+
+    // Window on south wall (external facade)
+    if (/quarto|suíte|suite/i.test(r.name)) {
       plan.windows.push({
         id: nextId("win"),
         roomId: r.id,
         wall: "south",
         position: 0.5,
-        size: Math.min(1.5, r.width * 0.4),
+        size: Math.min(1.5, r.width * 0.5),
       });
-    } else if (r.name.toLowerCase().includes("banheiro")) {
+    } else if (isBath) {
       plan.windows.push({
         id: nextId("win"),
         roomId: r.id,
         wall: "south",
         position: 0.7,
-        size: 0.6,
+        size: 0.5,
       });
     }
   }
@@ -566,6 +604,8 @@ function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): Appl
   } else if (/serviço|servico|lavanderia/.test(n)) {
     items.push({ type: "washing_machine", rx: 0.5, ry: 0.0 });
     items.push({ type: "sink", rx: 0.0, ry: 0.0, label: "Tanque" });
+  } else if (/hall/.test(n)) {
+    return { ok: false, message: `Hall não precisa de móveis.` };
   } else {
     return { ok: false, message: `Não sei mobiliar '${room.name}' automaticamente.` };
   }
@@ -598,7 +638,7 @@ export function summarizePlan(plan: FloorPlan): string {
       .map((f) => f.label)
       .join(", ");
     parts.push(
-      `- ${r.name}: ${r.width}x${r.height}m (${area}m²), piso ${r.floor}, portas: ${doors}, janelas: ${wins}${furn ? `, móveis: ${furn}` : ""}`
+      `- ${r.name}: ${r.width.toFixed(2)}x${r.height.toFixed(2)}m (${area}m²), piso ${r.floor}, portas: ${doors}, janelas: ${wins}${furn ? `, móveis: ${furn}` : ""}`
     );
   }
   const totalArea = plan.rooms.reduce((s, r) => s + r.width * r.height, 0);
@@ -693,5 +733,4 @@ export function resolveSelection(
   return null;
 }
 
-// re-export wall type so other files that need it are happy
 export type { Wall };

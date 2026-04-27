@@ -220,9 +220,17 @@ export function ChatPanel({ plan, selected, onApplyTool, onClearSelection }: Pro
         ref={scrollRef}
         className="flex-1 min-h-0 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-5"
       >
-        {messages.map((m, i) => (
-          <Message key={i} m={m} />
-        ))}
+        {messages.map((m, i) => {
+          const isLastAssistant =
+            m.role === "assistant" && i === messages.length - 1 && !busy;
+          return (
+            <Message
+              key={i}
+              m={m}
+              onSuggestion={isLastAssistant ? (s) => send(s) : undefined}
+            />
+          );
+        })}
       </div>
 
       {/* Suggestions (only when conversation is fresh) */}
@@ -296,8 +304,10 @@ export function ChatPanel({ plan, selected, onApplyTool, onClearSelection }: Pro
   );
 }
 
-function Message({ m }: { m: ChatMessage }) {
+function Message({ m, onSuggestion }: { m: ChatMessage; onSuggestion?: (s: string) => void }) {
   const isUser = m.role === "user";
+  // Split assistant content into clean body + clickable suggestions.
+  const { body, suggestions } = !isUser ? extractSuggestions(m.content) : { body: m.content, suggestions: [] as string[] };
   return (
     <div className={`fade-up flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
       <div
@@ -308,7 +318,7 @@ function Message({ m }: { m: ChatMessage }) {
         {isUser ? "Você" : "🏗️"}
       </div>
       <div className={`flex max-w-[85%] flex-col gap-1.5 ${isUser ? "items-end" : "items-start"}`}>
-        {m.content.trim() && (
+        {body.trim() && (
           <div
             className={`whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
               isUser
@@ -316,7 +326,7 @@ function Message({ m }: { m: ChatMessage }) {
                 : "bg-bg-card/70 text-white/90"
             }`}
           >
-            {renderContent(m.content)}
+            {renderContent(body)}
           </div>
         )}
         {m.toolCalls && m.toolCalls.length > 0 && (
@@ -331,9 +341,61 @@ function Message({ m }: { m: ChatMessage }) {
             ))}
           </div>
         )}
+        {suggestions.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {suggestions.map((s, idx) => (
+              <button
+                key={`${idx}-${s}`}
+                disabled={!onSuggestion}
+                onClick={() => onSuggestion?.(s)}
+                className="rounded-full border border-gold/40 bg-gold/5 px-3 py-1.5 text-xs text-gold-light transition hover:bg-gold/15 hover:border-gold/70 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+// Pulls bracketed suggestions out of an assistant message.
+// Recognizes `[text]` tokens that are NOT followed by `(` (so markdown links
+// like `[label](url)` are preserved) and that don't contain colons (which
+// would suggest some other notation). Multi-line, last-of-message preferred.
+function extractSuggestions(text: string): { body: string; suggestions: string[] } {
+  if (!text) return { body: text, suggestions: [] };
+  const re = /\[([^\[\]\n]{1,80})\](?!\()/g;
+  const found: { match: string; inner: string; index: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const inner = m[1].trim();
+    // Skip empties and obvious markdown-image-like tokens.
+    if (!inner) continue;
+    found.push({ match: m[0], inner, index: m.index });
+  }
+  if (found.length === 0) return { body: text, suggestions: [] };
+
+  // Strip the bracket tokens from the body and collapse extra blank lines.
+  let body = text;
+  // Remove from the end so indices stay valid.
+  for (let i = found.length - 1; i >= 0; i--) {
+    const f = found[i];
+    body = body.slice(0, f.index) + body.slice(f.index + f.match.length);
+  }
+  body = body.replace(/\n{3,}/g, "\n\n").trimEnd();
+
+  // De-duplicate while preserving order.
+  const seen = new Set<string>();
+  const suggestions: string[] = [];
+  for (const f of found) {
+    const key = f.inner.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push(f.inner);
+  }
+  return { body, suggestions };
 }
 
 function renderContent(text: string): React.ReactNode {
