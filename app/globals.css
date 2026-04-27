@@ -2,50 +2,168 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Design tokens (Editorial Light) ---------- */
 :root {
-  color-scheme: dark;
+  --bg: #FAF7F0;
+  --panel: #FFFFFF;
+  --panel-alt: #F4EFE6;
+  --ink: #1F1B16;
+  --muted: #8C8478;
+  --line: #E6DFD2;
+  --accent: #B8552E;
+  --accent-soft: #F2DDD0;
+
+  --wall-fill: #E6DFD2;
+  --floor-grain: #EFE8DB;
+  --tile: #EEE6D6;
+  --carpet: #E8DDC8;
+  --sofa: #D9CFB8;
+  --mesa-jantar: #A8967A;
+  --bancada: #3A332A;
+  --tv-credenza: #3F362A;
+
+  --status-ready: #3a8a48;
+  --status-outdated: #a85c2e;
+  --status-error: #9a3030;
+
+  color-scheme: light;
 }
 
-html,
-body {
+html, body {
   height: 100%;
-  background: #1a1a2e;
-  color: #e6e9f0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-geist), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-weight: 400;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  text-rendering: optimizeLegibility;
 }
 
-/* scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+body { overflow: hidden; }
+
+/* ---------- Type ---------- */
+.font-serif { font-family: var(--font-instrument-serif), Georgia, serif; }
+.font-mono  { font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace; }
+.font-ui    { font-family: var(--font-geist), ui-sans-serif, system-ui, sans-serif; }
+
+.label-mono {
+  font-family: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
 }
+
+.editorial {
+  font-family: var(--font-instrument-serif), Georgia, serif;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb {
-  background: #2a3656;
+  background: #D7CEBE;
   border-radius: 4px;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+::-webkit-scrollbar-thumb:hover { background: #C0B6A2; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- Utility primitives ---------- */
+.btn-primary {
+  background: var(--ink); color: #FAF7F0;
+  font-weight: 500; font-size: 13px;
+  padding: 7px 14px; border-radius: 6px;
+  transition: all 150ms ease-out;
+  border: 1px solid var(--ink);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 14px -8px rgba(0,0,0,0.35); }
+.btn-primary:active { transform: translateY(0); }
+
+.btn-ghost {
+  background: transparent; color: var(--ink);
+  font-size: 13px; padding: 6px 10px; border-radius: 6px;
+  transition: background 150ms ease-out;
+  border: 1px solid transparent;
+}
+.btn-ghost:hover { background: rgba(31,27,22,0.04); }
+
+.btn-outline {
+  background: transparent; color: var(--ink);
+  font-size: 13px; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--line);
+  transition: all 150ms ease-out;
+}
+.btn-outline:hover { background: var(--panel-alt); border-color: #D6CCB8; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; color: var(--ink);
+  background: var(--panel-alt); border: 1px solid var(--line);
+  transition: all 150ms ease-out;
+}
+.chip:hover { background: #ECE4D2; }
+.chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.divider { height: 1px; background: var(--line); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
-/* Subtle glow for gold accents */
-.gold-glow {
-  text-shadow: 0 0 12px rgba(198, 169, 98, 0.35);
+.card-alt {
+  background: var(--panel-alt);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
-@keyframes spinnerPulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
-.tool-pulse {
-  animation: spinnerPulse 1.2s ease-in-out infinite;
-}
-
+/* ---------- Animations ---------- */
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.fade-up {
-  animation: fadeUp 0.25s ease-out both;
+.fade-up { animation: fadeUp 200ms ease-out both; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--panel-alt) 0%, #ECE4D2 50%, var(--panel-alt) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+/* ---------- Scrollbar inside panels ---------- */
+.thin-scroll::-webkit-scrollbar { width: 6px; }
+.thin-scroll::-webkit-scrollbar-thumb { background: #D7CEBE; border-radius: 3px; }
+
+/* ---------- Focus ---------- */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+input:focus, textarea:focus { outline: none; }
+
+/* ---------- SVG floor plan helpers ---------- */
+.dim-line { stroke: #6E6557; stroke-width: 0.6; }
+.dim-text {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 9px;
+  fill: #4A4338;
+  letter-spacing: 0.08em;
+}
+.floor-grain { fill: var(--floor-grain); }
+.wall-fill { fill: var(--wall-fill); }

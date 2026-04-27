@@ -9,21 +9,28 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: {
-          DEFAULT: "#1a1a2e",
-          panel: "#16213e",
-          chat: "#0f1729",
-          card: "#1f2a44",
-        },
-        gold: {
-          DEFAULT: "#C6A962",
-          dark: "#a08a4f",
-          light: "#e0c47e",
-        },
-        wall: "#3a5a8c",
+        bg: "var(--bg)",
+        panel: "var(--panel)",
+        "panel-alt": "var(--panel-alt)",
+        ink: "var(--ink)",
+        muted: "var(--muted)",
+        line: "var(--line)",
+        accent: "var(--accent)",
+        "accent-soft": "var(--accent-soft)",
+        ready: "var(--status-ready)",
+        outdated: "var(--status-outdated)",
+        error: "var(--status-error)",
       },
       fontFamily: {
-        sans: ["ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
+        serif: ["var(--font-instrument-serif)", "Georgia", "serif"],
+        ui: ["var(--font-geist)", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["var(--font-jetbrains-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+      },
+      borderRadius: {
+        sm: "4px",
+        DEFAULT: "6px",
+        md: "8px",
+        lg: "10px",
       },
     },
   },
