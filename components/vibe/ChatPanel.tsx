@@ -21,12 +21,52 @@ interface Props {
   onCompareDiff?: () => void;
 }
 
-const QUICK_PROMPTS = [
-  "Mais quente",
-  "Mais ar",
-  "Outro material",
-  "Refazer cozinha",
+const STARTER_PROMPTS = [
+  "Apartamento residencial 80m²",
+  "Projeto comercial",
+  "Casa de praia 120m²",
+  "Studio compacto 35m²",
 ];
+
+const PROJECT_PROMPTS = [
+  "Mobiliar todos os ambientes",
+  "Trocar piso da sala",
+  "Adicionar varanda",
+  "Versão econômica",
+];
+
+function quickPromptsFor(plan: FloorPlan, ctxKind: string | null, ctxName: string | null): string[] {
+  if (ctxKind === "room" && ctxName) {
+    return [
+      `Mobiliar ${ctxName}`,
+      `Trocar piso de ${ctxName}`,
+      `Ampliar ${ctxName}`,
+      `Adicionar janela em ${ctxName}`,
+    ];
+  }
+  if (ctxKind === "furniture" && ctxName) {
+    return [
+      `Substituir ${ctxName}`,
+      `Mais opções de ${ctxName}`,
+      `Remover ${ctxName}`,
+      `Girar 90°`,
+    ];
+  }
+  if (ctxKind === "window" || ctxKind === "door") {
+    const what = ctxKind === "window" ? "janela" : "porta";
+    return [
+      `Mover ${what}`,
+      `Trocar tamanho da ${what}`,
+      `Remover ${what}`,
+      `Outra parede`,
+    ];
+  }
+  if (ctxKind === "wall") {
+    return ["Mover esta parede", "Abrir vão aqui", "Demolir parede", "Adicionar porta"];
+  }
+  if (plan.rooms.length === 0) return STARTER_PROMPTS;
+  return PROJECT_PROMPTS;
+}
 
 export function ChatPanel({
   plan, selected, onApplyTool, onClearSelection,
@@ -44,6 +84,11 @@ export function ChatPanel({
   const toolNameByIdRef = useRef<Map<string, ToolName>>(new Map());
 
   const ctx = selected ? resolveSelection(plan, selected) : null;
+  const quickPrompts = quickPromptsFor(
+    plan,
+    ctx?.kind ?? null,
+    ctx ? ((ctx.payload.label ?? ctx.payload.name ?? null) as string | null) : null
+  );
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -156,9 +201,11 @@ export function ChatPanel({
 
       {/* Composer */}
       <div className="shrink-0 border-t border-line bg-panel-alt px-3 pt-2.5 pb-3 space-y-2">
-        {/* Quick prompts — click sends the prompt directly */}
+        {/* Quick prompts — contextual: starter chips on empty projects,
+            project-level chips otherwise, and selection-aware chips when
+            an element is selected. Click sends the prompt directly. */}
         <div className="flex gap-1.5 flex-wrap">
-          {QUICK_PROMPTS.map((q) => (
+          {quickPrompts.map((q) => (
             <button
               key={q}
               onClick={() => send(q)}
