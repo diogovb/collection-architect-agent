@@ -5,6 +5,8 @@ import type {
   Furniture,
   FurnitureType,
   Room,
+  SelectedElement,
+  SelectionContext,
   ToolInputs,
   ToolName,
   Wall,
@@ -602,6 +604,93 @@ export function summarizePlan(plan: FloorPlan): string {
   const totalArea = plan.rooms.reduce((s, r) => s + r.width * r.height, 0);
   parts.push(`Área total construída: ${totalArea.toFixed(1)}m².`);
   return parts.join("\n");
+}
+
+// ---------- Selection helpers ----------
+
+const WALL_PT: Record<Wall, string> = {
+  north: "norte",
+  south: "sul",
+  east: "leste",
+  west: "oeste",
+};
+
+export function resolveSelection(
+  plan: FloorPlan,
+  sel: SelectedElement | null | undefined
+): SelectionContext | null {
+  if (!sel) return null;
+  if (sel.type === "room") {
+    const r = plan.rooms.find((rr) => rr.id === sel.id);
+    if (!r) return null;
+    return {
+      kind: "room",
+      id: r.id,
+      description: `Cômodo "${r.name}" (${r.width.toFixed(2)}×${r.height.toFixed(2)}m, ${(r.width * r.height).toFixed(1)}m², piso ${r.floor})`,
+      payload: {
+        name: r.name,
+        x: r.x,
+        y: r.y,
+        width: r.width,
+        height: r.height,
+        floor: r.floor,
+      },
+    };
+  }
+  if (sel.type === "furniture") {
+    const f = plan.furniture.find((ff) => ff.id === sel.id);
+    if (!f) return null;
+    const room = plan.rooms.find((rr) => rr.id === f.roomId);
+    return {
+      kind: "furniture",
+      id: f.id,
+      description: `Móvel "${f.label}" em "${room?.name ?? "?"}" (${f.width.toFixed(2)}×${f.height.toFixed(2)}m, posição ${f.x.toFixed(2)},${f.y.toFixed(2)})`,
+      payload: {
+        furniture_id: f.id,
+        type: f.type,
+        label: f.label,
+        room_name: room?.name,
+        x: f.x,
+        y: f.y,
+        width: f.width,
+        height: f.height,
+      },
+    };
+  }
+  if (sel.type === "door") {
+    const d = plan.doors.find((dd) => dd.id === sel.id);
+    if (!d) return null;
+    const room = plan.rooms.find((rr) => rr.id === d.roomId);
+    return {
+      kind: "door",
+      id: d.id,
+      description: `Porta na parede ${WALL_PT[d.wall]} de "${room?.name ?? "?"}" (${d.size.toFixed(2)}m)`,
+      payload: { room_name: room?.name, wall: d.wall, position: d.position, size: d.size },
+    };
+  }
+  if (sel.type === "window") {
+    const w = plan.windows.find((ww) => ww.id === sel.id);
+    if (!w) return null;
+    const room = plan.rooms.find((rr) => rr.id === w.roomId);
+    return {
+      kind: "window",
+      id: w.id,
+      description: `Janela na parede ${WALL_PT[w.wall]} de "${room?.name ?? "?"}" (${w.size.toFixed(2)}m)`,
+      payload: { room_name: room?.name, wall: w.wall, position: w.position, size: w.size },
+    };
+  }
+  if (sel.type === "wall") {
+    const room = plan.rooms.find((rr) => rr.id === sel.roomId);
+    if (!room) return null;
+    const length = sel.wall === "north" || sel.wall === "south" ? room.width : room.height;
+    return {
+      kind: "wall",
+      id: `${room.id}:${sel.wall}`,
+      description: `Parede ${WALL_PT[sel.wall]} de "${room.name}" (${length.toFixed(2)}m)`,
+      payload: { room_name: room.name, wall: sel.wall, length },
+    };
+  }
+  return null;
 }
 
 // re-export wall type so other files that need it are happy

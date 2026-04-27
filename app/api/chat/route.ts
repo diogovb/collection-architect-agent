@@ -2,18 +2,21 @@ import Anthropic from "@anthropic-ai/sdk";
 import { tools } from "@/lib/anthropic-tools";
 import { applyTool, summarizePlan } from "@/lib/floor-plan-engine";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
-import type { FloorPlan, StreamEvent, ToolName } from "@/lib/types";
+import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6";
+const DEFAULT_MODEL = "claude-opus-4-7";
+const ALLOWED_MODELS = new Set(["claude-opus-4-7", "claude-sonnet-4-6"]);
 const MAX_TOKENS = 4096;
 const MAX_ITERATIONS = 8;
 
 interface ClientPayload {
   messages: { role: "user" | "assistant"; content: string }[];
   plan: FloorPlan;
+  selection?: SelectionContext | null;
+  model?: string;
 }
 
 export async function POST(req: Request) {
@@ -33,7 +36,9 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "JSON inválido." }), { status: 400 });
   }
 
-  const { messages, plan } = body;
+  const { messages, plan, selection, model: requestedModel } = body;
+  const model =
+    requestedModel && ALLOWED_MODELS.has(requestedModel) ? requestedModel : DEFAULT_MODEL;
   if (!Array.isArray(messages) || messages.length === 0) {
     return new Response(JSON.stringify({ error: "Conversa vazia." }), { status: 400 });
   }
@@ -56,6 +61,33 @@ export async function POST(req: Request) {
           content: m.content,
         }));
 
+        // If the user has something selected, prepend a synthetic context block
+        // to the most recent user message so Claude knows what "isso", "esse cômodo",
+        // "essa parede" refers to.
+        if (selection) {
+          const lastUserIdx = (() => {
+            for (let i = conversation.length - 1; i >= 0; i--) {
+              if (conversation[i].role === "user") return i;
+            }
+            return -1;
+          })();
+          if (lastUserIdx >= 0) {
+            const original = conversation[lastUserIdx].content;
+            const ctxBlock =
+              `[Contexto de seleção do usuário no canvas — referências como "isso", "esse", "essa", "aqui" se referem a este elemento]\n` +
+              `Tipo: ${selection.kind}\n` +
+              `${selection.description}\n` +
+              `Dados: ${JSON.stringify(selection.payload)}\n\n` +
+              `Pedido do usuário: `;
+            if (typeof original === "string") {
+              conversation[lastUserIdx] = {
+                role: "user",
+                content: ctxBlock + original,
+              };
+            }
+          }
+        }
+
         let iter = 0;
         while (iter < MAX_ITERATIONS) {
           iter += 1;
@@ -66,7 +98,7 @@ export async function POST(req: Request) {
             summarizePlan(localPlan);
 
           const sdkStream = anthropic.messages.stream({
-            model: MODEL,
+            model,
             max_tokens: MAX_TOKENS,
             system: systemBlock,
             tools,

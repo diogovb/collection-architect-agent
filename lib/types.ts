@@ -134,6 +134,25 @@ export interface ToolInputs {
   clear_all: Record<string, never>;
 }
 
+// ----- Selection -----
+
+export type SelectedElement =
+  | { type: "room"; id: string }
+  | { type: "furniture"; id: string }
+  | { type: "door"; id: string }
+  | { type: "window"; id: string }
+  | { type: "wall"; roomId: string; wall: Wall };
+
+/** Resolved/expanded selection details to send to Claude or display in UI. */
+export interface SelectionContext {
+  kind: "room" | "furniture" | "door" | "window" | "wall";
+  id: string;
+  /** Human-readable description, e.g. "Sofá em Sala de Estar (2.0×0.9m)". */
+  description: string;
+  /** Selected entity payload (already trimmed). */
+  payload: Record<string, unknown>;
+}
+
 // ----- Streaming events from API -----
 
 export type StreamEvent =

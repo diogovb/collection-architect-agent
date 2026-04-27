@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { ChatMessage, FloorPlan, StreamEvent, ToolName } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { resolveSelection } from "@/lib/floor-plan-engine";
+import type {
+  ChatMessage,
+  FloorPlan,
+  SelectedElement,
+  StreamEvent,
+  ToolName,
+} from "@/lib/types";
 import { ToolIndicator } from "./ToolIndicator";
 
 interface Props {
   plan: FloorPlan;
+  selected: SelectedElement | null;
   onApplyTool: (name: ToolName, input: unknown) => void;
+  onClearSelection: () => void;
 }
 
 const SUGGESTIONS = [
@@ -20,7 +29,14 @@ const SUGGESTIONS = [
   "Cria uma varanda com vista pro norte",
 ];
 
-export function ChatPanel({ plan, onApplyTool }: Props) {
+type ModelId = "claude-opus-4-7" | "claude-sonnet-4-6";
+
+const MODEL_OPTIONS: { id: ModelId; name: string; tag: string }[] = [
+  { id: "claude-opus-4-7", name: "Opus 4.7", tag: "Mais inteligente" },
+  { id: "claude-sonnet-4-6", name: "Sonnet 4.6", tag: "Mais rápido" },
+];
+
+export function ChatPanel({ plan, selected, onApplyTool, onClearSelection }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -30,11 +46,20 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState<ModelId>("claude-opus-4-7");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const planRef = useRef(plan);
   planRef.current = plan;
-  // Map of tool_use id -> tool name (populated on tool_start, read on tool_input)
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const toolNameByIdRef = useRef<Map<string, ToolName>>(new Map());
+
+  const selectionContext = useMemo(
+    () => resolveSelection(plan, selected),
+    [plan, selected]
+  );
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -66,10 +91,8 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
     setInput("");
     setBusy(true);
 
-    // Build conversation history to send: only role+content of plain messages
-    // (assistant messages we send are the prior text-only history)
     const historyToSend = next
-      .slice(0, -1) // drop the empty assistant placeholder
+      .slice(0, -1)
       .filter((m) => m.role === "user" || (m.role === "assistant" && m.content.trim().length > 0))
       .map((m) => ({ role: m.role, content: m.content }));
 
@@ -77,7 +100,14 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: historyToSend, plan: planRef.current }),
+        body: JSON.stringify({
+          messages: historyToSend,
+          plan: planRef.current,
+          selection: selectedRef.current
+            ? resolveSelection(planRef.current, selectedRef.current)
+            : null,
+          model: modelRef.current,
+        }),
       });
       if (!resp.ok || !resp.body) {
         const errTxt = await resp.text().catch(() => "");
@@ -170,7 +200,7 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-chat">
       {/* Header — fixed at top */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-white/5 bg-bg-panel/60 px-5 py-3.5">
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/5 bg-bg-panel/60 px-5 py-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold/15 text-lg">
           🏗️
         </div>
@@ -178,6 +208,7 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
           <div className="text-sm font-semibold text-white">Collection Architect</div>
           <div className="text-[11px] uppercase tracking-widest text-gold/80">Agent-Powered Design</div>
         </div>
+        <ModelSelector value={model} onChange={setModel} disabled={busy} />
         <div className="flex items-center gap-1.5 text-[10px] text-white/40">
           <span className={`inline-block h-2 w-2 rounded-full ${busy ? "bg-gold tool-pulse" : "bg-emerald-500"}`} />
           {busy ? "Trabalhando" : "Pronto"}
@@ -209,6 +240,24 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
         </div>
       )}
 
+      {/* Selection indicator */}
+      {selectionContext && (
+        <div className="flex shrink-0 items-center gap-2 border-t border-gold/20 bg-gold/[0.06] px-4 py-2 text-[11px]">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-gold-light">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-gold" />
+            Selecionado
+          </span>
+          <span className="flex-1 truncate text-white/85">{selectionContext.description}</span>
+          <button
+            onClick={onClearSelection}
+            className="rounded px-1.5 py-0.5 text-white/50 transition hover:bg-white/5 hover:text-white/80"
+            title="Desselecionar (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Input — fixed at bottom */}
       <form
         className="flex shrink-0 items-end gap-2 border-t border-white/5 bg-bg-panel/40 px-4 py-3"
@@ -227,7 +276,11 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
             }
           }}
           rows={1}
-          placeholder="Descreva sua planta — ex: 'apê de 60m² com 2 quartos e cozinha americana'"
+          placeholder={
+            selectionContext
+              ? `Pergunte sobre "${selectionContext.payload.label ?? selectionContext.payload.name ?? selectionContext.kind}"...`
+              : "Descreva sua planta — ex: 'apê de 60m² com 2 quartos e cozinha americana'"
+          }
           disabled={busy}
           className="max-h-32 min-h-[42px] flex-1 resize-none rounded-lg border border-white/10 bg-bg-card/60 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-gold/40"
         />
@@ -284,7 +337,6 @@ function Message({ m }: { m: ChatMessage }) {
 }
 
 function renderContent(text: string): React.ReactNode {
-  // Very lightweight bold rendering for **text**.
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((p, i) => {
     if (p.startsWith("**") && p.endsWith("**")) {
@@ -296,6 +348,76 @@ function renderContent(text: string): React.ReactNode {
     }
     return <span key={i}>{p}</span>;
   });
+}
+
+function ModelSelector({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ModelId;
+  onChange: (m: ModelId) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const current = MODEL_OPTIONS.find((m) => m.id === value) ?? MODEL_OPTIONS[0];
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 rounded-md border border-gold/30 bg-gold/5 px-2 py-1 text-[11px] text-gold-light transition hover:border-gold/50 hover:bg-gold/15 disabled:opacity-50"
+        title={`Modelo: ${current.name} — ${current.tag}`}
+      >
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-gold" />
+        <span className="font-semibold">{current.name}</span>
+        <svg width="9" height="9" viewBox="0 0 10 10" className="opacity-70">
+          <path d="M2 4l3 3 3-3" stroke="currentColor" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1.5 min-w-[180px] overflow-hidden rounded-md border border-white/10 bg-bg-panel/95 py-1 shadow-xl backdrop-blur">
+          {MODEL_OPTIONS.map((m) => {
+            const active = m.id === value;
+            return (
+              <button
+                key={m.id}
+                onClick={() => {
+                  onChange(m.id);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-xs transition hover:bg-white/5 ${
+                  active ? "bg-gold/10 text-gold-light" : "text-white/85"
+                }`}
+              >
+                <div>
+                  <div className="font-semibold">{m.name}</div>
+                  <div className="text-[10px] text-white/50">{m.tag}</div>
+                </div>
+                {active && (
+                  <svg width="12" height="12" viewBox="0 0 12 12" className="text-gold">
+                    <path d="M2 6l3 3 5-6" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function summarizeToolInput(name: ToolName, input: unknown): string | undefined {
