@@ -44,6 +44,10 @@ export interface Door {
   position: number;
   /** meters */
   size: number;
+  /** If true, the wall opening is rendered but the swing arc/leaf is suppressed.
+   *  Used when two adjacent rooms share a doorway: both rooms get a Door so
+   *  each room's wall is cut, but only the room the door swings INTO renders the arc. */
+  silent?: boolean;
 }
 
 export interface Window {
