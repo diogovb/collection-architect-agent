@@ -2,17 +2,17 @@
 import type { ToolName } from "@/lib/types";
 
 const LABELS: Record<ToolName, string> = {
-  create_room: "Criando cômodo",
+  create_room: "Desenhando cômodo",
   remove_room: "Removendo cômodo",
-  add_door: "Adicionando porta",
-  add_window: "Adicionando janela",
-  add_furniture: "Adicionando móvel",
-  remove_furniture: "Removendo móvel",
-  set_floor_material: "Trocando piso",
-  move_furniture: "Movendo móvel",
-  create_apartment_layout: "Gerando apartamento",
+  add_door: "Posicionando porta",
+  add_window: "Abrindo janela",
+  add_furniture: "Posicionando móvel",
+  remove_furniture: "Retirando móvel",
+  set_floor_material: "Trocando revestimento",
+  move_furniture: "Reposicionando móvel",
+  create_apartment_layout: "Gerando planta do apartamento",
   furnish_room: "Mobiliando cômodo",
-  clear_all: "Limpando planta",
+  clear_all: "Apagando planta",
 };
 
 interface ToolIndicatorProps {

@@ -166,7 +166,12 @@ function defaultFloorFor(name: string): FloorMaterial {
   const n = name.toLowerCase();
   if (/(banheiro|lavabo)/.test(n)) return "porcelanato";
   if (/(cozinha|área|servico|serviço|lavanderia)/.test(n)) return "porcelanato";
+  if (/(corredor|hall|circula)/.test(n)) return "madeira";
   return "madeira";
+}
+
+export function isCorridor(name: string): boolean {
+  return /(corredor|hall|circula)/i.test(name);
 }
 
 function doCreateRoom(plan: FloorPlan, input: ToolInputs["create_room"]): ApplyResult {
@@ -372,7 +377,16 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
       floor: "porcelanato",
     });
 
-  // Place rooms
+  // Place rooms — top (social) row at y=0, then a corridor strip,
+  // then the bottom (intimate) row. Bedrooms have to access the corridor,
+  // not the social area directly — that's how a real apartment flows.
+  const corridorH = 1.2;
+  // Only insert corridor when there are private rooms that need it.
+  const hasIntimateRow = bottomRow.length > 0;
+  // Shrink the bottom row's height so total height stays ≈ h.
+  const adjBottomH = hasIntimateRow ? Math.max(3, bottomH - corridorH * 0.5) : bottomH;
+  const adjTopH = hasIntimateRow ? Math.max(3.5, topH - corridorH * 0.5) : topH;
+
   let cursorX = 0;
   for (const r of topRow) {
     const room: Room = {
@@ -381,22 +395,41 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
       x: cursorX,
       y: 0,
       width: r.w,
-      height: topH,
+      height: adjTopH,
       floor: r.floor,
       appear: 0,
     };
     plan.rooms.push(room);
     cursorX += r.w;
   }
+
+  let corridor: Room | undefined;
+  if (hasIntimateRow) {
+    // The corridor spans the full width of the intimate row, so every private
+    // room can open onto it. It's narrow (1.2m — Neufert minimum).
+    corridor = {
+      id: nextId("room"),
+      name: "Corredor",
+      x: 0,
+      y: adjTopH,
+      width: canvasW,
+      height: corridorH,
+      floor: "madeira",
+      appear: 0,
+    };
+    plan.rooms.push(corridor);
+  }
+
   cursorX = 0;
+  const bottomY = adjTopH + (hasIntimateRow ? corridorH : 0);
   for (const r of bottomRow) {
     const room: Room = {
       id: nextId("room"),
       name: r.name,
       x: cursorX,
-      y: topH,
+      y: bottomY,
       width: r.w,
-      height: bottomH,
+      height: adjBottomH,
       floor: r.floor,
       appear: 0,
     };
@@ -412,13 +445,16 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
   const areaServ = plan.rooms.find((r) => r.name === "Área de Serviço");
 
   if (sala) {
+    // Entrance door — on the exterior west wall (south borders the corridor
+    // when there are bedrooms, so we can't put it there).
     plan.doors.push({
       id: nextId("door"),
       roomId: sala.id,
-      wall: "south",
-      position: 0.15,
+      wall: hasIntimateRow ? "west" : "south",
+      position: hasIntimateRow ? 0.6 : 0.15,
       size: 1.0,
     });
+    // Big sala window — exterior north wall, facing the sun (hemisphere sul)
     plan.windows.push({
       id: nextId("win"),
       roomId: sala.id,
@@ -447,8 +483,21 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
     });
   }
 
-  // Bottom row rooms: door north (into the top row / hallway abstraction)
-  for (const r of plan.rooms.filter((rr) => rr.y >= topH - 0.001)) {
+  // Corridor — gets a door connecting it to the social area (sala/cozinha).
+  // The door is on the north wall, near the sala, so the user walks from the
+  // living area into the corridor and from there into the bedrooms.
+  if (corridor) {
+    plan.doors.push({
+      id: nextId("door"),
+      roomId: corridor.id,
+      wall: "north",
+      position: sala ? Math.min(0.9, (sala.x + sala.width * 0.85) / corridor.width) : 0.5,
+      size: 1.0,
+    });
+  }
+
+  // Bottom-row rooms: each opens onto the corridor (north wall door).
+  for (const r of plan.rooms.filter((rr) => rr.y >= bottomY - 0.001 && !isCorridor(rr.name))) {
     plan.doors.push({
       id: nextId("door"),
       roomId: r.id,
@@ -456,7 +505,7 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
       position: 0.5,
       size: r.name.toLowerCase().includes("banheiro") ? 0.7 : 0.9,
     });
-    // Window on south wall for bedrooms
+    // Window on south wall for bedrooms (south = exterior wall)
     if (r.name.toLowerCase().includes("quarto") || r.name.toLowerCase().includes("suíte")) {
       plan.windows.push({
         id: nextId("win"),

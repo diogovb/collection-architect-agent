@@ -18,6 +18,11 @@ const FLOOR_COLORS = {
   marmore: { base: "#f5f3ee", accent: "#d8d4ca" },
 } as const;
 
+const CORRIDOR_RX = /(corredor|hall|circula)/i;
+function isCorridorRoom(name: string): boolean {
+  return CORRIDOR_RX.test(name);
+}
+
 export function FloorPlanCanvas({ plan }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -257,8 +262,26 @@ export function FloorPlanCanvas({ plan }: Props) {
       ctx.translate(-cx, -cy);
     }
 
-    // Floor fill
-    drawFloorPattern(ctx, x, y, w, h, room.floor);
+    // Floor fill — corridors get a much lighter, more uniform tint so they
+    // read as circulation, not "rooms".
+    if (isCorridorRoom(room.name)) {
+      ctx.save();
+      ctx.fillStyle = "rgba(198,169,98,0.10)";
+      ctx.fillRect(x, y, w, h);
+      // subtle hatch to suggest movement
+      ctx.strokeStyle = "rgba(198,169,98,0.18)";
+      ctx.lineWidth = 0.7;
+      const step = PX_PER_M * 0.25;
+      ctx.beginPath();
+      for (let px = x - h; px < x + w; px += step) {
+        ctx.moveTo(px, y);
+        ctx.lineTo(px + h, y + h);
+      }
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      drawFloorPattern(ctx, x, y, w, h, room.floor);
+    }
 
     // Walls (drawn with gaps for doors and windows)
     drawWalls(ctx, room, planRef);
@@ -277,9 +300,14 @@ export function FloorPlanCanvas({ plan }: Props) {
       drawFurniture(ctx, f);
     }
 
-    // Label & dimensions
-    drawRoomLabel(ctx, room);
-    drawRoomDimensions(ctx, room);
+    // Label & dimensions — corridors get a smaller italic label and no
+    // dimension callouts (they'd clutter the plan).
+    if (isCorridorRoom(room.name)) {
+      drawCorridorLabel(ctx, room);
+    } else {
+      drawRoomLabel(ctx, room);
+      drawRoomDimensions(ctx, room);
+    }
 
     ctx.restore();
   }
@@ -378,7 +406,15 @@ export function FloorPlanCanvas({ plan }: Props) {
     ctx.lineWidth = WALL_PX;
     ctx.lineCap = "butt";
 
-    const walls: { wall: Door["wall"]; x1: number; y1: number; x2: number; y2: number; lengthMeters: number }[] = [
+    type WallSeg = {
+      wall: Door["wall"];
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      lengthMeters: number;
+    };
+    const walls: WallSeg[] = [
       { wall: "north", x1: x, y1: y, x2: x + w, y2: y, lengthMeters: room.width },
       { wall: "south", x1: x, y1: y + h, x2: x + w, y2: y + h, lengthMeters: room.width },
       { wall: "west", x1: x, y1: y, x2: x, y2: y + h, lengthMeters: room.height },
@@ -386,15 +422,97 @@ export function FloorPlanCanvas({ plan }: Props) {
     ];
 
     for (const wseg of walls) {
-      const openings = [
-        ...planRef.doors.filter((d) => d.roomId === room.id && d.wall === wseg.wall),
-        ...planRef.windows.filter((wn) => wn.roomId === room.id && wn.wall === wseg.wall),
-      ].map((o) => ({ start: o.position - (o.size / wseg.lengthMeters) / 2, end: o.position + (o.size / wseg.lengthMeters) / 2 }));
-
+      const openings = collectOpenings(room, wseg, planRef);
       drawSegmentedLine(ctx, wseg.x1, wseg.y1, wseg.x2, wseg.y2, openings);
     }
 
     ctx.restore();
+  }
+
+  // Collect door/window openings on this wall segment, including those that
+  // belong to an adjacent room sharing the same wall line. Without this,
+  // a door on Room A's south wall would appear as a gap, but Room B's north
+  // wall (drawn at the same coordinates) would render solid on top.
+  function collectOpenings(
+    room: Room,
+    wseg: { wall: Door["wall"]; lengthMeters: number },
+    planRef: FloorPlan
+  ): { start: number; end: number }[] {
+    const own = [
+      ...planRef.doors.filter((d) => d.roomId === room.id && d.wall === wseg.wall),
+      ...planRef.windows.filter((wn) => wn.roomId === room.id && wn.wall === wseg.wall),
+    ].map((o) => ({
+      pos: o.position,
+      size: o.size,
+      lengthMeters: wseg.lengthMeters,
+      offsetMeters: 0,
+    }));
+
+    // Find adjacent room(s) sharing this wall and project their openings.
+    const eps = 0.01;
+    const others = planRef.rooms.filter((r) => r.id !== room.id);
+    for (const other of others) {
+      const otherWall = oppositeWall(wseg.wall);
+      let shares = false;
+      let offsetMeters = 0;
+      let otherStartM = 0;
+      let otherLenM = 0;
+      let ownStartM = 0;
+      if (wseg.wall === "south" && Math.abs(other.y - (room.y + room.height)) < eps) {
+        shares = true;
+        ownStartM = room.x;
+        otherStartM = other.x;
+        otherLenM = other.width;
+      } else if (wseg.wall === "north" && Math.abs(other.y + other.height - room.y) < eps) {
+        shares = true;
+        ownStartM = room.x;
+        otherStartM = other.x;
+        otherLenM = other.width;
+      } else if (wseg.wall === "east" && Math.abs(other.x - (room.x + room.width)) < eps) {
+        shares = true;
+        ownStartM = room.y;
+        otherStartM = other.y;
+        otherLenM = other.height;
+      } else if (wseg.wall === "west" && Math.abs(other.x + other.width - room.x) < eps) {
+        shares = true;
+        ownStartM = room.y;
+        otherStartM = other.y;
+        otherLenM = other.height;
+      }
+      if (!shares) continue;
+      offsetMeters = otherStartM - ownStartM;
+
+      const otherOpenings = [
+        ...planRef.doors.filter((d) => d.roomId === other.id && d.wall === otherWall),
+        ...planRef.windows.filter((wn) => wn.roomId === other.id && wn.wall === otherWall),
+      ];
+      for (const o of otherOpenings) {
+        own.push({
+          pos: o.position,
+          size: o.size,
+          lengthMeters: otherLenM,
+          offsetMeters,
+        });
+      }
+    }
+
+    return own.map((o) => {
+      // Convert opening to a 0..1 range along *this* wall segment.
+      const centerOnOtherM = o.pos * o.lengthMeters;
+      const centerOnOwnM = centerOnOtherM + o.offsetMeters;
+      const halfM = o.size / 2;
+      return {
+        start: (centerOnOwnM - halfM) / wseg.lengthMeters,
+        end: (centerOnOwnM + halfM) / wseg.lengthMeters,
+      };
+    });
+  }
+
+  function oppositeWall(w: Door["wall"]): Door["wall"] {
+    if (w === "north") return "south";
+    if (w === "south") return "north";
+    if (w === "east") return "west";
+    return "east";
   }
 
   function drawSegmentedLine(
@@ -518,6 +636,18 @@ export function FloorPlanCanvas({ plan }: Props) {
     if (wall === "south") return { x: 0, y: -1 };
     if (wall === "west") return { x: 1, y: 0 };
     return { x: -1, y: 0 };
+  }
+
+  function drawCorridorLabel(ctx: CanvasRenderingContext2D, room: Room) {
+    const cx = (room.x + room.width / 2) * PX_PER_M;
+    const cy = (room.y + room.height / 2) * PX_PER_M;
+    ctx.save();
+    ctx.fillStyle = "rgba(198,169,98,0.65)";
+    ctx.font = "italic 500 11px ui-sans-serif, system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${room.name} · ${room.width.toFixed(2)} m`, cx, cy);
+    ctx.restore();
   }
 
   function drawRoomLabel(ctx: CanvasRenderingContext2D, room: Room) {

@@ -19,11 +19,11 @@ export default function Page() {
   }, []);
 
   return (
-    <main className="grid h-screen w-screen grid-cols-1 lg:grid-cols-[1fr_440px]">
-      <section className="relative border-r border-white/5">
+    <main className="grid h-screen max-h-screen w-screen grid-cols-1 overflow-hidden lg:grid-cols-[1fr_440px]">
+      <section className="relative h-full min-h-0 overflow-hidden border-r border-white/5">
         <FloorPlanCanvas plan={plan} />
       </section>
-      <section className="border-l border-white/5">
+      <section className="h-full min-h-0 overflow-hidden border-l border-white/5">
         <ChatPanel plan={plan} onApplyTool={onApplyTool} />
       </section>
     </main>

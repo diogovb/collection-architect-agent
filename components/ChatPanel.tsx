@@ -11,10 +11,13 @@ interface Props {
 
 const SUGGESTIONS = [
   "Cria um apartamento de 70m² com 2 quartos",
-  "Coloca um sofá na sala",
-  "Cozinha americana com ilha",
-  "Adiciona uma janela no quarto",
+  "Apartamento compacto de 45m² (studio)",
+  "Apartamento de 90m² com 3 quartos e suíte",
+  "Cozinha americana com ilha integrada à sala",
+  "Mobília a sala com sofá, TV e mesa de centro",
+  "Adiciona uma janela grande no quarto principal",
   "Troca o piso da sala pra madeira",
+  "Cria uma varanda com vista pro norte",
 ];
 
 export function ChatPanel({ plan, onApplyTool }: Props) {
@@ -34,10 +37,21 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
   const toolNameByIdRef = useRef<Map<string, ToolName>>(new Map());
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
+    const el = scrollRef.current;
+    if (!el) return;
+    // Always pin to bottom on new messages / streaming deltas.
+    el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // Also pin to bottom while assistant is streaming token by token.
+  useEffect(() => {
+    if (!busy) return;
+    const id = window.setInterval(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }, 120);
+    return () => window.clearInterval(id);
+  }, [busy]);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -154,9 +168,9 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-bg-chat">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-white/5 bg-bg-panel/60 px-5 py-3.5">
+    <div className="flex h-full min-h-0 flex-col bg-bg-chat">
+      {/* Header — fixed at top */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/5 bg-bg-panel/60 px-5 py-3.5">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold/15 text-lg">
           🏗️
         </div>
@@ -170,8 +184,11 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
         </div>
       </div>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-5">
+      {/* Messages — flex-1 + min-h-0 so overflow-y-auto actually scrolls */}
+      <div
+        ref={scrollRef}
+        className="flex-1 min-h-0 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-5"
+      >
         {messages.map((m, i) => (
           <Message key={i} m={m} />
         ))}
@@ -179,7 +196,7 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
 
       {/* Suggestions (only when conversation is fresh) */}
       {messages.length <= 1 && !busy && (
-        <div className="flex flex-wrap gap-2 border-t border-white/5 bg-bg-panel/30 px-4 py-3">
+        <div className="flex shrink-0 flex-wrap gap-2 border-t border-white/5 bg-bg-panel/30 px-4 py-3">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
@@ -192,9 +209,9 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
         </div>
       )}
 
-      {/* Input */}
+      {/* Input — fixed at bottom */}
       <form
-        className="flex items-end gap-2 border-t border-white/5 bg-bg-panel/40 px-4 py-3"
+        className="flex shrink-0 items-end gap-2 border-t border-white/5 bg-bg-panel/40 px-4 py-3"
         onSubmit={(e) => {
           e.preventDefault();
           send(input);
@@ -210,7 +227,7 @@ export function ChatPanel({ plan, onApplyTool }: Props) {
             }
           }}
           rows={1}
-          placeholder="Descreva o que você quer construir..."
+          placeholder="Descreva sua planta — ex: 'apê de 60m² com 2 quartos e cozinha americana'"
           disabled={busy}
           className="max-h-32 min-h-[42px] flex-1 resize-none rounded-lg border border-white/10 bg-bg-card/60 px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-gold/40"
         />
