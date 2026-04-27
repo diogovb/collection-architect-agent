@@ -38,11 +38,9 @@ const KIND_LABEL: Record<SlideKind, string> = {
 export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSlideId, plan, cameras, lang }: Props) {
   const [fullscreen, setFullscreen] = useState(false);
   const [tone, setTone] = useState("client");
-  const slide = slides.find((s) => s.id === activeSlideId) ?? slides[0];
-  const idx = slides.findIndex((s) => s.id === slide.id);
 
   useEffect(() => {
-    if (!fullscreen) return;
+    if (!fullscreen || slides.length === 0) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") setFullscreen(false);
       else if (e.key === "ArrowRight") {
@@ -57,6 +55,23 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [fullscreen, slides, activeSlideId, setActiveSlideId]);
+
+  if (slides.length === 0) {
+    return (
+      <div className="flex-1 min-w-0 min-h-0 h-full w-full flex items-center justify-center bg-bg p-8">
+        <div className="card max-w-[420px] p-6 text-center">
+          <div className="label-mono mb-2">APRESENTAÇÃO</div>
+          <div className="editorial text-[20px] mb-2">Nenhum slide ainda</div>
+          <p className="text-[12.5px] text-muted leading-relaxed">
+            Conforme o projeto evolui, peça ao Vibe para gerar uma apresentação a partir das câmeras e materiais.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const slide = slides.find((s) => s.id === activeSlideId) ?? slides[0];
+  const idx = slides.findIndex((s) => s.id === slide.id);
 
   function updateSlide(patch: Partial<Slide>) {
     setSlides(slides.map((s) => s.id === slide.id ? { ...s, ...patch } : s));

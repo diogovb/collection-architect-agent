@@ -24,7 +24,13 @@ interface Props {
   updateRoom?: (id: string, patch: Partial<Room>) => void;
   removeSelected?: () => void;
   rotateSelected?: () => void;
+  /** Optional callback shown on the empty-state CTA. */
+  onLoadExample?: () => void;
 }
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 5;
+function clamp(n: number, min: number, max: number) { return Math.max(min, Math.min(max, n)); }
 
 interface Bounds { minX: number; minY: number; maxX: number; maxY: number; }
 
@@ -74,6 +80,7 @@ export function FloorPlan({
   updateRoom,
   removeSelected,
   rotateSelected,
+  onLoadExample,
 }: Props) {
   const bounds = useMemo(() => computeBounds(plan), [plan]);
   const padding = 2;
@@ -87,15 +94,39 @@ export function FloorPlan({
   const toY = (m: number) => (m - bounds.minY + padding) * M_TO_PX;
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const contentRef = useRef<SVGGElement | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [drag, setDrag] = useState<DragKind | null>(null);
   const [didDrag, setDidDrag] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState>(null);
 
+  // Zoom + pan state (only used in editor variant).
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [panning, setPanning] = useState<{ startClientX: number; startClientY: number; startPanX: number; startPanY: number } | null>(null);
+
   const isEditor = variant === "editor";
 
-  // Convert client coords → meters using SVG CTM
+  // Convert client coords → meters. Uses the inner content group's CTM so that
+  // zoom/pan transforms applied to that group are accounted for automatically.
   function clientToMeters(clientX: number, clientY: number): { mx: number; my: number } | null {
+    const svg = svgRef.current;
+    const g = contentRef.current ?? svg;
+    if (!svg || !g) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = g.getScreenCTM();
+    if (!ctm) return null;
+    const p = pt.matrixTransform(ctm.inverse());
+    return {
+      mx: p.x / M_TO_PX + bounds.minX - padding,
+      my: p.y / M_TO_PX + bounds.minY - padding,
+    };
+  }
+
+  // Convert client coords → svg viewBox px (does NOT account for the inner group transform).
+  function clientToSvgPx(clientX: number, clientY: number): { x: number; y: number } | null {
     const svg = svgRef.current;
     if (!svg) return null;
     const pt = svg.createSVGPoint();
@@ -104,11 +135,76 @@ export function FloorPlan({
     const ctm = svg.getScreenCTM();
     if (!ctm) return null;
     const p = pt.matrixTransform(ctm.inverse());
-    return {
-      mx: p.x / M_TO_PX + bounds.minX - padding,
-      my: p.y / M_TO_PX + bounds.minY - padding,
-    };
+    return { x: p.x, y: p.y };
   }
+
+  // Wheel zoom — anchored on cursor. Attached as non-passive via useEffect below
+  // so that preventDefault() actually stops the page from scrolling.
+  useEffect(() => {
+    if (!isEditor) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    function handler(e: WheelEvent) {
+      e.preventDefault();
+      const svgPt = clientToSvgPx(e.clientX, e.clientY);
+      if (!svgPt) return;
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      const newZoom = clamp(zoom * factor, ZOOM_MIN, ZOOM_MAX);
+      if (newZoom === zoom) return;
+      const cx = (svgPt.x - pan.x) / zoom;
+      const cy = (svgPt.y - pan.y) / zoom;
+      setPan({ x: svgPt.x - newZoom * cx, y: svgPt.y - newZoom * cy });
+      setZoom(newZoom);
+    }
+    svg.addEventListener("wheel", handler, { passive: false });
+    return () => svg.removeEventListener("wheel", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, pan, isEditor]);
+
+  // Programmatic zoom (used by the +/- buttons; anchors on the SVG center).
+  function zoomBy(factor: number) {
+    const newZoom = clamp(zoom * factor, ZOOM_MIN, ZOOM_MAX);
+    if (newZoom === zoom) return;
+    const cx = widthPx / 2;
+    const cy = heightPx / 2;
+    const px = (cx - pan.x) / zoom;
+    const py = (cy - pan.y) / zoom;
+    setPan({ x: cx - newZoom * px, y: cy - newZoom * py });
+    setZoom(newZoom);
+  }
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  // Pan handler — drives panning state via global mouse listeners while active.
+  useEffect(() => {
+    if (!panning) return;
+    function onMove(e: MouseEvent) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      // Convert deltas in client px → svg viewBox px using the SVG CTM.
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return;
+      const sx = 1 / ctm.a; // scale factor screen→svg
+      const sy = 1 / ctm.d;
+      const dx = (e.clientX - panning!.startClientX) * sx;
+      const dy = (e.clientY - panning!.startClientY) * sy;
+      setPan({ x: panning!.startPanX + dx, y: panning!.startPanY + dy });
+      setDidDrag(true);
+    }
+    function onUp() {
+      setPanning(null);
+      setTimeout(() => setDidDrag(false), 0);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [panning]);
 
   // Global mouse listeners while dragging — keeps drag alive even if cursor leaves SVG.
   useEffect(() => {
@@ -223,6 +319,19 @@ export function FloorPlan({
         viewBox={`0 0 ${widthPx} ${heightPx}`}
         preserveAspectRatio="xMidYMid meet"
         className="block max-w-full max-h-full select-none"
+        onMouseDown={(e) => {
+          if (!isEditor) return;
+          // Start pan only when mouse goes down on the SVG background itself
+          // (not on a child element like a room/furniture).
+          if (e.target !== e.currentTarget) return;
+          if (e.button !== 0) return;
+          setPanning({
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startPanX: pan.x,
+            startPanY: pan.y,
+          });
+        }}
         onClick={(e) => {
           if (didDrag) return;
           // Only deselect if click landed on the SVG background itself.
@@ -235,7 +344,7 @@ export function FloorPlan({
             setMenu(null);
           }
         }}
-        style={{ background: "transparent" }}
+        style={{ background: "transparent", cursor: panning ? "grabbing" : (isEditor ? "grab" : "default") }}
       >
         <defs>
           <pattern id="floor-grain" width="6" height="6" patternUnits="userSpaceOnUse">
@@ -257,6 +366,8 @@ export function FloorPlan({
             <line x1="0" y1="6" x2="40" y2="6" stroke="#E0D5BB" strokeWidth="0.4" />
           </pattern>
         </defs>
+
+        <g ref={contentRef} transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
 
         {/* Floors per room */}
         {plan.rooms.map((r) => {
@@ -416,7 +527,9 @@ export function FloorPlan({
           <Dimensions plan={plan} toX={toX} toY={toY} />
         )}
 
-        {/* Compass + Scale */}
+        </g>
+
+        {/* Compass + Scale — anchored to the SVG corners (outside zoom/pan group) */}
         {isEditor && (
           <>
             <Compass x={widthPx - 60} y={50} />
@@ -424,6 +537,52 @@ export function FloorPlan({
           </>
         )}
       </svg>
+
+      {/* Empty-state overlay */}
+      {isEditor && plan.rooms.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="card pointer-events-auto p-5 text-center max-w-[340px] shadow-md">
+            <div className="label-mono mb-2">CANVAS VAZIO</div>
+            <div className="editorial text-[18px] mb-1">Comece pelo briefing</div>
+            <p className="text-[12.5px] text-muted leading-relaxed mb-3">
+              Descreva o projeto na conversa à direita — área, ambientes, estilo —
+              e o Vibe começa a desenhar a planta.
+            </p>
+            {onLoadExample && (
+              <button onClick={onLoadExample} className="btn-outline text-[11.5px] py-1 px-2.5">
+                ↻ Carregar exemplo
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Zoom controls */}
+      {isEditor && (
+        <div className="absolute bottom-4 right-4 flex items-center gap-1 card px-1.5 py-1 shadow-sm pointer-events-auto">
+          <button
+            onClick={() => zoomBy(1 / 1.2)}
+            title="Diminuir zoom"
+            className="w-7 h-7 rounded text-muted hover:text-ink hover:bg-panel-alt flex items-center justify-center text-[14px] leading-none"
+          >
+            −
+          </button>
+          <button
+            onClick={resetView}
+            title="Ajustar à tela (resetar zoom)"
+            className="px-2 h-7 rounded text-[11px] font-mono uppercase tracking-wider text-ink hover:bg-panel-alt min-w-[54px]"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={() => zoomBy(1.2)}
+            title="Aumentar zoom"
+            className="w-7 h-7 rounded text-muted hover:text-ink hover:bg-panel-alt flex items-center justify-center text-[14px] leading-none"
+          >
+            +
+          </button>
+        </div>
+      )}
 
       {/* Context menu (HTML overlay so it isn't clipped by the SVG) */}
       {menu && isEditor && (

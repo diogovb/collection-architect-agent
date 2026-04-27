@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { applyTool } from "./floor-plan-engine";
+import { applyTool, emptyPlan } from "./floor-plan-engine";
 import {
+  INITIAL_VERSIONS,
   SEED_CAMERAS,
   SEED_CHAT,
   SEED_LIBRARY,
@@ -10,6 +11,7 @@ import {
   SEED_SHOPPING,
   SEED_SLIDES,
   SEED_VERSIONS,
+  WELCOME_CHAT,
   seedPlan,
   type SeededMessage,
 } from "./mock-data";
@@ -75,27 +77,30 @@ export interface VibeState {
   // Command palette
   paletteOpen: boolean;
   setPaletteOpen: (v: boolean) => void;
+
+  // Demo helper — load the canned seed project.
+  loadExample: () => void;
 }
 
 export function useVibeState(): VibeState {
   const [mode, setMode] = useState<Mode>("plan");
   const [rightTab, setRightTab] = useState<RightTab>("chat");
   const [lang, setLang] = useState<Lang>("pt");
-  const [plan, setPlan] = useState<FloorPlan>(() => seedPlan());
+  const [plan, setPlan] = useState<FloorPlan>(() => emptyPlan());
   const [selected, setSelected] = useState<SelectedElement | null>(null);
-  const [showDiff, setShowDiff] = useState(true);
-  const [diffTargetId, setDiffTargetId] = useState<string | null>("wall-divisor");
+  const [showDiff, setShowDiff] = useState(false);
+  const [diffTargetId, setDiffTargetId] = useState<string | null>(null);
 
-  const [cameras, setCameras] = useState<Camera[]>(SEED_CAMERAS);
-  const [activeCameraId, setActiveCameraId] = useState<string>(SEED_CAMERAS[0].id);
+  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [activeCameraId, setActiveCameraId] = useState<string>("");
 
-  const [refs, setRefs] = useState<ReferenceImage[]>(SEED_REFS);
-  const [library] = useState<CollectionItem[]>(SEED_LIBRARY);
-  const [shopping] = useState<ShoppingRow[]>(SEED_SHOPPING);
-  const [versions] = useState<Version[]>(SEED_VERSIONS);
-  const [slides, setSlides] = useState<Slide[]>(SEED_SLIDES);
-  const [activeSlideId, setActiveSlideId] = useState<string>(SEED_SLIDES[0].id);
-  const [chatHistory, setChatHistory] = useState<SeededMessage[]>(SEED_CHAT);
+  const [refs, setRefs] = useState<ReferenceImage[]>([]);
+  const [library, setLibrary] = useState<CollectionItem[]>(SEED_LIBRARY);
+  const [shopping, setShopping] = useState<ShoppingRow[]>([]);
+  const [versions, setVersions] = useState<Version[]>(INITIAL_VERSIONS);
+  const [slides, setSlides] = useState<Slide[]>([]);
+  const [activeSlideId, setActiveSlideId] = useState<string>("");
+  const [chatHistory, setChatHistory] = useState<SeededMessage[]>(WELCOME_CHAT);
 
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -105,7 +110,6 @@ export function useVibeState(): VibeState {
       applyTool(next, name, input);
       return next;
     });
-    // Mark all rendered cameras as outdated
     setCameras((prev) =>
       prev.map((c) => (c.status === "ready" ? { ...c, status: "outdated" } : c))
     );
@@ -142,6 +146,21 @@ export function useVibeState(): VibeState {
     }, 2400);
   }, []);
 
+  const loadExample = useCallback(() => {
+    setPlan(seedPlan());
+    setCameras(SEED_CAMERAS);
+    setActiveCameraId(SEED_CAMERAS[0]?.id ?? "");
+    setRefs(SEED_REFS);
+    setLibrary(SEED_LIBRARY);
+    setShopping(SEED_SHOPPING);
+    setVersions(SEED_VERSIONS);
+    setSlides(SEED_SLIDES);
+    setActiveSlideId(SEED_SLIDES[0]?.id ?? "");
+    setChatHistory(SEED_CHAT);
+    setShowDiff(true);
+    setDiffTargetId("wall-divisor");
+  }, []);
+
   return {
     mode, setMode, rightTab, setRightTab, lang, setLang,
     plan, setPlan, applyPlanTool, updateFurniture, updateRoom,
@@ -152,5 +171,6 @@ export function useVibeState(): VibeState {
     slides, setSlides, activeSlideId, setActiveSlideId,
     chatHistory, setChatHistory,
     paletteOpen, setPaletteOpen,
+    loadExample,
   };
 }

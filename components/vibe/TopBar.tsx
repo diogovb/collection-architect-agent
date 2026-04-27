@@ -3,6 +3,7 @@
 import { t } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n";
 import type { Mode } from "@/lib/vibe-types";
+import type { FloorPlan } from "@/lib/types";
 
 interface Props {
   mode: Mode;
@@ -10,11 +11,19 @@ interface Props {
   lang: Lang;
   setLang: (l: Lang) => void;
   onCommandPalette: () => void;
+  plan: FloorPlan;
+  versionLabel?: string;
 }
 
 const MODES: Mode[] = ["plan", "render", "presentation", "shopping"];
 
-export function TopBar({ mode, setMode, lang, setLang, onCommandPalette }: Props) {
+export function TopBar({ mode, setMode, lang, setLang, onCommandPalette, plan, versionLabel }: Props) {
+  const totalArea = plan.rooms.reduce((s, r) => s + r.width * r.height, 0);
+  const projectLabel =
+    plan.rooms.length === 0
+      ? "Novo projeto"
+      : `Projeto — ${totalArea.toFixed(1).replace(".", ",")} m²`;
+
   return (
     <header className="h-[52px] shrink-0 border-b border-line bg-panel flex items-center px-5 gap-6">
       {/* Logo */}
@@ -29,8 +38,8 @@ export function TopBar({ mode, setMode, lang, setLang, onCommandPalette }: Props
       {/* Project info */}
       <div className="flex items-center gap-3 min-w-0">
         <span className="label-mono">PROJETO</span>
-        <span className="text-[13px] font-medium truncate max-w-[260px]">Loft Atelier — 168 m²</span>
-        <span className="text-[11px] text-muted">v5</span>
+        <span className="text-[13px] font-medium truncate max-w-[260px]">{projectLabel}</span>
+        {versionLabel && <span className="text-[11px] text-muted">{versionLabel}</span>}
       </div>
 
       {/* Segmented mode control */}

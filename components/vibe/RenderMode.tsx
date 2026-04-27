@@ -21,6 +21,20 @@ const VARIATIONS = [
 ];
 
 export function RenderMode({ cameras, setCameras, activeCameraId, setActiveCameraId, generateCamera, lang }: Props) {
+  if (cameras.length === 0) {
+    return (
+      <div className="flex-1 min-w-0 min-h-0 h-full w-full flex items-center justify-center bg-bg p-8">
+        <div className="card max-w-[420px] p-6 text-center">
+          <div className="label-mono mb-2">RENDER</div>
+          <div className="editorial text-[20px] mb-2">Sem câmeras ainda</div>
+          <p className="text-[12.5px] text-muted leading-relaxed">
+            Volte para a Planta e peça ao Vibe para posicionar uma câmera no ambiente que você quer renderizar.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const cam = cameras.find((c) => c.id === activeCameraId) ?? cameras[0];
 
   function updateAtmosphere(patch: Partial<NonNullable<Camera["atmosphere"]>>) {

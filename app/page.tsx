@@ -142,6 +142,8 @@ export default function Page() {
         lang={v.lang}
         setLang={v.setLang}
         onCommandPalette={() => v.setPaletteOpen(true)}
+        plan={v.plan}
+        versionLabel={v.versions.find((vv) => vv.current)?.label.split(" — ")[0]}
       />
 
       <main className="flex-1 min-h-0 min-w-0 flex">
@@ -172,6 +174,7 @@ export default function Page() {
                   updateRoom={updateRoom}
                   removeSelected={removeSelected}
                   rotateSelected={rotateSelected}
+                  onLoadExample={v.loadExample}
                 />
               </div>
               {v.showDiff && v.diffTargetId === "wall-divisor" && (

@@ -139,27 +139,31 @@ export function ChatPanel({
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 py-4 space-y-5">
-        {history.map((m) => <MessageRow key={m.id} m={m} lang={lang} onApplyDiff={onApplyDiff} onCompareDiff={onCompareDiff} />)}
-        {streamingId && (
-          <div className="space-y-1.5 fade-up">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
-              <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
+        {history.map((m) => <MessageRow key={m.id} m={m} lang={lang} onApplyDiff={onApplyDiff} onCompareDiff={onCompareDiff} onSuggestionClick={send} />)}
+        {streamingId && (() => {
+          const { stripped } = stripSuggestions(streamingText);
+          return (
+            <div className="space-y-1.5 fade-up">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
+                <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
+              </div>
+              <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{stripped}<span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" /></div>
             </div>
-            <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{streamingText}<span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" /></div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Composer */}
       <div className="shrink-0 border-t border-line bg-panel-alt px-3 pt-2.5 pb-3 space-y-2">
-        {/* Quick prompts */}
+        {/* Quick prompts — click sends the prompt directly */}
         <div className="flex gap-1.5 flex-wrap">
           {QUICK_PROMPTS.map((q) => (
             <button
               key={q}
-              onClick={() => setInput((v) => (v ? v + " " + q : q))}
-              className="chip text-[11px]"
+              onClick={() => send(q)}
+              disabled={busy}
+              className="chip text-[11px] disabled:opacity-40"
             >
               {q}
             </button>
@@ -199,14 +203,17 @@ export function ChatPanel({
   );
 }
 
-function MessageRow({ m, lang, onApplyDiff, onCompareDiff }: {
+function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: {
   m: SeededMessage; lang: Lang;
   onApplyDiff?: () => void; onCompareDiff?: () => void;
+  onSuggestionClick?: (text: string) => void;
 }) {
   const role = m.role;
   const labelKey = role === "system" ? "chat.system" : role === "user" ? "chat.you" : "chat.vibe";
   const labelColor = role === "assistant" ? "text-accent" : role === "user" ? "text-ink" : "text-muted";
   const proactive = m.proactive;
+  const isAssistant = role === "assistant";
+  const { stripped, suggestions } = isAssistant ? stripSuggestions(m.content) : { stripped: m.content, suggestions: [] as string[] };
 
   return (
     <div className={`space-y-1.5 fade-up ${proactive ? "rounded-md border border-dashed border-accent/40 p-2.5 bg-accent-soft/30" : ""}`}>
@@ -218,7 +225,20 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff }: {
       {role === "system" ? (
         <div className="editorial text-[13.5px] leading-relaxed text-muted">{m.content}</div>
       ) : (
-        <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(m.content)}</div>
+        <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(stripped)}</div>
+      )}
+      {isAssistant && suggestions.length > 0 && onSuggestionClick && (
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          {suggestions.map((s, i) => (
+            <button
+              key={`${i}-${s}`}
+              onClick={() => onSuggestionClick(s)}
+              className="chip text-[11px] hover:bg-accent hover:text-white hover:border-accent transition-colors"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       )}
       {m.diff && (
         <div className="mt-2 card p-3 space-y-2">
@@ -235,6 +255,28 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff }: {
       )}
     </div>
   );
+}
+
+/** Pull `[suggestion]` chips out of an assistant message body.
+ * Brackets at the end of a line (or after a blank line) are surfaced as chips,
+ * not rendered inline. We avoid stripping bracket text that's clearly inline
+ * markdown like `[link](url)`.
+ */
+function stripSuggestions(text: string): { stripped: string; suggestions: string[] } {
+  if (!text) return { stripped: text, suggestions: [] };
+  const suggestions: string[] = [];
+  // Match [..] not followed by ( (which would indicate a markdown link).
+  const re = /\[([^\[\]\n]{1,80})\](?!\()/g;
+  const stripped = text
+    .replace(re, (_match, body: string) => {
+      const trimmed = body.trim();
+      if (trimmed.length > 0) suggestions.push(trimmed);
+      return "";
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { stripped, suggestions };
 }
 
 function renderInline(text: string): React.ReactNode {

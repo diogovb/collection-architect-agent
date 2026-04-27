@@ -197,6 +197,33 @@ export interface SeededMessage {
   proactive?: boolean;
 }
 
+function nowTime() {
+  return new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Welcome chat used on a fresh empty project. */
+export const WELCOME_CHAT: SeededMessage[] = [
+  {
+    id: "m-welcome",
+    role: "system",
+    time: nowTime(),
+    content:
+      "Projeto iniciado. Descreva o briefing do seu cliente — área, estilo, ambientes — e eu começo a projetar. Por exemplo: \"Apartamento de 86m² com 2 quartos, sala integrada à cozinha americana e suíte master\".",
+  },
+];
+
+/** Initial empty version so the Versions tab isn't empty. */
+export const INITIAL_VERSIONS: Version[] = [
+  {
+    id: "v-0.1",
+    label: "v0.1 — Projeto criado",
+    author: "Vibe",
+    createdAt: new Date().toISOString(),
+    note: "Aguardando briefing",
+    current: true,
+  },
+];
+
 export const SEED_CHAT: SeededMessage[] = [
   { id: "m-1", role: "system", time: "14:02", content: "Loft Atelier — projeto carregado a partir do briefing inicial." },
   { id: "m-2", role: "user", time: "14:04", content: "Quero algo aconchegante, mas com presença. Pensei em terracota e madeira." },
