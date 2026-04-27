@@ -79,7 +79,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex flex-1 min-w-0 min-h-0 h-full w-full">
       {/* Slides rail */}
       <aside className="w-[220px] shrink-0 border-r border-line bg-panel flex flex-col h-full">
         <div className="px-4 py-3 border-b border-line flex items-center justify-between">

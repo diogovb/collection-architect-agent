@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
-import type { Door, FloorPlan, Furniture, Room, SelectedElement, Window as PlanWindow } from "@/lib/types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Door, FloorPlan, Furniture, Room, SelectedElement, Wall, Window as PlanWindow } from "@/lib/types";
 import type { Camera } from "@/lib/vibe-types";
 
 const M_TO_PX = 50; // 1 meter = 50px
+const SNAP_M = 0.1; // 10cm grid for furniture/walls
+const MIN_ROOM_M = 1.0; // minimum room dimension
 
 interface Props {
   plan: FloorPlan;
@@ -17,6 +19,11 @@ interface Props {
   diffTargetId?: string | null;
   /** light/clean style for presentation. */
   variant?: "editor" | "presentation";
+  /** Mutations — provided in editor variant. */
+  updateFurniture?: (id: string, patch: Partial<Furniture>) => void;
+  updateRoom?: (id: string, patch: Partial<Room>) => void;
+  removeSelected?: () => void;
+  rotateSelected?: () => void;
 }
 
 interface Bounds { minX: number; minY: number; maxX: number; maxY: number; }
@@ -39,6 +46,20 @@ function fmtMm(m: number): string {
   return `${(m * 1000).toFixed(0)}`;
 }
 
+function snap(v: number, step = SNAP_M): number {
+  return Math.round(v / step) * step;
+}
+
+type DragKind =
+  | { kind: "furniture"; id: string; offsetX: number; offsetY: number }
+  | { kind: "wall"; roomId: string; wall: Wall; orig: { x: number; y: number; width: number; height: number } };
+
+type ContextMenuState = {
+  x: number; // page coords
+  y: number;
+  target: SelectedElement;
+} | null;
+
 export function FloorPlan({
   plan,
   selected,
@@ -49,6 +70,10 @@ export function FloorPlan({
   showDiff,
   diffTargetId,
   variant = "editor",
+  updateFurniture,
+  updateRoom,
+  removeSelected,
+  rotateSelected,
 }: Props) {
   const bounds = useMemo(() => computeBounds(plan), [plan]);
   const padding = 2;
@@ -61,147 +86,488 @@ export function FloorPlan({
   const toX = (m: number) => (m - bounds.minX + padding) * M_TO_PX;
   const toY = (m: number) => (m - bounds.minY + padding) * M_TO_PX;
 
-  return (
-    <svg
-      viewBox={`0 0 ${widthPx} ${heightPx}`}
-      preserveAspectRatio="xMidYMid meet"
-      className="block max-w-full max-h-full"
-      onClick={() => onSelect(null)}
-      style={{ background: "transparent" }}
-    >
-      <defs>
-        <pattern id="floor-grain" width="6" height="6" patternUnits="userSpaceOnUse">
-          <rect width="6" height="6" fill="#EFE8DB" />
-          <line x1="0" y1="0" x2="0" y2="6" stroke="#E6DFD2" strokeWidth="0.6" />
-        </pattern>
-        <pattern id="tile" width="20" height="20" patternUnits="userSpaceOnUse">
-          <rect width="20" height="20" fill="#EEE6D6" />
-          <line x1="0" y1="0" x2="20" y2="0" stroke="#DDD3BD" strokeWidth="0.5" />
-          <line x1="0" y1="0" x2="0" y2="20" stroke="#DDD3BD" strokeWidth="0.5" />
-        </pattern>
-        <pattern id="ceramica" width="14" height="14" patternUnits="userSpaceOnUse">
-          <rect width="14" height="14" fill="#EFE8DB" />
-          <rect x="0.5" y="0.5" width="13" height="13" fill="none" stroke="#DDD3BD" strokeWidth="0.5" />
-        </pattern>
-        <pattern id="madeira" width="40" height="6" patternUnits="userSpaceOnUse">
-          <rect width="40" height="6" fill="#EFE8DB" />
-          <line x1="0" y1="0" x2="40" y2="0" stroke="#E0D5BB" strokeWidth="0.4" />
-          <line x1="0" y1="6" x2="40" y2="6" stroke="#E0D5BB" strokeWidth="0.4" />
-        </pattern>
-      </defs>
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [hover, setHover] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragKind | null>(null);
+  const [didDrag, setDidDrag] = useState(false);
+  const [menu, setMenu] = useState<ContextMenuState>(null);
 
-      {/* Floors per room */}
-      {plan.rooms.map((r) => {
-        const fill =
-          r.floor === "porcelanato" ? "url(#tile)" :
-          r.floor === "madeira" ? "url(#madeira)" :
-          r.floor === "ceramica" ? "url(#ceramica)" :
-          "#EEE6D6";
-        const isSel = selected?.type === "room" && selected.id === r.id;
+  const isEditor = variant === "editor";
+
+  // Convert client coords → meters using SVG CTM
+  function clientToMeters(clientX: number, clientY: number): { mx: number; my: number } | null {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const p = pt.matrixTransform(ctm.inverse());
+    return {
+      mx: p.x / M_TO_PX + bounds.minX - padding,
+      my: p.y / M_TO_PX + bounds.minY - padding,
+    };
+  }
+
+  // Global mouse listeners while dragging — keeps drag alive even if cursor leaves SVG.
+  useEffect(() => {
+    if (!drag) return;
+    function onMove(e: MouseEvent) {
+      const m = clientToMeters(e.clientX, e.clientY);
+      if (!m) return;
+      setDidDrag(true);
+      if (drag!.kind === "furniture") {
+        const f = plan.furniture.find((x) => x.id === drag!.id);
+        if (!f || !updateFurniture) return;
+        const nx = snap(m.mx - drag!.offsetX);
+        const ny = snap(m.my - drag!.offsetY);
+        // Constrain to parent room bounds (allow free move otherwise)
+        const room = plan.rooms.find((r) => r.id === f.roomId);
+        let cx = nx;
+        let cy = ny;
+        if (room) {
+          cx = Math.max(room.x, Math.min(room.x + room.width - f.width, nx));
+          cy = Math.max(room.y, Math.min(room.y + room.height - f.height, ny));
+        }
+        updateFurniture(f.id, { x: cx, y: cy });
+      } else if (drag!.kind === "wall") {
+        const room = plan.rooms.find((r) => r.id === drag!.roomId);
+        if (!room || !updateRoom) return;
+        const orig = drag!.orig;
+        if (drag!.wall === "north") {
+          const newY = snap(m.my);
+          const newH = orig.y + orig.height - newY;
+          if (newH >= MIN_ROOM_M) updateRoom(room.id, { y: newY, height: newH });
+        } else if (drag!.wall === "south") {
+          const newH = snap(m.my - orig.y);
+          if (newH >= MIN_ROOM_M) updateRoom(room.id, { height: newH });
+        } else if (drag!.wall === "west") {
+          const newX = snap(m.mx);
+          const newW = orig.x + orig.width - newX;
+          if (newW >= MIN_ROOM_M) updateRoom(room.id, { x: newX, width: newW });
+        } else {
+          const newW = snap(m.mx - orig.x);
+          if (newW >= MIN_ROOM_M) updateRoom(room.id, { width: newW });
+        }
+      }
+    }
+    function onUp() {
+      setDrag(null);
+      // Reset didDrag on next tick so click handlers see it before clearing
+      setTimeout(() => setDidDrag(false), 0);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag, plan, updateFurniture, updateRoom]);
+
+  // Dismiss context menu on outside click / escape
+  useEffect(() => {
+    if (!menu) return;
+    function close() { setMenu(null); }
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") setMenu(null); }
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+
+  function startFurnitureDrag(e: React.MouseEvent, f: Furniture) {
+    if (!isEditor || !updateFurniture) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const m = clientToMeters(e.clientX, e.clientY);
+    if (!m) return;
+    setDrag({ kind: "furniture", id: f.id, offsetX: m.mx - f.x, offsetY: m.my - f.y });
+    onSelect({ type: "furniture", id: f.id });
+  }
+
+  function startWallDrag(e: React.MouseEvent, room: Room, wall: Wall) {
+    if (!isEditor || !updateRoom) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setDrag({
+      kind: "wall",
+      roomId: room.id,
+      wall,
+      orig: { x: room.x, y: room.y, width: room.width, height: room.height },
+    });
+    onSelect({ type: "wall", roomId: room.id, wall });
+  }
+
+  function handleSelect(target: SelectedElement, e?: React.MouseEvent) {
+    if (e) e.stopPropagation();
+    if (didDrag) return; // suppress click after drag
+    onSelect(target);
+  }
+
+  function handleContextMenu(e: React.MouseEvent, target: SelectedElement) {
+    if (!isEditor) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect(target);
+    setMenu({ x: e.clientX, y: e.clientY, target });
+  }
+
+  return (
+    <div className="relative w-full h-full flex items-center justify-center">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${widthPx} ${heightPx}`}
+        preserveAspectRatio="xMidYMid meet"
+        className="block max-w-full max-h-full select-none"
+        onClick={(e) => {
+          if (didDrag) return;
+          // Only deselect if click landed on the SVG background itself.
+          if (e.target === e.currentTarget) onSelect(null);
+        }}
+        onContextMenu={(e) => {
+          // Right-click on empty area: dismiss any selection menu.
+          if (e.target === e.currentTarget) {
+            e.preventDefault();
+            setMenu(null);
+          }
+        }}
+        style={{ background: "transparent" }}
+      >
+        <defs>
+          <pattern id="floor-grain" width="6" height="6" patternUnits="userSpaceOnUse">
+            <rect width="6" height="6" fill="#EFE8DB" />
+            <line x1="0" y1="0" x2="0" y2="6" stroke="#E6DFD2" strokeWidth="0.6" />
+          </pattern>
+          <pattern id="tile" width="20" height="20" patternUnits="userSpaceOnUse">
+            <rect width="20" height="20" fill="#EEE6D6" />
+            <line x1="0" y1="0" x2="20" y2="0" stroke="#DDD3BD" strokeWidth="0.5" />
+            <line x1="0" y1="0" x2="0" y2="20" stroke="#DDD3BD" strokeWidth="0.5" />
+          </pattern>
+          <pattern id="ceramica" width="14" height="14" patternUnits="userSpaceOnUse">
+            <rect width="14" height="14" fill="#EFE8DB" />
+            <rect x="0.5" y="0.5" width="13" height="13" fill="none" stroke="#DDD3BD" strokeWidth="0.5" />
+          </pattern>
+          <pattern id="madeira" width="40" height="6" patternUnits="userSpaceOnUse">
+            <rect width="40" height="6" fill="#EFE8DB" />
+            <line x1="0" y1="0" x2="40" y2="0" stroke="#E0D5BB" strokeWidth="0.4" />
+            <line x1="0" y1="6" x2="40" y2="6" stroke="#E0D5BB" strokeWidth="0.4" />
+          </pattern>
+        </defs>
+
+        {/* Floors per room */}
+        {plan.rooms.map((r) => {
+          const fill =
+            r.floor === "porcelanato" ? "url(#tile)" :
+            r.floor === "madeira" ? "url(#madeira)" :
+            r.floor === "ceramica" ? "url(#ceramica)" :
+            "#EEE6D6";
+          const isSel = selected?.type === "room" && selected.id === r.id;
+          const isHover = hover === `room-${r.id}`;
+          return (
+            <g key={r.id}
+               onClick={(e) => handleSelect({ type: "room", id: r.id }, e)}
+               onContextMenu={(e) => handleContextMenu(e, { type: "room", id: r.id })}
+               onMouseEnter={() => setHover(`room-${r.id}`)}
+               onMouseLeave={() => setHover((h) => (h === `room-${r.id}` ? null : h))}
+               style={{ cursor: isEditor ? "pointer" : "default" }}>
+              <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX} fill={fill} />
+              {isHover && !isSel && isEditor && (
+                <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX}
+                      fill="#B8552E" opacity="0.04" pointerEvents="none" />
+              )}
+              {isSel && (
+                <>
+                  <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX}
+                        fill="#B8552E" opacity="0.06" pointerEvents="none" />
+                  <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX}
+                        fill="none" stroke="#B8552E" strokeWidth="2" strokeDasharray="6 3" pointerEvents="none" />
+                </>
+              )}
+              <text
+                x={toX(r.x + r.width / 2)} y={toY(r.y + r.height / 2) - 4}
+                textAnchor="middle" fontSize="11"
+                fill="#4A4338"
+                pointerEvents="none"
+                style={{ fontFamily: "var(--font-instrument-serif)", fontStyle: "italic" }}
+              >
+                {r.name}
+              </text>
+              <text
+                x={toX(r.x + r.width / 2)} y={toY(r.y + r.height / 2) + 10}
+                textAnchor="middle" fontSize="8"
+                fill="#8C8478"
+                pointerEvents="none"
+                style={{ fontFamily: "var(--font-jetbrains-mono)", letterSpacing: "0.1em" }}
+              >
+                {(r.width * r.height).toFixed(1).replace(".", ",")} M²
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Walls — drawn as room outlines (visual only, no events). */}
+        {plan.rooms.map((r) => {
+          const isSel = selected?.type === "room" && selected.id === r.id;
+          return (
+            <rect
+              key={`wall-${r.id}`}
+              x={toX(r.x)} y={toY(r.y)}
+              width={r.width * M_TO_PX} height={r.height * M_TO_PX}
+              fill="none"
+              stroke="#1F1B16"
+              strokeWidth={isSel ? 9 : 8}
+              shapeRendering="crispEdges"
+              pointerEvents="none"
+            />
+          );
+        })}
+
+        {/* External walls overlay */}
+        <ExternalOutline plan={plan} toX={toX} toY={toY} />
+
+        {/* Door openings */}
+        {plan.doors.map((d) => {
+          const isSel = selected?.type === "door" && selected.id === d.id;
+          const isHover = hover === `door-${d.id}`;
+          return (
+            <DoorMark key={d.id} door={d} plan={plan} toX={toX} toY={toY}
+                      selected={isSel}
+                      hover={isHover && isEditor}
+                      onSelect={(e) => handleSelect({ type: "door", id: d.id }, e)}
+                      onContextMenu={(e) => handleContextMenu(e, { type: "door", id: d.id })}
+                      onHoverChange={(v) => setHover(v ? `door-${d.id}` : (h) => h === `door-${d.id}` ? null : h)}
+                      interactive={isEditor} />
+          );
+        })}
+
+        {/* Windows */}
+        {plan.windows.map((w) => {
+          const isSel = selected?.type === "window" && selected.id === w.id;
+          const isHover = hover === `window-${w.id}`;
+          return (
+            <WindowMark key={w.id} win={w} plan={plan} toX={toX} toY={toY}
+                        selected={isSel}
+                        hover={isHover && isEditor}
+                        onSelect={(e) => handleSelect({ type: "window", id: w.id }, e)}
+                        onContextMenu={(e) => handleContextMenu(e, { type: "window", id: w.id })}
+                        onHoverChange={(v) => setHover(v ? `window-${w.id}` : (h) => h === `window-${w.id}` ? null : h)}
+                        interactive={isEditor} />
+          );
+        })}
+
+        {/* Furniture */}
+        {plan.furniture.map((f) => {
+          const isSel = selected?.type === "furniture" && selected.id === f.id;
+          const isHover = hover === `furniture-${f.id}`;
+          return (
+            <FurnitureMark key={f.id} item={f} toX={toX} toY={toY}
+                           selected={isSel}
+                           hover={isHover && isEditor}
+                           onMouseDown={(e) => startFurnitureDrag(e, f)}
+                           onClick={(e) => handleSelect({ type: "furniture", id: f.id }, e)}
+                           onContextMenu={(e) => handleContextMenu(e, { type: "furniture", id: f.id })}
+                           onHoverChange={(v) => setHover(v ? `furniture-${f.id}` : (h) => h === `furniture-${f.id}` ? null : h)}
+                           diff={showDiff && diffTargetId === f.id}
+                           interactive={isEditor} />
+          );
+        })}
+
+        {/* Wall handles for selected room (drag to resize) */}
+        {isEditor && plan.rooms.map((r) => (
+          <WallHandles
+            key={`wh-${r.id}`}
+            room={r}
+            toX={toX}
+            toY={toY}
+            selected={selected}
+            hover={hover}
+            onHoverChange={(wall, v) => setHover(v ? `wall-${r.id}-${wall}` : (h) => h === `wall-${r.id}-${wall}` ? null : h)}
+            onClick={(wall, e) => handleSelect({ type: "wall", roomId: r.id, wall }, e)}
+            onContextMenu={(wall, e) => handleContextMenu(e, { type: "wall", roomId: r.id, wall })}
+            onMouseDown={(wall, e) => startWallDrag(e, r, wall)}
+          />
+        ))}
+
+        {/* Live-resize dimension readouts while dragging a wall */}
+        {drag?.kind === "wall" && (() => {
+          const room = plan.rooms.find((r) => r.id === drag.roomId);
+          if (!room) return null;
+          return <ResizeReadout room={room} toX={toX} toY={toY} />;
+        })()}
+
+        {/* Diff for wall-divisor */}
+        {showDiff && diffTargetId === "wall-divisor" && (
+          <DivisorDiff plan={plan} toX={toX} toY={toY} />
+        )}
+
+        {/* Cameras */}
+        {isEditor && cameras.map((c) => (
+          <CameraPin key={c.id} cam={c} toX={toX} toY={toY}
+                     active={activeCameraId === c.id}
+                     onSelect={() => onSelectCamera?.(c.id)} />
+        ))}
+
+        {/* Dimensions for living room (illustrative) */}
+        {isEditor && (
+          <Dimensions plan={plan} toX={toX} toY={toY} />
+        )}
+
+        {/* Compass + Scale */}
+        {isEditor && (
+          <>
+            <Compass x={widthPx - 60} y={50} />
+            <ScaleBar x={30} y={heightPx - 30} />
+          </>
+        )}
+      </svg>
+
+      {/* Context menu (HTML overlay so it isn't clipped by the SVG) */}
+      {menu && isEditor && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          target={menu.target}
+          onClose={() => setMenu(null)}
+          onRemove={() => { removeSelected?.(); setMenu(null); }}
+          onRotate={() => { rotateSelected?.(); setMenu(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- Wall handles ----------
+
+function WallHandles({
+  room, toX, toY, selected, hover,
+  onHoverChange, onClick, onContextMenu, onMouseDown,
+}: {
+  room: Room;
+  toX: (m: number) => number;
+  toY: (m: number) => number;
+  selected: SelectedElement | null;
+  hover: string | null;
+  onHoverChange: (wall: Wall, hovering: boolean) => void;
+  onClick: (wall: Wall, e: React.MouseEvent) => void;
+  onContextMenu: (wall: Wall, e: React.MouseEvent) => void;
+  onMouseDown: (wall: Wall, e: React.MouseEvent) => void;
+}) {
+  const HANDLE_PX = 10; // hit area thickness
+  const x = toX(room.x);
+  const y = toY(room.y);
+  const w = room.width * M_TO_PX;
+  const h = room.height * M_TO_PX;
+
+  const walls: { wall: Wall; cursor: string; rect: { x: number; y: number; w: number; h: number } }[] = [
+    { wall: "north", cursor: "ns-resize", rect: { x, y: y - HANDLE_PX / 2, w, h: HANDLE_PX } },
+    { wall: "south", cursor: "ns-resize", rect: { x, y: y + h - HANDLE_PX / 2, w, h: HANDLE_PX } },
+    { wall: "west",  cursor: "ew-resize", rect: { x: x - HANDLE_PX / 2, y, w: HANDLE_PX, h } },
+    { wall: "east",  cursor: "ew-resize", rect: { x: x + w - HANDLE_PX / 2, y, w: HANDLE_PX, h } },
+  ];
+
+  return (
+    <g>
+      {walls.map(({ wall, cursor, rect }) => {
+        const isSel = selected?.type === "wall" && selected.roomId === room.id && selected.wall === wall;
+        const isHover = hover === `wall-${room.id}-${wall}`;
         return (
-          <g key={r.id}
-             onClick={(e) => { e.stopPropagation(); onSelect({ type: "room", id: r.id }); }}
-             style={{ cursor: "pointer" }}>
-            <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX} fill={fill} />
-            {isSel && (
-              <rect x={toX(r.x)} y={toY(r.y)} width={r.width * M_TO_PX} height={r.height * M_TO_PX}
-                    fill="none" stroke="#B8552E" strokeWidth="2" strokeDasharray="6 3" />
+          <g key={wall}>
+            {/* Visible highlight on hover/select */}
+            {(isSel || isHover) && (
+              <rect
+                x={rect.x} y={rect.y} width={rect.w} height={rect.h}
+                fill={isSel ? "#B8552E" : "#B8552E"}
+                opacity={isSel ? 0.55 : 0.25}
+                pointerEvents="none"
+              />
             )}
-            <text
-              x={toX(r.x + r.width / 2)} y={toY(r.y + r.height / 2) - 4}
-              textAnchor="middle" fontSize="11"
-              fill="#4A4338"
-              style={{ fontFamily: "var(--font-instrument-serif)", fontStyle: "italic" }}
-            >
-              {r.name}
-            </text>
-            <text
-              x={toX(r.x + r.width / 2)} y={toY(r.y + r.height / 2) + 10}
-              textAnchor="middle" fontSize="8"
-              fill="#8C8478"
-              style={{ fontFamily: "var(--font-jetbrains-mono)", letterSpacing: "0.1em" }}
-            >
-              {(r.width * r.height).toFixed(1).replace(".", ",")} M²
-            </text>
+            {/* Hit area */}
+            <rect
+              x={rect.x} y={rect.y} width={rect.w} height={rect.h}
+              fill="transparent"
+              style={{ cursor }}
+              onMouseEnter={() => onHoverChange(wall, true)}
+              onMouseLeave={() => onHoverChange(wall, false)}
+              onMouseDown={(e) => onMouseDown(wall, e)}
+              onClick={(e) => onClick(wall, e)}
+              onContextMenu={(e) => onContextMenu(wall, e)}
+            />
           </g>
         );
       })}
+    </g>
+  );
+}
 
-      {/* Walls — drawn as room outlines with a thicker external edge.
-          Approach: each room has a wall stroke; external/internal handled by overlap. */}
-      {plan.rooms.map((r) => {
-        const isSel = selected?.type === "room" && selected.id === r.id;
-        return (
-          <rect
-            key={`wall-${r.id}`}
-            x={toX(r.x)} y={toY(r.y)}
-            width={r.width * M_TO_PX} height={r.height * M_TO_PX}
-            fill="none"
-            stroke="#1F1B16"
-            strokeWidth={isSel ? 9 : 8}
-            shapeRendering="crispEdges"
-            pointerEvents="none"
-          />
-        );
-      })}
+function ResizeReadout({ room, toX, toY }: { room: Room; toX: (m: number) => number; toY: (m: number) => number; }) {
+  const cx = toX(room.x + room.width / 2);
+  const cy = toY(room.y + room.height / 2);
+  return (
+    <g pointerEvents="none">
+      <rect x={cx - 60} y={cy - 14} width={120} height={28} rx={4} fill="#1F1B16" opacity="0.92" />
+      <text x={cx} y={cy + 5} textAnchor="middle" fontSize="11" fill="#FAF7F0"
+            style={{ fontFamily: "var(--font-jetbrains-mono)", letterSpacing: "0.08em" }}>
+        {room.width.toFixed(2)} × {room.height.toFixed(2)} M
+      </text>
+    </g>
+  );
+}
 
-      {/* External walls overlay (compute outline). */}
-      <ExternalOutline plan={plan} toX={toX} toY={toY} />
+// ---------- Context menu ----------
 
-      {/* Door openings (cut walls with white rect + swing arc) */}
-      {plan.doors.map((d) => (
-        <DoorMark key={d.id} door={d} plan={plan} toX={toX} toY={toY}
-                  selected={selected?.type === "door" && selected.id === d.id}
-                  onSelect={() => onSelect({ type: "door", id: d.id })} />
-      ))}
-
-      {/* Windows */}
-      {plan.windows.map((w) => (
-        <WindowMark key={w.id} win={w} plan={plan} toX={toX} toY={toY}
-                    selected={selected?.type === "window" && selected.id === w.id}
-                    onSelect={() => onSelect({ type: "window", id: w.id })} />
-      ))}
-
-      {/* Furniture */}
-      {plan.furniture.map((f) => (
-        <FurnitureMark key={f.id} item={f} toX={toX} toY={toY}
-                       selected={selected?.type === "furniture" && selected.id === f.id}
-                       onSelect={() => onSelect({ type: "furniture", id: f.id })}
-                       diff={showDiff && diffTargetId === f.id} />
-      ))}
-
-      {/* Diff for wall-divisor (synthetic): show ghost old wall */}
-      {showDiff && diffTargetId === "wall-divisor" && (
-        <DivisorDiff plan={plan} toX={toX} toY={toY} />
+function ContextMenu({
+  x, y, target, onClose, onRemove, onRotate,
+}: {
+  x: number;
+  y: number;
+  target: SelectedElement;
+  onClose: () => void;
+  onRemove: () => void;
+  onRotate: () => void;
+}) {
+  const canRotate = target.type === "furniture";
+  const canRemove = target.type !== "wall";
+  return (
+    <div
+      className="fixed z-50 bg-panel border border-line rounded-md shadow-[0_8px_24px_-12px_rgba(31,27,22,0.25)] py-1 min-w-[160px]"
+      style={{ left: x, top: y }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {canRotate && (
+        <button
+          className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-panel-alt"
+          onClick={onRotate}
+        >
+          Girar 90° <span className="text-muted ml-2 font-mono text-[10px]">R</span>
+        </button>
       )}
-
-      {/* Cameras */}
-      {variant === "editor" && cameras.map((c) => (
-        <CameraPin key={c.id} cam={c} toX={toX} toY={toY}
-                   active={activeCameraId === c.id}
-                   onSelect={() => onSelectCamera?.(c.id)} />
-      ))}
-
-      {/* Dimensions for living room (illustrative) */}
-      {variant === "editor" && (
-        <Dimensions plan={plan} toX={toX} toY={toY} />
+      {canRemove && (
+        <button
+          className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-panel-alt text-[#B8552E]"
+          onClick={onRemove}
+        >
+          Remover <span className="text-muted ml-2 font-mono text-[10px]">DEL</span>
+        </button>
       )}
-
-      {/* Compass + Scale */}
-      {variant === "editor" && (
-        <>
-          <Compass x={widthPx - 60} y={50} />
-          <ScaleBar x={30} y={heightPx - 30} />
-        </>
-      )}
-    </svg>
+      <div className="h-px bg-line my-1" />
+      <button
+        className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-panel-alt text-muted"
+        onClick={onClose}
+      >
+        Cancelar
+      </button>
+    </div>
   );
 }
 
 // ---------- Helpers (subcomponents) ----------
 
 function ExternalOutline({ plan, toX, toY }: { plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number; }) {
-  // We don't compute true polygon outline here; keep a thicker secondary stroke around overall bbox.
   if (plan.rooms.length === 0) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const r of plan.rooms) {
@@ -218,7 +584,6 @@ function ExternalOutline({ plan, toX, toY }: { plan: FloorPlan; toX: (m: number)
 }
 
 function wallSegment(room: Room, wall: Door["wall"], pos: number, size: number) {
-  // Returns two points (x1,y1)-(x2,y2) along the wall in meters
   const along = (start: number, len: number) => start + (len * pos) - size / 2;
   if (wall === "north") {
     const x1 = along(room.x, room.width);
@@ -232,22 +597,24 @@ function wallSegment(room: Room, wall: Door["wall"], pos: number, size: number) 
     const y1 = along(room.y, room.height);
     return { x1: room.x, y1, x2: room.x, y2: y1 + size, axis: "v" as const };
   }
-  // east
   const y1 = along(room.y, room.height);
   return { x1: room.x + room.width, y1, x2: room.x + room.width, y2: y1 + size, axis: "v" as const };
 }
 
-function DoorMark({ door, plan, toX, toY, selected, onSelect }:
-  { door: Door; plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number; selected?: boolean; onSelect: () => void; }) {
+function DoorMark({ door, plan, toX, toY, selected, hover, onSelect, onContextMenu, onHoverChange, interactive }:
+  { door: Door; plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number;
+    selected?: boolean; hover?: boolean;
+    onSelect: (e: React.MouseEvent) => void;
+    onContextMenu: (e: React.MouseEvent) => void;
+    onHoverChange: (v: boolean) => void;
+    interactive: boolean; }) {
   const room = plan.rooms.find((r) => r.id === door.roomId);
   if (!room) return null;
   const seg = wallSegment(room, door.wall, door.position, door.size);
-  // White rect cuts the wall
   const sx = toX(Math.min(seg.x1, seg.x2));
   const sy = toY(Math.min(seg.y1, seg.y2));
   const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 12;
   const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 12;
-  // Swing arc
   const radius = door.size * M_TO_PX;
   let arc = "";
   if (seg.axis === "h") {
@@ -261,17 +628,32 @@ function DoorMark({ door, plan, toX, toY, selected, onSelect }:
     const sweepDir = door.wall === "west" ? 1 : -1;
     arc = `M ${cx} ${cy} a ${radius} ${radius} 0 0 1 ${sweepDir * radius} ${radius}`;
   }
+  const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#8C8478";
+  const sw = selected ? 1.4 : 0.8;
   return (
-    <g onClick={(e) => { e.stopPropagation(); onSelect(); }} style={{ cursor: "pointer" }}>
+    <g onClick={onSelect}
+       onContextMenu={onContextMenu}
+       onMouseEnter={() => onHoverChange(true)}
+       onMouseLeave={() => onHoverChange(false)}
+       style={{ cursor: interactive ? "pointer" : "default" }}>
       <rect x={sx - (seg.axis === "h" ? 0 : 6)} y={sy - (seg.axis === "v" ? 0 : 6)}
             width={w} height={h} fill="#FAF7F0" />
-      <path d={arc} fill="none" stroke={selected ? "#B8552E" : "#8C8478"} strokeWidth="0.8" />
+      <path d={arc} fill="none" stroke={stroke} strokeWidth={sw} />
+      {selected && (
+        <rect x={sx - 6} y={sy - 6} width={w + 12} height={h + 12} fill="none"
+              stroke="#B8552E" strokeWidth="1" strokeDasharray="3 3" pointerEvents="none" />
+      )}
     </g>
   );
 }
 
-function WindowMark({ win, plan, toX, toY, selected, onSelect }:
-  { win: PlanWindow; plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number; selected?: boolean; onSelect: () => void; }) {
+function WindowMark({ win, plan, toX, toY, selected, hover, onSelect, onContextMenu, onHoverChange, interactive }:
+  { win: PlanWindow; plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number;
+    selected?: boolean; hover?: boolean;
+    onSelect: (e: React.MouseEvent) => void;
+    onContextMenu: (e: React.MouseEvent) => void;
+    onHoverChange: (v: boolean) => void;
+    interactive: boolean; }) {
   const room = plan.rooms.find((r) => r.id === win.roomId);
   if (!room) return null;
   const seg = wallSegment(room, win.wall, win.position, win.size);
@@ -279,10 +661,15 @@ function WindowMark({ win, plan, toX, toY, selected, onSelect }:
   const sy = toY(Math.min(seg.y1, seg.y2));
   const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 10;
   const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 10;
+  const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#1F1B16";
   return (
-    <g onClick={(e) => { e.stopPropagation(); onSelect(); }} style={{ cursor: "pointer" }}>
+    <g onClick={onSelect}
+       onContextMenu={onContextMenu}
+       onMouseEnter={() => onHoverChange(true)}
+       onMouseLeave={() => onHoverChange(false)}
+       style={{ cursor: interactive ? "pointer" : "default" }}>
       <rect x={sx - (seg.axis === "h" ? 0 : 5)} y={sy - (seg.axis === "v" ? 0 : 5)}
-            width={w} height={h} fill="#FAF7F0" stroke={selected ? "#B8552E" : "#1F1B16"} strokeWidth="1.5" />
+            width={w} height={h} fill="#FAF7F0" stroke={stroke} strokeWidth="1.5" />
       {seg.axis === "h" ? (
         <line x1={sx} y1={sy} x2={sx + w} y2={sy} stroke="#1F1B16" strokeWidth="1" />
       ) : (
@@ -292,21 +679,39 @@ function WindowMark({ win, plan, toX, toY, selected, onSelect }:
   );
 }
 
-function FurnitureMark({ item, toX, toY, selected, onSelect, diff }:
-  { item: Furniture; toX: (m: number) => number; toY: (m: number) => number; selected?: boolean; onSelect: () => void; diff?: boolean; }) {
+function FurnitureMark({ item, toX, toY, selected, hover, onMouseDown, onClick, onContextMenu, onHoverChange, diff, interactive }:
+  { item: Furniture; toX: (m: number) => number; toY: (m: number) => number;
+    selected?: boolean; hover?: boolean;
+    onMouseDown: (e: React.MouseEvent) => void;
+    onClick: (e: React.MouseEvent) => void;
+    onContextMenu: (e: React.MouseEvent) => void;
+    onHoverChange: (v: boolean) => void;
+    diff?: boolean; interactive: boolean; }) {
   const x = toX(item.x);
   const y = toY(item.y);
   const w = item.width * M_TO_PX;
   const h = item.height * M_TO_PX;
   const fill = furnitureFill(item.type);
-  const stroke = selected ? "#B8552E" : "#3A332A";
+  const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#3A332A";
+  const sw = selected ? 2 : hover ? 1.4 : 0.8;
+  const rotation = item.rotation ?? 0;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
 
   return (
-    <g onClick={(e) => { e.stopPropagation(); onSelect(); }} style={{ cursor: "pointer" }}>
-      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : 0.8} rx="2" />
+    <g
+      transform={rotation ? `rotate(${rotation} ${cx} ${cy})` : undefined}
+      onMouseDown={onMouseDown}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onMouseEnter={() => onHoverChange(true)}
+      onMouseLeave={() => onHoverChange(false)}
+      style={{ cursor: interactive ? "move" : "default" }}>
+      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={sw} rx="2" />
       {furnitureGlyph(item.type, x, y, w, h)}
       {selected && (
-        <rect x={x - 4} y={y - 4} width={w + 8} height={h + 8} fill="none" stroke="#B8552E" strokeDasharray="3 3" strokeWidth="1" rx="3" />
+        <rect x={x - 4} y={y - 4} width={w + 8} height={h + 8} fill="none"
+              stroke="#B8552E" strokeDasharray="3 3" strokeWidth="1" rx="3" pointerEvents="none" />
       )}
       {diff && (
         <rect x={x + 25} y={y + 5} width={50} height={16} rx="3" fill="#B8552E" >
@@ -338,7 +743,6 @@ function furnitureFill(type: string): string {
 
 function furnitureGlyph(type: string, x: number, y: number, w: number, h: number) {
   if (type === "sofa") {
-    // Cushion lines
     return (
       <>
         <line x1={x + 6} y1={y + 6} x2={x + w - 6} y2={y + 6} stroke="#A89C84" strokeWidth="0.6" />
@@ -372,8 +776,7 @@ function furnitureGlyph(type: string, x: number, y: number, w: number, h: number
 }
 
 function DivisorDiff({ plan, toX, toY }: { plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number; }) {
-  // Wall between dining (room-dining: x=2.4..6.4, y=5..8.4) and living
-  // Display ghost old position and new position 50cm down
+  void plan;
   const oldY = toY(5.0);
   const newY = toY(5.5);
   const x1 = toX(2.4);
@@ -454,7 +857,7 @@ function Compass({ x, y }: { x: number; y: number }) {
 }
 
 function ScaleBar({ x, y }: { x: number; y: number }) {
-  const seg = M_TO_PX; // 1m
+  const seg = M_TO_PX;
   return (
     <g transform={`translate(${x}, ${y})`} pointerEvents="none">
       <line x1="0" y1="0" x2={seg * 5} y2="0" stroke="#1F1B16" strokeWidth="1.2" />

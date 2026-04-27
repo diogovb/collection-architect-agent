@@ -32,7 +32,7 @@ export function RenderMode({ cameras, setCameras, activeCameraId, setActiveCamer
   }
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex flex-1 min-w-0 min-h-0 h-full w-full">
       {/* Camera rail */}
       <aside className="w-[240px] shrink-0 border-r border-line bg-panel flex flex-col h-full">
         <div className="px-4 py-3 border-b border-line">

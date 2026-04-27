@@ -54,6 +54,26 @@ export interface CollectionItem {
   inProject?: boolean;
 }
 
+export type ItemStatus = "sugerido" | "revisao" | "aprovado" | "alternativa" | "comprado" | "aguardando_orcamento" | "orcamento_recebido" | "especificado";
+
+export type FulfillmentChannel =
+  | "online_estoque"
+  | "online_encomenda"
+  | "orcamento"
+  | "especificacao_pura";
+
+export interface Partner {
+  name: string;
+  type: string;
+  contact?: string;
+}
+
+export interface Quote {
+  value: number;
+  delivery: string;
+  validity: string;
+}
+
 export interface ShoppingRow {
   id: string;
   room: string;
@@ -63,6 +83,19 @@ export interface ShoppingRow {
   qty: number;
   unitPrice: number;
   swatch: string;
+  /** 0..1 share of unitPrice that goes to architect commission. 0 means none. */
+  commissionRate: number;
+  /** 1-2 sentence editorial reason. Required for status to leave "sugerido". */
+  reason: string;
+  status: ItemStatus;
+  /** Optional client note shown in architect view when status === "alternativa". */
+  clientNote?: string;
+  fulfillment: FulfillmentChannel;
+  /** For online_encomenda. */
+  leadTime?: string;
+  /** For orcamento. */
+  partner?: Partner;
+  quote?: Quote;
 }
 
 export interface Version {
