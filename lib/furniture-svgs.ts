@@ -1,343 +1,1254 @@
-// Plan-view SVG path data for each furniture type.
-// Each viewBox uses 1 unit = 1 cm so it lines up with FURN_SIZE in meters.
-// Renderer (FloorPlanCanvas) scales the viewBox to the furniture rectangle in
-// world pixels, then strokes/fills each path. Pen weights are post-counter-scaled
-// so they stay constant in screen pixels regardless of furniture size.
+// Architectural plan-view symbols for every furniture / equipment type.
+// Path coordinates are expressed in CENTIMETERS within a viewBox of size
+// (sizeM.w * 100) x (sizeM.h * 100). The canvas multiplies by PX_PER_M / 100
+// to render at the right scale.
+//
+// Style guide (AutoCAD-ish):
+//   - Heavy lines (1.6–1.9px) for object outlines
+//   - Medium lines (0.9–1.1px) for internal subdivisions
+//   - Fine lines (0.5–0.7px) for surface texture / patterns
+//   - Off-white fill (#f5f3ec) reads as "white object" against any floor
+//   - Dark fills (#2c2f3a) for appliances (fogão, geladeira, micro-ondas)
+//   - Dashed lines for projection elements (rugs, hood, pergola)
 
 import type { FurnitureType } from "./types";
 
-export interface SvgPath {
+export interface PathSpec {
   d: string;
-  /** Stroke pen weight in screen pixels (after counter-scaling). */
-  weight?: number;
-  /** Fill style. If omitted, the path is not filled. */
-  fill?: string;
-  /** Stroke style. If omitted, the default outline color is used. */
-  stroke?: string;
-  /** Set to false to skip stroking entirely. */
-  noStroke?: boolean;
-  /** Optional dash pattern in screen pixels. */
-  dash?: number[];
+  fill?: string | null;
+  stroke?: string | null;
+  strokeWidth?: number; // px
+  dashed?: boolean;
+  /** circle helper: { cx, cy, r } shorthand instead of d */
+  circle?: { cx: number; cy: number; r: number };
 }
 
-export interface FurnitureSvg {
-  /** viewBox dimensions; 1 unit = 1 cm. */
-  viewBox: { w: number; h: number };
-  paths: SvgPath[];
+export interface FurnitureDef {
+  /** real-world size in meters */
+  sizeM: { w: number; h: number };
+  /** PT-BR label */
+  label: string;
+  /** category for prompt grouping */
+  category: string;
+  /** ordered drawing operations (back to front) */
+  paths: PathSpec[];
 }
 
-// Reusable fill / stroke styles
-const FILL_BODY = "rgba(28,38,66,0.78)"; // bluish dark — plays well with the gold trim
-const FILL_LIGHT = "rgba(245,242,232,0.92)"; // off-white for sanitary/appliance
-const FILL_GLASS = "rgba(126,182,255,0.18)";
-const STROKE_GOLD = "rgba(198,169,98,0.95)";
-const STROKE_GOLD_SOFT = "rgba(198,169,98,0.55)";
-const STROKE_DARK = "rgba(15,15,25,0.85)";
+// ---------- Style tokens ----------
+const BODY = "#f5f3ec";
+const BODY_SOFT = "#ebe6d8";
+const BODY_DARK = "#2c2f3a";
+const APPLIANCE = "#3a3f4f";
+const APPLIANCE_LIGHT = "#5a6172";
+const STROKE = "#141826";
+const STROKE_FINE = "rgba(20,24,38,0.55)";
+const GLASS = "rgba(150,200,240,0.55)";
+const WATER = "rgba(120,170,220,0.55)";
+const WATER_DARK = "rgba(80,130,190,0.85)";
+const GREEN = "rgba(110,165,90,0.72)";
+const GREEN_DARK = "rgba(70,120,55,0.95)";
+const STONE = "#cfc8b8";
 
-// ---------- Helpers to build common shapes ----------
+// ---------- Helpers (terse path builders) ----------
+function rect(x: number, y: number, w: number, h: number): string {
+  return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+}
 function rrect(x: number, y: number, w: number, h: number, r: number): string {
-  const rr = Math.min(r, w / 2, h / 2);
-  return [
-    `M${x + rr},${y}`,
-    `L${x + w - rr},${y}`,
-    `Q${x + w},${y} ${x + w},${y + rr}`,
-    `L${x + w},${y + h - rr}`,
-    `Q${x + w},${y + h} ${x + w - rr},${y + h}`,
-    `L${x + rr},${y + h}`,
-    `Q${x},${y + h} ${x},${y + h - rr}`,
-    `L${x},${y + rr}`,
-    `Q${x},${y} ${x + rr},${y}`,
-    "Z",
-  ].join(" ");
+  return `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
+}
+function line(x1: number, y1: number, x2: number, y2: number): string {
+  return `M${x1} ${y1}L${x2} ${y2}`;
+}
+function circ(cx: number, cy: number, r: number): PathSpec {
+  return { circle: { cx, cy, r }, d: "" };
 }
 
-function circle(cx: number, cy: number, r: number): string {
-  return `M${cx - r},${cy} A${r},${r} 0 1,0 ${cx + r},${cy} A${r},${r} 0 1,0 ${cx - r},${cy} Z`;
+// ---------- Definitions ----------
+// Each W,H below in cm (= meters * 100).
+
+export const FURN_DEFS: Record<FurnitureType, FurnitureDef> = {
+  // =========================================================
+  // LEGACY GENERIC TYPES (rendered by canvas's bespoke code,
+  // but we still need sizeM/label for the engine).
+  // =========================================================
+  sofa: { sizeM: { w: 2.0, h: 0.9 }, label: "Sofá", category: "Sala", paths: [] },
+  bed: { sizeM: { w: 1.6, h: 2.0 }, label: "Cama", category: "Quarto", paths: [] },
+  table: { sizeM: { w: 1.2, h: 0.8 }, label: "Mesa", category: "Geral", paths: [] },
+  tv: { sizeM: { w: 1.6, h: 0.4 }, label: "TV", category: "Sala", paths: [] },
+  sink: { sizeM: { w: 0.6, h: 0.45 }, label: "Pia", category: "Banheiro", paths: [] },
+  toilet: { sizeM: { w: 0.4, h: 0.6 }, label: "Vaso", category: "Banheiro", paths: [] },
+  shower: { sizeM: { w: 0.9, h: 0.9 }, label: "Box", category: "Banheiro", paths: [] },
+  stove: { sizeM: { w: 0.6, h: 0.6 }, label: "Fogão", category: "Cozinha", paths: [] },
+  fridge: { sizeM: { w: 0.7, h: 0.7 }, label: "Geladeira", category: "Cozinha", paths: [] },
+  counter: { sizeM: { w: 1.5, h: 0.6 }, label: "Bancada", category: "Cozinha", paths: [] },
+  island: { sizeM: { w: 1.5, h: 0.9 }, label: "Ilha", category: "Cozinha", paths: [] },
+  wardrobe: { sizeM: { w: 2.0, h: 0.6 }, label: "Guarda-roupa", category: "Quarto", paths: [] },
+  desk: { sizeM: { w: 1.2, h: 0.6 }, label: "Escrivaninha", category: "Escritório", paths: [] },
+  chair: { sizeM: { w: 0.5, h: 0.5 }, label: "Cadeira", category: "Geral", paths: [] },
+  bookshelf: { sizeM: { w: 1.0, h: 0.4 }, label: "Estante", category: "Sala", paths: [] },
+  washing_machine: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Máquina de Lavar",
+    category: "Lavanderia",
+    paths: [],
+  },
+
+  // =========================================================
+  // SALA
+  // =========================================================
+  sofa_2seat: {
+    sizeM: { w: 1.4, h: 0.8 },
+    label: "Sofá 2 Lugares",
+    category: "Sala",
+    paths: [
+      // body
+      { d: rrect(0, 0, 140, 80, 6), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // back cushion
+      { d: rrect(8, 4, 124, 22, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      // arms
+      { d: rrect(0, 4, 12, 72, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(128, 4, 12, 72, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      // seat cushions (2)
+      { d: rrect(14, 30, 56, 46, 4), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(72, 30, 56, 46, 4), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  sofa_3seat: {
+    sizeM: { w: 2.1, h: 0.9 },
+    label: "Sofá 3 Lugares",
+    category: "Sala",
+    paths: [
+      { d: rrect(0, 0, 210, 90, 7), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rrect(8, 4, 194, 24, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(0, 4, 14, 82, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(196, 4, 14, 82, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(16, 32, 58, 54, 4), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(76, 32, 58, 54, 4), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(136, 32, 58, 54, 4), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  sofa_L: {
+    sizeM: { w: 2.4, h: 2.0 },
+    label: "Sofá em L",
+    category: "Sala",
+    paths: [
+      // L-shape body: long arm 240 wide, deep arm 90 wide returning down
+      {
+        d: `M0 0H240V90H90V200H0Z`,
+        fill: BODY,
+        stroke: STROKE,
+        strokeWidth: 1.7,
+      },
+      // back cushions (along top + along left)
+      { d: rrect(8, 4, 224, 22, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(4, 28, 22, 168, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      // arms
+      { d: rrect(228, 4, 12, 82, 3), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(78, 188, 12, 12, 3), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      // seat cushions
+      { d: rrect(28, 30, 64, 58, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(94, 30, 64, 58, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(160, 30, 66, 58, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(28, 90, 60, 50, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(28, 142, 60, 56, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  armchair: {
+    sizeM: { w: 0.8, h: 0.8 },
+    label: "Poltrona",
+    category: "Sala",
+    paths: [
+      { d: rrect(0, 0, 80, 80, 8), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rrect(6, 4, 68, 22, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(0, 4, 12, 72, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(68, 4, 12, 72, 4), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rrect(14, 30, 52, 46, 3), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  coffee_table: {
+    sizeM: { w: 1.2, h: 0.6 },
+    label: "Mesa de Centro",
+    category: "Sala",
+    paths: [
+      { d: rrect(0, 0, 120, 60, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(5, 5, 110, 50, 4), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  side_table: {
+    sizeM: { w: 0.45, h: 0.45 },
+    label: "Mesa Lateral",
+    category: "Sala",
+    paths: [
+      { d: rrect(0, 0, 45, 45, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.5 },
+      circ(22.5, 22.5, 6),
+    ],
+  },
+  tv_console: {
+    sizeM: { w: 1.8, h: 0.45 },
+    label: "Rack TV",
+    category: "Sala",
+    paths: [
+      { d: rrect(0, 0, 180, 45, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // TV outline on top edge
+      { d: rect(35, 6, 110, 14), fill: BODY_DARK, stroke: STROKE, strokeWidth: 1.0 },
+      // drawer dividers
+      { d: line(60, 6, 60, 39), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(120, 6, 120, 39), stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  floor_lamp: {
+    sizeM: { w: 0.3, h: 0.3 },
+    label: "Luminária",
+    category: "Sala",
+    paths: [
+      circ(15, 15, 14),
+      { d: line(15, 1, 15, 29), stroke: STROKE, strokeWidth: 0.6 },
+      { d: line(1, 15, 29, 15), stroke: STROKE, strokeWidth: 0.6 },
+      { d: "", circle: { cx: 15, cy: 15, r: 3 }, fill: STROKE },
+    ],
+  },
+  rug_rect: {
+    sizeM: { w: 2.0, h: 1.5 },
+    label: "Tapete",
+    category: "Sala",
+    paths: [
+      { d: rect(0, 0, 200, 150), fill: "rgba(198,169,98,0.10)", stroke: "rgba(198,169,98,0.6)", strokeWidth: 1.2, dashed: true },
+      { d: rect(8, 8, 184, 134), fill: null, stroke: "rgba(198,169,98,0.4)", strokeWidth: 0.6, dashed: true },
+    ],
+  },
+
+  // =========================================================
+  // QUARTO CASAL
+  // =========================================================
+  bed_double: {
+    sizeM: { w: 1.58, h: 1.98 },
+    label: "Cama Casal",
+    category: "Quarto",
+    paths: [
+      // headboard
+      { d: rect(0, 0, 158, 12), fill: "#7a6750", stroke: STROKE, strokeWidth: 1.6 },
+      // mattress
+      { d: rrect(4, 12, 150, 184, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      // pillows
+      { d: rrect(14, 18, 60, 28, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(82, 18, 60, 28, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      // duvet fold
+      { d: line(10, 130, 148, 130), stroke: STROKE_FINE, strokeWidth: 0.7 },
+      { d: line(10, 132, 148, 132), stroke: STROKE_FINE, strokeWidth: 0.5 },
+    ],
+  },
+  bed_king: {
+    sizeM: { w: 1.93, h: 2.03 },
+    label: "Cama King",
+    category: "Quarto",
+    paths: [
+      { d: rect(0, 0, 193, 12), fill: "#7a6750", stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(4, 12, 185, 189, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(16, 18, 74, 30, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      { d: rrect(103, 18, 74, 30, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(10, 134, 183, 134), stroke: STROKE_FINE, strokeWidth: 0.7 },
+      { d: line(10, 136, 183, 136), stroke: STROKE_FINE, strokeWidth: 0.5 },
+    ],
+  },
+  nightstand: {
+    sizeM: { w: 0.5, h: 0.4 },
+    label: "Criado-mudo",
+    category: "Quarto",
+    paths: [
+      { d: rrect(0, 0, 50, 40, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.5 },
+      { d: line(0, 22, 50, 22), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      circ(25, 32, 1.5),
+    ],
+  },
+  dresser: {
+    sizeM: { w: 1.2, h: 0.45 },
+    label: "Cômoda",
+    category: "Quarto",
+    paths: [
+      { d: rrect(0, 0, 120, 45, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(40, 0, 40, 45), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(80, 0, 80, 45), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(0, 22, 120, 22), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      circ(20, 11, 1.5),
+      circ(60, 11, 1.5),
+      circ(100, 11, 1.5),
+      circ(20, 33, 1.5),
+      circ(60, 33, 1.5),
+      circ(100, 33, 1.5),
+    ],
+  },
+  wardrobe_sliding: {
+    sizeM: { w: 2.5, h: 0.6 },
+    label: "Guarda-roupa Deslizante",
+    category: "Quarto",
+    paths: [
+      { d: rect(0, 0, 250, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rect(0, 0, 125, 60), fill: null, stroke: STROKE, strokeWidth: 0.9 },
+      { d: rect(125, 0, 125, 60), fill: null, stroke: STROKE, strokeWidth: 0.9 },
+      // sliding indicator arrows
+      { d: "M50 30L72 30M68 26L72 30L68 34", stroke: STROKE_FINE, strokeWidth: 0.8 },
+      { d: "M178 30L200 30M196 26L200 30L196 34", stroke: STROKE_FINE, strokeWidth: 0.8 },
+    ],
+  },
+  wardrobe_hinged: {
+    sizeM: { w: 2.0, h: 0.6 },
+    label: "Guarda-roupa",
+    category: "Quarto",
+    paths: [
+      { d: rect(0, 0, 200, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: line(50, 0, 50, 60), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(100, 0, 100, 60), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(150, 0, 150, 60), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      // door swing arcs
+      { d: "M0 60A50 50 0 0 1 50 10", stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      { d: "M100 60A50 50 0 0 0 50 10", stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      { d: "M100 60A50 50 0 0 1 150 10", stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      { d: "M200 60A50 50 0 0 0 150 10", stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+    ],
+  },
+  vanity: {
+    sizeM: { w: 1.0, h: 0.45 },
+    label: "Penteadeira",
+    category: "Quarto",
+    paths: [
+      { d: rrect(0, 0, 100, 45, 2), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rect(35, 4, 30, 8), fill: GLASS, stroke: STROKE, strokeWidth: 0.8 },
+      circ(20, 22, 2),
+      circ(80, 22, 2),
+    ],
+  },
+
+  // =========================================================
+  // QUARTO SOLTEIRO / ESTUDO
+  // =========================================================
+  bed_single: {
+    sizeM: { w: 0.88, h: 1.88 },
+    label: "Cama Solteiro",
+    category: "Quarto",
+    paths: [
+      { d: rect(0, 0, 88, 12), fill: "#7a6750", stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(4, 12, 80, 174, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(14, 18, 60, 30, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(10, 122, 78, 122), stroke: STROKE_FINE, strokeWidth: 0.7 },
+    ],
+  },
+  bed_bunk: {
+    sizeM: { w: 0.88, h: 1.88 },
+    label: "Beliche",
+    category: "Quarto",
+    paths: [
+      { d: rect(0, 0, 88, 12), fill: "#7a6750", stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(4, 12, 80, 174, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(14, 18, 60, 30, 4), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+      // ladder
+      { d: rect(76, 60, 8, 80), fill: null, stroke: STROKE, strokeWidth: 0.9 },
+      { d: line(76, 76, 84, 76), stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(76, 96, 84, 96), stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(76, 116, 84, 116), stroke: STROKE, strokeWidth: 0.7 },
+      // upper-bed shadow (corner mark)
+      { d: "M4 6L84 6", stroke: STROKE_FINE, strokeWidth: 0.6, dashed: true },
+    ],
+  },
+  desk_study: {
+    sizeM: { w: 1.2, h: 0.6 },
+    label: "Escrivaninha",
+    category: "Escritório",
+    paths: [
+      { d: rrect(0, 0, 120, 60, 2), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(0, 15, 120, 15), stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  desk_chair: {
+    sizeM: { w: 0.5, h: 0.5 },
+    label: "Cadeira de Escritório",
+    category: "Escritório",
+    paths: [
+      circ(25, 25, 22),
+      // 5-star base
+      { d: "M25 25L8 13M25 25L42 13M25 25L8 37M25 25L42 37M25 25L25 5", stroke: STROKE_FINE, strokeWidth: 0.7 },
+      circ(25, 25, 6),
+    ],
+  },
+
+  // =========================================================
+  // INFANTIL
+  // =========================================================
+  crib: {
+    sizeM: { w: 0.65, h: 1.3 },
+    label: "Berço",
+    category: "Infantil",
+    paths: [
+      { d: rrect(0, 0, 65, 130, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // bars (top & bottom)
+      ...Array.from({ length: 11 }, (_, i) => ({
+        d: line(8 + i * 5, 4, 8 + i * 5, 12),
+        stroke: STROKE_FINE,
+        strokeWidth: 0.6,
+      })),
+      ...Array.from({ length: 11 }, (_, i) => ({
+        d: line(8 + i * 5, 118, 8 + i * 5, 126),
+        stroke: STROKE_FINE,
+        strokeWidth: 0.6,
+      })),
+      // mattress
+      { d: rrect(6, 14, 53, 102, 3), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  bed_child: {
+    sizeM: { w: 0.7, h: 1.5 },
+    label: "Cama Infantil",
+    category: "Infantil",
+    paths: [
+      { d: rect(0, 0, 70, 10), fill: "#7a6750", stroke: STROKE, strokeWidth: 1.5 },
+      { d: rrect(2, 10, 66, 138, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rrect(10, 16, 50, 24, 3), fill: "#fff", stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  toy_shelf: {
+    sizeM: { w: 1.0, h: 0.35 },
+    label: "Estante de Brinquedos",
+    category: "Infantil",
+    paths: [
+      { d: rect(0, 0, 100, 35), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(33, 0, 33, 35), stroke: STROKE_FINE, strokeWidth: 0.7 },
+      { d: line(66, 0, 66, 35), stroke: STROKE_FINE, strokeWidth: 0.7 },
+    ],
+  },
+  play_table: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Mesa de Atividades",
+    category: "Infantil",
+    paths: [
+      circ(30, 30, 28),
+      circ(30, 30, 22),
+    ],
+  },
+
+  // =========================================================
+  // COZINHA — STOVES
+  // =========================================================
+  stove_4burner: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Fogão 4 Bocas",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 60), fill: APPLIANCE, stroke: STROKE, strokeWidth: 1.7 },
+      circ(18, 18, 8),
+      circ(42, 18, 8),
+      circ(18, 42, 8),
+      circ(42, 42, 8),
+      // small dials at top
+      circ(10, 4, 1.5),
+      circ(50, 4, 1.5),
+    ],
+  },
+  stove_5burner: {
+    sizeM: { w: 0.75, h: 0.6 },
+    label: "Fogão 5 Bocas",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 75, 60), fill: APPLIANCE, stroke: STROKE, strokeWidth: 1.7 },
+      circ(15, 15, 7),
+      circ(60, 15, 7),
+      circ(15, 45, 7),
+      circ(60, 45, 7),
+      circ(37.5, 30, 9),
+    ],
+  },
+  cooktop: {
+    sizeM: { w: 0.6, h: 0.5 },
+    label: "Cooktop",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 50), fill: BODY_DARK, stroke: STROKE, strokeWidth: 1.6 },
+      circ(18, 16, 7),
+      circ(42, 16, 7),
+      circ(18, 36, 7),
+      circ(42, 36, 7),
+    ],
+  },
+  fridge_single: {
+    sizeM: { w: 0.6, h: 0.65 },
+    label: "Geladeira",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 65), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // freezer divider
+      { d: line(0, 22, 60, 22), stroke: STROKE, strokeWidth: 0.9 },
+      // hinge tick
+      { d: line(58, 5, 58, 18), stroke: STROKE_FINE, strokeWidth: 1.0 },
+      { d: line(58, 26, 58, 60), stroke: STROKE_FINE, strokeWidth: 1.2 },
+    ],
+  },
+  fridge_double: {
+    sizeM: { w: 0.9, h: 0.7 },
+    label: "Geladeira Frost Free",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 90, 70), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // french doors
+      { d: line(45, 0, 45, 70), stroke: STROKE, strokeWidth: 0.9 },
+      // handles
+      { d: line(43, 8, 43, 22), stroke: STROKE_FINE, strokeWidth: 1.2 },
+      { d: line(47, 8, 47, 22), stroke: STROKE_FINE, strokeWidth: 1.2 },
+    ],
+  },
+  microwave: {
+    sizeM: { w: 0.45, h: 0.35 },
+    label: "Micro-ondas",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 45, 35), fill: APPLIANCE, stroke: STROKE, strokeWidth: 1.5 },
+      { d: rect(2, 2, 30, 31), fill: GLASS, stroke: STROKE, strokeWidth: 0.7 },
+      circ(39, 8, 1.5),
+      circ(39, 16, 1.5),
+      circ(39, 24, 1.5),
+    ],
+  },
+  dishwasher: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Lava-louças",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rect(4, 4, 52, 52), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(0, 8, 60, 8), stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  kitchen_sink_single: {
+    sizeM: { w: 0.6, h: 0.5 },
+    label: "Pia Cozinha",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 50), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rrect(6, 8, 48, 36, 3), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 1.0 },
+      circ(30, 4, 2),
+      circ(30, 26, 1.5),
+    ],
+  },
+  kitchen_sink_double: {
+    sizeM: { w: 0.8, h: 0.5 },
+    label: "Pia Dupla",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 80, 50), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rrect(5, 8, 33, 36, 3), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 1.0 },
+      { d: rrect(42, 8, 33, 36, 3), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 1.0 },
+      circ(40, 4, 2),
+      circ(21, 26, 1.5),
+      circ(58, 26, 1.5),
+    ],
+  },
+  kitchen_island: {
+    sizeM: { w: 1.8, h: 0.9 },
+    label: "Ilha de Cozinha",
+    category: "Cozinha",
+    paths: [
+      { d: rrect(0, 0, 180, 90, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.8 },
+      { d: rrect(4, 4, 172, 82, 3), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+      // 4 stools beneath (south side)
+      circ(30, 108, 14),
+      circ(70, 108, 14),
+      circ(110, 108, 14),
+      circ(150, 108, 14),
+    ],
+  },
+  bar_stool: {
+    sizeM: { w: 0.35, h: 0.35 },
+    label: "Banqueta",
+    category: "Cozinha",
+    paths: [circ(17.5, 17.5, 16), circ(17.5, 17.5, 6)],
+  },
+  hood: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Coifa",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 60), fill: null, stroke: STROKE_FINE, strokeWidth: 0.9, dashed: true },
+      { d: rect(8, 8, 44, 44), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6, dashed: true },
+      circ(30, 30, 6),
+    ],
+  },
+  pantry: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Despensa",
+    category: "Cozinha",
+    paths: [
+      { d: rect(0, 0, 60, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(0, 15, 60, 15), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      { d: line(0, 30, 60, 30), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      { d: line(0, 45, 60, 45), stroke: STROKE_FINE, strokeWidth: 0.5 },
+    ],
+  },
+
+  // =========================================================
+  // BANHEIRO
+  // =========================================================
+  bidet: {
+    sizeM: { w: 0.37, h: 0.55 },
+    label: "Bidê",
+    category: "Banheiro",
+    paths: [
+      // base
+      { d: rect(8, 0, 21, 8), fill: BODY, stroke: STROKE, strokeWidth: 1.5 },
+      // bowl ellipse
+      { d: "M3 12C3 36 34 36 34 12L34 8C34 4 3 4 3 8Z", fill: BODY, stroke: STROKE, strokeWidth: 1.5 },
+      { d: "M8 14C8 30 29 30 29 14", fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  sink_pedestal: {
+    sizeM: { w: 0.45, h: 0.4 },
+    label: "Pia Coluna",
+    category: "Banheiro",
+    paths: [
+      { d: rrect(0, 0, 45, 40, 5), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: "M22.5 6Q22.5 30 22.5 30", stroke: STROKE_FINE, strokeWidth: 0.6 },
+      circ(22.5, 22, 2),
+      circ(22.5, 4, 1.5),
+    ],
+  },
+  sink_vanity: {
+    sizeM: { w: 0.8, h: 0.5 },
+    label: "Bancada Pia",
+    category: "Banheiro",
+    paths: [
+      { d: rect(0, 0, 80, 50), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: "M40 30m-15 0a15 11 0 1 0 30 0a15 11 0 1 0 -30 0", fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.9 },
+      circ(40, 6, 2),
+    ],
+  },
+  sink_double_vanity: {
+    sizeM: { w: 1.2, h: 0.5 },
+    label: "Bancada Dupla",
+    category: "Banheiro",
+    paths: [
+      { d: rect(0, 0, 120, 50), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: "M30 30m-13 0a13 10 0 1 0 26 0a13 10 0 1 0 -26 0", fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.9 },
+      { d: "M90 30m-13 0a13 10 0 1 0 26 0a13 10 0 1 0 -26 0", fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.9 },
+      circ(30, 6, 2),
+      circ(90, 6, 2),
+    ],
+  },
+  shower_square: {
+    sizeM: { w: 0.9, h: 0.9 },
+    label: "Box Quadrado",
+    category: "Banheiro",
+    paths: [
+      { d: rect(0, 0, 90, 90), fill: "rgba(220,228,238,0.5)", stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(0, 0, 90, 90), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      { d: line(90, 0, 0, 90), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      circ(76, 14, 4),
+      circ(45, 45, 2.5),
+    ],
+  },
+  shower_rect: {
+    sizeM: { w: 1.2, h: 0.9 },
+    label: "Box Retangular",
+    category: "Banheiro",
+    paths: [
+      { d: rect(0, 0, 120, 90), fill: "rgba(220,228,238,0.5)", stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(0, 0, 120, 90), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      { d: line(120, 0, 0, 90), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      circ(106, 14, 4),
+      circ(60, 45, 2.5),
+    ],
+  },
+  bathtub_rect: {
+    sizeM: { w: 1.7, h: 0.75 },
+    label: "Banheira",
+    category: "Banheiro",
+    paths: [
+      { d: rrect(0, 0, 170, 75, 8), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rrect(8, 8, 154, 59, 12), fill: "rgba(220,228,238,0.55)", stroke: STROKE, strokeWidth: 1.0 },
+      circ(20, 38, 2),
+      circ(150, 38, 1.4),
+    ],
+  },
+  bathtub_corner: {
+    sizeM: { w: 1.4, h: 1.4 },
+    label: "Banheira de Canto",
+    category: "Banheiro",
+    paths: [
+      { d: "M0 0H140V70Q140 140 70 140H0Z", fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: "M8 8H132V70Q132 132 70 132H8Z", fill: "rgba(220,228,238,0.55)", stroke: STROKE, strokeWidth: 1.0 },
+      circ(15, 15, 2.5),
+    ],
+  },
+  towel_rack: {
+    sizeM: { w: 0.6, h: 0.05 },
+    label: "Toalheiro",
+    category: "Banheiro",
+    paths: [
+      { d: rect(0, 0, 60, 5), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.9 },
+    ],
+  },
+
+  // =========================================================
+  // LAVANDERIA
+  // =========================================================
+  dryer: {
+    sizeM: { w: 0.6, h: 0.6 },
+    label: "Secadora",
+    category: "Lavanderia",
+    paths: [
+      { d: rect(0, 0, 60, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rect(0, 0, 60, 9), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.9 },
+      circ(30, 35, 18),
+      circ(30, 35, 12),
+    ],
+  },
+  laundry_sink: {
+    sizeM: { w: 0.5, h: 0.55 },
+    label: "Tanque",
+    category: "Lavanderia",
+    paths: [
+      { d: rect(0, 0, 50, 55), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: rect(4, 8, 42, 43), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.9 },
+      circ(25, 4, 1.6),
+      circ(25, 30, 1.4),
+    ],
+  },
+  ironing_board: {
+    sizeM: { w: 1.2, h: 0.35 },
+    label: "Mesa de Passar",
+    category: "Lavanderia",
+    paths: [
+      { d: "M0 17.5Q15 0 35 5L120 17.5L35 30Q15 35 0 17.5Z", fill: BODY, stroke: STROKE, strokeWidth: 1.0, dashed: true },
+    ],
+  },
+
+  // =========================================================
+  // JANTAR
+  // =========================================================
+  dining_table_4: {
+    sizeM: { w: 1.2, h: 0.8 },
+    label: "Mesa de Jantar 4",
+    category: "Jantar",
+    paths: [
+      { d: rrect(0, 0, 120, 80, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      // chairs (4): 2 N, 2 S
+      circ(30, -16, 14),
+      circ(90, -16, 14),
+      circ(30, 96, 14),
+      circ(90, 96, 14),
+    ],
+  },
+  dining_table_6: {
+    sizeM: { w: 1.6, h: 0.9 },
+    label: "Mesa de Jantar 6",
+    category: "Jantar",
+    paths: [
+      { d: rrect(0, 0, 160, 90, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      circ(30, -16, 14),
+      circ(80, -16, 14),
+      circ(130, -16, 14),
+      circ(30, 106, 14),
+      circ(80, 106, 14),
+      circ(130, 106, 14),
+    ],
+  },
+  dining_table_8: {
+    sizeM: { w: 2.2, h: 1.0 },
+    label: "Mesa de Jantar 8",
+    category: "Jantar",
+    paths: [
+      { d: rrect(0, 0, 220, 100, 3), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      circ(35, -16, 14),
+      circ(85, -16, 14),
+      circ(135, -16, 14),
+      circ(185, -16, 14),
+      circ(35, 116, 14),
+      circ(85, 116, 14),
+      circ(135, 116, 14),
+      circ(185, 116, 14),
+    ],
+  },
+  dining_table_round_4: {
+    sizeM: { w: 1.1, h: 1.1 },
+    label: "Mesa Redonda 4",
+    category: "Jantar",
+    paths: [
+      circ(55, 55, 53),
+      circ(55, -16, 14),
+      circ(55, 126, 14),
+      circ(-16, 55, 14),
+      circ(126, 55, 14),
+    ],
+  },
+  buffet: {
+    sizeM: { w: 1.6, h: 0.45 },
+    label: "Buffet / Aparador",
+    category: "Jantar",
+    paths: [
+      { d: rect(0, 0, 160, 45), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(53, 0, 53, 45), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(107, 0, 107, 45), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      circ(26, 22, 1.4),
+      circ(80, 22, 1.4),
+      circ(134, 22, 1.4),
+    ],
+  },
+  dining_chair: {
+    sizeM: { w: 0.45, h: 0.45 },
+    label: "Cadeira",
+    category: "Jantar",
+    paths: [
+      { d: rrect(0, 0, 45, 45, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.4 },
+      { d: rect(0, 0, 45, 8), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+
+  // =========================================================
+  // ESCRITÓRIO
+  // =========================================================
+  desk_L: {
+    sizeM: { w: 1.6, h: 1.2 },
+    label: "Mesa em L",
+    category: "Escritório",
+    paths: [
+      { d: "M0 0H160V60H60V120H0Z", fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: "M4 4H156V56H56V116H4Z", fill: null, stroke: STROKE_FINE, strokeWidth: 0.5 },
+    ],
+  },
+  desk_straight: {
+    sizeM: { w: 1.4, h: 0.7 },
+    label: "Mesa de Trabalho",
+    category: "Escritório",
+    paths: [
+      { d: rrect(0, 0, 140, 70, 2), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: line(0, 14, 140, 14), stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  office_chair: {
+    sizeM: { w: 0.5, h: 0.5 },
+    label: "Cadeira Escritório",
+    category: "Escritório",
+    paths: [
+      circ(25, 25, 22),
+      { d: "M25 25L8 13M25 25L42 13M25 25L8 37M25 25L42 37M25 25L25 5", stroke: STROKE_FINE, strokeWidth: 0.7 },
+      circ(25, 25, 6),
+    ],
+  },
+  filing_cabinet: {
+    sizeM: { w: 0.4, h: 0.5 },
+    label: "Arquivo",
+    category: "Escritório",
+    paths: [
+      { d: rect(0, 0, 40, 50), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(0, 17, 40, 17), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      { d: line(0, 34, 40, 34), stroke: STROKE_FINE, strokeWidth: 0.5 },
+      circ(20, 8, 1.4),
+      circ(20, 25, 1.4),
+      circ(20, 42, 1.4),
+    ],
+  },
+
+  // =========================================================
+  // COMERCIAL
+  // =========================================================
+  meeting_table_large: {
+    sizeM: { w: 3.0, h: 1.2 },
+    label: "Mesa de Reunião",
+    category: "Comercial",
+    paths: [
+      { d: rrect(0, 0, 300, 120, 6), fill: BODY, stroke: STROKE, strokeWidth: 1.8 },
+      // 8 chairs along long edges, 2 on short
+      ...[...Array(4)].map((_, i) => circ(45 + i * 65, -16, 14)),
+      ...[...Array(4)].map((_, i) => circ(45 + i * 65, 136, 14)),
+      circ(-16, 60, 14),
+      circ(316, 60, 14),
+    ],
+  },
+  reception_desk: {
+    sizeM: { w: 2.0, h: 0.7 },
+    label: "Recepção",
+    category: "Comercial",
+    paths: [
+      { d: "M0 0H200V40Q200 70 170 70H30Q0 70 0 40Z", fill: BODY, stroke: STROKE, strokeWidth: 1.8 },
+      { d: "M8 36Q8 8 30 8H170Q192 8 192 36", fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  waiting_chair: {
+    sizeM: { w: 0.55, h: 0.55 },
+    label: "Cadeira Espera",
+    category: "Comercial",
+    paths: [
+      { d: rrect(0, 0, 55, 55, 6), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 1.4 },
+      { d: rect(0, 0, 55, 12), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  cubicle_desk: {
+    sizeM: { w: 1.4, h: 1.4 },
+    label: "Cubículo",
+    category: "Comercial",
+    paths: [
+      { d: "M0 0H140V60H60V140H0Z", fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      // partition walls (taller)
+      { d: line(0, 0, 140, 0), stroke: STROKE, strokeWidth: 2.5 },
+      { d: line(0, 0, 0, 140), stroke: STROKE, strokeWidth: 2.5 },
+      circ(40, 95, 12),
+    ],
+  },
+  display_shelf: {
+    sizeM: { w: 1.2, h: 0.4 },
+    label: "Expositor",
+    category: "Comercial",
+    paths: [
+      { d: rect(0, 0, 120, 40), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      { d: line(30, 0, 30, 40), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(60, 0, 60, 40), stroke: STROKE_FINE, strokeWidth: 0.6 },
+      { d: line(90, 0, 90, 40), stroke: STROKE_FINE, strokeWidth: 0.6 },
+    ],
+  },
+  checkout_counter: {
+    sizeM: { w: 1.5, h: 0.6 },
+    label: "Caixa",
+    category: "Comercial",
+    paths: [
+      { d: rect(0, 0, 150, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.7 },
+      { d: rect(110, 4, 36, 22), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.9 },
+      circ(20, 30, 4),
+    ],
+  },
+  restaurant_table_2: {
+    sizeM: { w: 0.7, h: 0.7 },
+    label: "Mesa 2",
+    category: "Comercial",
+    paths: [circ(35, 35, 32), circ(-16, 35, 14), circ(86, 35, 14)],
+  },
+  restaurant_table_4: {
+    sizeM: { w: 0.9, h: 0.9 },
+    label: "Mesa 4",
+    category: "Comercial",
+    paths: [
+      { d: rrect(0, 0, 90, 90, 4), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      circ(20, -16, 14),
+      circ(70, -16, 14),
+      circ(20, 106, 14),
+      circ(70, 106, 14),
+    ],
+  },
+  bar_counter: {
+    sizeM: { w: 3.0, h: 0.6 },
+    label: "Balcão de Bar",
+    category: "Comercial",
+    paths: [
+      { d: rect(0, 0, 300, 60), fill: BODY, stroke: STROKE, strokeWidth: 1.8 },
+      { d: rect(4, 4, 292, 52), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6 },
+      ...[...Array(6)].map((_, i) => circ(30 + i * 50, 78, 14)),
+    ],
+  },
+  commercial_stove: {
+    sizeM: { w: 1.2, h: 0.8 },
+    label: "Fogão Industrial",
+    category: "Comercial",
+    paths: [
+      { d: rect(0, 0, 120, 80), fill: APPLIANCE, stroke: STROKE, strokeWidth: 1.8 },
+      ...[0, 1, 2].flatMap((i) =>
+        [0, 1].map((j) => circ(20 + i * 40, 20 + j * 40, 9))
+      ),
+    ],
+  },
+
+  // =========================================================
+  // EXTERNO / JARDIM
+  // =========================================================
+  pool_rect: {
+    sizeM: { w: 6.0, h: 3.0 },
+    label: "Piscina",
+    category: "Externo",
+    paths: [
+      { d: rrect(0, 0, 600, 300, 14), fill: WATER, stroke: WATER_DARK, strokeWidth: 2.4 },
+      // wave hatch
+      ...[...Array(8)].map((_, i) => ({
+        d: `M40 ${40 + i * 32}Q120 ${30 + i * 32} 200 ${40 + i * 32}T360 ${40 + i * 32}T520 ${40 + i * 32}T560 ${40 + i * 32}`,
+        stroke: "rgba(255,255,255,0.45)",
+        strokeWidth: 0.8,
+        fill: null,
+      })),
+    ],
+  },
+  hot_tub: {
+    sizeM: { w: 2.0, h: 2.0 },
+    label: "Hidromassagem",
+    category: "Externo",
+    paths: [
+      circ(100, 100, 96),
+      { d: "", circle: { cx: 100, cy: 100, r: 96 }, fill: WATER },
+      circ(100, 100, 84),
+      // bubble dots
+      circ(60, 100, 4),
+      circ(140, 100, 4),
+      circ(100, 60, 4),
+      circ(100, 140, 4),
+    ],
+  },
+  bbq_grill: {
+    sizeM: { w: 1.5, h: 0.8 },
+    label: "Churrasqueira",
+    category: "Externo",
+    paths: [
+      { d: rect(0, 0, 150, 80), fill: STONE, stroke: STROKE, strokeWidth: 1.8 },
+      { d: rect(10, 10, 130, 60), fill: BODY_DARK, stroke: STROKE, strokeWidth: 1.0 },
+      ...[...Array(6)].map((_, i) => ({
+        d: line(20 + i * 22, 14, 20 + i * 22, 66),
+        stroke: "rgba(220,180,80,0.7)",
+        strokeWidth: 0.7,
+      })),
+    ],
+  },
+  outdoor_table: {
+    sizeM: { w: 1.5, h: 0.9 },
+    label: "Mesa Externa",
+    category: "Externo",
+    paths: [
+      { d: rrect(0, 0, 150, 90, 6), fill: BODY, stroke: STROKE, strokeWidth: 1.6 },
+      circ(30, -16, 13),
+      circ(75, -16, 13),
+      circ(120, -16, 13),
+      circ(30, 106, 13),
+      circ(75, 106, 13),
+      circ(120, 106, 13),
+    ],
+  },
+  sun_lounger: {
+    sizeM: { w: 1.8, h: 0.6 },
+    label: "Espreguiçadeira",
+    category: "Externo",
+    paths: [
+      { d: rrect(0, 0, 180, 60, 6), fill: BODY, stroke: STROKE, strokeWidth: 1.5 },
+      { d: rect(0, 0, 40, 60), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.7 },
+    ],
+  },
+  umbrella: {
+    sizeM: { w: 2.5, h: 2.5 },
+    label: "Guarda-sol",
+    category: "Externo",
+    paths: [
+      { d: "", circle: { cx: 125, cy: 125, r: 120 }, fill: "rgba(180,140,80,0.30)", stroke: "rgba(120,80,40,0.7)", strokeWidth: 1.5, dashed: true },
+      { d: line(125, 5, 125, 245), stroke: "rgba(120,80,40,0.6)", strokeWidth: 0.7, dashed: true },
+      { d: line(5, 125, 245, 125), stroke: "rgba(120,80,40,0.6)", strokeWidth: 0.7, dashed: true },
+      circ(125, 125, 5),
+    ],
+  },
+  planter_round: {
+    sizeM: { w: 0.5, h: 0.5 },
+    label: "Vaso",
+    category: "Externo",
+    paths: [
+      circ(25, 25, 24),
+      { d: "", circle: { cx: 25, cy: 25, r: 24 }, fill: "rgba(120,90,60,0.4)" },
+      circ(25, 25, 18),
+      { d: "", circle: { cx: 25, cy: 25, r: 18 }, fill: GREEN },
+    ],
+  },
+  tree_small: {
+    sizeM: { w: 2.0, h: 2.0 },
+    label: "Árvore Pequena",
+    category: "Externo",
+    paths: [
+      { d: "", circle: { cx: 100, cy: 100, r: 95 }, fill: GREEN, stroke: GREEN_DARK, strokeWidth: 1.5 },
+      // foliage texture: small lobes
+      ...[0, 60, 120, 180, 240, 300].map((deg) => {
+        const a = (deg * Math.PI) / 180;
+        const cx = 100 + Math.cos(a) * 60;
+        const cy = 100 + Math.sin(a) * 60;
+        return { d: "", circle: { cx, cy, r: 26 }, fill: null, stroke: GREEN_DARK, strokeWidth: 0.9 };
+      }),
+      // trunk
+      circ(100, 100, 8),
+      { d: "", circle: { cx: 100, cy: 100, r: 8 }, fill: "rgba(90,60,40,0.95)" },
+    ],
+  },
+  tree_large: {
+    sizeM: { w: 4.0, h: 4.0 },
+    label: "Árvore",
+    category: "Externo",
+    paths: [
+      { d: "", circle: { cx: 200, cy: 200, r: 195 }, fill: GREEN, stroke: GREEN_DARK, strokeWidth: 1.8 },
+      ...[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+        const a = (deg * Math.PI) / 180;
+        const cx = 200 + Math.cos(a) * 130;
+        const cy = 200 + Math.sin(a) * 130;
+        return { d: "", circle: { cx, cy, r: 50 }, fill: null, stroke: GREEN_DARK, strokeWidth: 0.9 };
+      }),
+      circ(200, 200, 16),
+      { d: "", circle: { cx: 200, cy: 200, r: 16 }, fill: "rgba(90,60,40,0.95)" },
+    ],
+  },
+  pergola: {
+    sizeM: { w: 3.0, h: 3.0 },
+    label: "Pergolado",
+    category: "Externo",
+    paths: [
+      { d: rect(0, 0, 300, 300), fill: null, stroke: "rgba(140,100,60,0.85)", strokeWidth: 2.0, dashed: true },
+      // grid (slats)
+      ...[...Array(7)].map((_, i) => ({
+        d: line(0, (i + 1) * 37.5, 300, (i + 1) * 37.5),
+        stroke: "rgba(140,100,60,0.5)",
+        strokeWidth: 1.0,
+        dashed: true,
+      })),
+      ...[...Array(7)].map((_, i) => ({
+        d: line((i + 1) * 37.5, 0, (i + 1) * 37.5, 300),
+        stroke: "rgba(140,100,60,0.5)",
+        strokeWidth: 1.0,
+        dashed: true,
+      })),
+    ],
+  },
+  fountain: {
+    sizeM: { w: 1.5, h: 1.5 },
+    label: "Fonte",
+    category: "Externo",
+    paths: [
+      { d: "", circle: { cx: 75, cy: 75, r: 72 }, fill: STONE, stroke: STROKE, strokeWidth: 1.7 },
+      { d: "", circle: { cx: 75, cy: 75, r: 60 }, fill: WATER, stroke: WATER_DARK, strokeWidth: 1.0 },
+      { d: "", circle: { cx: 75, cy: 75, r: 28 }, fill: STONE, stroke: STROKE, strokeWidth: 1.0 },
+      circ(75, 75, 8),
+    ],
+  },
+
+  // =========================================================
+  // DECORAÇÃO
+  // =========================================================
+  plant_pot: {
+    sizeM: { w: 0.3, h: 0.3 },
+    label: "Planta",
+    category: "Decoração",
+    paths: [
+      { d: "", circle: { cx: 15, cy: 15, r: 14 }, fill: GREEN, stroke: GREEN_DARK, strokeWidth: 1.0 },
+      { d: "", circle: { cx: 15, cy: 15, r: 6 }, fill: "rgba(120,90,60,0.7)" },
+    ],
+  },
+  mirror_wall: {
+    sizeM: { w: 0.8, h: 0.05 },
+    label: "Espelho",
+    category: "Decoração",
+    paths: [
+      { d: rect(0, 0, 80, 5), fill: GLASS, stroke: STROKE, strokeWidth: 1.0 },
+    ],
+  },
+  ceiling_fan: {
+    sizeM: { w: 1.2, h: 1.2 },
+    label: "Ventilador de Teto",
+    category: "Decoração",
+    paths: [
+      { d: "", circle: { cx: 60, cy: 60, r: 58 }, fill: null, stroke: STROKE_FINE, strokeWidth: 0.7, dashed: true },
+      { d: "M60 60L100 50L100 70Z", fill: null, stroke: STROKE_FINE, strokeWidth: 0.9 },
+      { d: "M60 60L20 50L20 70Z", fill: null, stroke: STROKE_FINE, strokeWidth: 0.9 },
+      { d: "M60 60L70 100L50 100Z", fill: null, stroke: STROKE_FINE, strokeWidth: 0.9 },
+      { d: "M60 60L70 20L50 20Z", fill: null, stroke: STROKE_FINE, strokeWidth: 0.9 },
+      circ(60, 60, 6),
+    ],
+  },
+
+  // =========================================================
+  // ELÉTRICO
+  // =========================================================
+  light_ceiling: {
+    sizeM: { w: 0.3, h: 0.3 },
+    label: "Lustre",
+    category: "Elétrico",
+    paths: [
+      circ(15, 15, 13),
+      { d: line(2, 15, 28, 15), stroke: STROKE, strokeWidth: 0.9 },
+      { d: line(15, 2, 15, 28), stroke: STROKE, strokeWidth: 0.9 },
+    ],
+  },
+  light_spot: {
+    sizeM: { w: 0.15, h: 0.15 },
+    label: "Spot",
+    category: "Elétrico",
+    paths: [
+      { d: "", circle: { cx: 7.5, cy: 7.5, r: 6.5 }, fill: STROKE, stroke: STROKE, strokeWidth: 0.8 },
+    ],
+  },
+  power_outlet: {
+    sizeM: { w: 0.2, h: 0.1 },
+    label: "Tomada",
+    category: "Elétrico",
+    paths: [
+      { d: rect(0, 0, 20, 10), fill: BODY, stroke: STROKE, strokeWidth: 1.0 },
+      circ(7, 5, 1.2),
+      circ(13, 5, 1.2),
+    ],
+  },
+  switch: {
+    sizeM: { w: 0.15, h: 0.15 },
+    label: "Interruptor",
+    category: "Elétrico",
+    paths: [
+      circ(7.5, 7.5, 6.5),
+      { d: "M5 9L7 11L11 5", stroke: STROKE, strokeWidth: 1.0, fill: null },
+    ],
+  },
+};
+
+// ---------- Utilities ----------
+
+export function defaultFurnitureSize(t: FurnitureType): { w: number; h: number } {
+  return FURN_DEFS[t].sizeM;
 }
 
-function ellipse(cx: number, cy: number, rx: number, ry: number): string {
-  return `M${cx - rx},${cy} A${rx},${ry} 0 1,0 ${cx + rx},${cy} A${rx},${ry} 0 1,0 ${cx - rx},${cy} Z`;
+export function defaultFurnitureLabel(t: FurnitureType): string {
+  return FURN_DEFS[t].label;
 }
 
-// ---------- Per-type definitions ----------
+export function furnitureCategory(t: FurnitureType): string {
+  return FURN_DEFS[t].category;
+}
 
-// SOFA — 2.1m × 0.9m, 3-seat, plan view with armrests, backrest line, and 3 cushions.
-const sofa: FurnitureSvg = {
-  viewBox: { w: 210, h: 90 },
-  paths: [
-    // Outer body
-    { d: rrect(0, 0, 210, 90, 8), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Backrest line (top edge of seat area)
-    { d: "M22,18 L188,18", stroke: STROKE_GOLD, weight: 1.0 },
-    // Armrests
-    { d: "M22,18 L22,86", stroke: STROKE_GOLD, weight: 1.0 },
-    { d: "M188,18 L188,86", stroke: STROKE_GOLD, weight: 1.0 },
-    // Cushion separators
-    { d: "M77,22 L77,86", stroke: STROKE_GOLD_SOFT, weight: 0.8 },
-    { d: "M133,22 L133,86", stroke: STROKE_GOLD_SOFT, weight: 0.8 },
-    // Subtle cushion crowns
-    { d: "M30,26 Q53,22 75,26", stroke: STROKE_GOLD_SOFT, weight: 0.6, noStroke: false },
-    { d: "M80,26 Q105,22 130,26", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    { d: "M135,26 Q158,22 180,26", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-  ],
-};
+/** True when this type has a path-based SVG drawing in the registry. */
+export function hasSvgPaths(t: FurnitureType): boolean {
+  return FURN_DEFS[t].paths.length > 0;
+}
 
-// BED — 1.6m × 2.0m queen / casal, plan view from above.
-const bed: FurnitureSvg = {
-  viewBox: { w: 160, h: 200 },
-  paths: [
-    // Mattress / outer frame
-    { d: rrect(0, 0, 160, 200, 6), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Headboard band (top of bed)
-    { d: rrect(0, 0, 160, 18, 4), fill: "rgba(198,169,98,0.18)", stroke: STROKE_GOLD, weight: 1.0 },
-    // Pillows
-    { d: rrect(8, 22, 66, 26, 3), fill: FILL_LIGHT, stroke: STROKE_GOLD, weight: 0.8 },
-    { d: rrect(86, 22, 66, 26, 3), fill: FILL_LIGHT, stroke: STROKE_GOLD, weight: 0.8 },
-    // Comforter fold suggestion (line across mid-bed)
-    { d: "M6,140 L154,140", stroke: STROKE_GOLD_SOFT, weight: 0.7, dash: [4, 3] },
-  ],
-};
+/** Render the registry's paths into the canvas at the given pixel rect. */
+export function drawFurnitureSvg(
+  ctx: CanvasRenderingContext2D,
+  type: FurnitureType,
+  px: number,
+  py: number,
+  pw: number,
+  ph: number
+) {
+  const def = FURN_DEFS[type];
+  if (!def || def.paths.length === 0) return;
+  const vbW = def.sizeM.w * 100;
+  const vbH = def.sizeM.h * 100;
+  if (vbW <= 0 || vbH <= 0) return;
 
-// DINING TABLE — 1.4m × 0.9m with 4 chairs around it.
-const table: FurnitureSvg = {
-  viewBox: { w: 140, h: 90 },
-  paths: [
-    // Table top
-    { d: rrect(20, 18, 100, 54, 4), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Inner inset (woodgrain hint)
-    { d: rrect(26, 24, 88, 42, 2), stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    // Chairs (4) — side view squares around the table
-    { d: rrect(34, 0, 32, 14, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    { d: rrect(74, 0, 32, 14, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    { d: rrect(34, 76, 32, 14, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    { d: rrect(74, 76, 32, 14, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-  ],
-};
-
-// TV / RACK — 1.6m × 0.45m, low cabinet with TV face.
-const tv: FurnitureSvg = {
-  viewBox: { w: 160, h: 45 },
-  paths: [
-    // Rack body
-    { d: rrect(0, 18, 160, 27, 3), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // TV screen on top (filled black)
-    { d: rrect(20, 0, 120, 16, 2), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 1.0 },
-    // Screen reflection hint
-    { d: "M28,4 L60,4", stroke: "rgba(255,255,255,0.25)", weight: 0.8 },
-    // Drawer split lines on rack
-    { d: "M53,18 L53,45", stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-    { d: "M107,18 L107,45", stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-  ],
-};
-
-// SINK — 0.6m × 0.45m. Used for both bathroom vanity and small kitchen sinks.
-const sink: FurnitureSvg = {
-  viewBox: { w: 60, h: 45 },
-  paths: [
-    // Counter / vanity surface
-    { d: rrect(0, 0, 60, 45, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Basin (rounded inset)
-    { d: rrect(10, 9, 40, 28, 4), fill: FILL_LIGHT, stroke: STROKE_GOLD, weight: 1.0 },
-    // Drain
-    { d: circle(30, 23, 2), fill: STROKE_DARK, stroke: STROKE_DARK, weight: 0.6 },
-    // Faucet stub
-    { d: "M28,3 L28,8 L32,8 L32,3 Z", fill: STROKE_GOLD, stroke: STROKE_GOLD, weight: 0.6 },
-    // Faucet spout (curve)
-    { d: "M30,8 Q30,16 30,21", stroke: STROKE_GOLD, weight: 1.0 },
-  ],
-};
-
-// TOILET — 0.4m × 0.65m, classic plan with tank + bowl + seat ring.
-const toilet: FurnitureSvg = {
-  viewBox: { w: 40, h: 65 },
-  paths: [
-    // Tank
-    { d: rrect(2, 0, 36, 18, 2), fill: FILL_LIGHT, stroke: STROKE_GOLD, weight: 1.2 },
-    // Flush button
-    { d: rrect(16, 4, 8, 4, 1), fill: STROKE_GOLD_SOFT, stroke: STROKE_GOLD, weight: 0.6 },
-    // Seat ring (outer)
-    { d: ellipse(20, 42, 17, 21), fill: FILL_LIGHT, stroke: STROKE_GOLD, weight: 1.2 },
-    // Bowl interior
-    { d: ellipse(20, 43, 12, 16), stroke: STROKE_GOLD, weight: 0.9 },
-  ],
-};
-
-// SHOWER — 0.9m × 0.9m box with diagonal hatching, drain, and glass enclosure.
-const shower: FurnitureSvg = {
-  viewBox: { w: 90, h: 90 },
-  paths: [
-    // Tile floor
-    { d: rrect(0, 0, 90, 90, 2), fill: FILL_GLASS, stroke: STROKE_GOLD, weight: 1.2 },
-    // Diagonal hatch (tile pattern)
-    { d: "M0,30 L30,0", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    { d: "M0,60 L60,0", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    { d: "M0,90 L90,0", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    { d: "M30,90 L90,30", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    { d: "M60,90 L90,60", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    // Drain
-    { d: rrect(38, 38, 14, 14, 1), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 0.7 },
-    { d: "M40,42 L50,42 M40,46 L50,46 M40,50 L50,50", stroke: STROKE_GOLD, weight: 0.5 },
-    // Glass enclosure indication (extra-bold front edge)
-    { d: "M0,90 L90,90", stroke: "rgba(126,182,255,0.85)", weight: 2.0 },
-  ],
-};
-
-// STOVE — 0.6m × 0.6m, 4-burner cooktop.
-const stove: FurnitureSvg = {
-  viewBox: { w: 60, h: 60 },
-  paths: [
-    // Body
-    { d: rrect(0, 0, 60, 60, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Burners (4)
-    { d: circle(18, 18, 7), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 1.0 },
-    { d: circle(42, 18, 7), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 1.0 },
-    { d: circle(18, 42, 7), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 1.0 },
-    { d: circle(42, 42, 7), fill: STROKE_DARK, stroke: STROKE_GOLD, weight: 1.0 },
-    // Burner inner rings
-    { d: circle(18, 18, 3), stroke: STROKE_GOLD, weight: 0.6 },
-    { d: circle(42, 18, 3), stroke: STROKE_GOLD, weight: 0.6 },
-    { d: circle(18, 42, 3), stroke: STROKE_GOLD, weight: 0.6 },
-    { d: circle(42, 42, 3), stroke: STROKE_GOLD, weight: 0.6 },
-    // Control knobs row hint
-    { d: "M6,4 L54,4", stroke: STROKE_GOLD_SOFT, weight: 0.5, dash: [2, 2] },
-  ],
-};
-
-// FRIDGE — 0.7m × 0.7m, double door (freezer top, fridge bottom).
-const fridge: FurnitureSvg = {
-  viewBox: { w: 70, h: 70 },
-  paths: [
-    { d: rrect(0, 0, 70, 70, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Freezer / fridge split
-    { d: "M0,24 L70,24", stroke: STROKE_GOLD, weight: 1.0 },
-    // Handles
-    { d: rrect(60, 6, 4, 14, 1), fill: STROKE_GOLD, stroke: STROKE_GOLD, weight: 0.6 },
-    { d: rrect(60, 30, 4, 32, 1), fill: STROKE_GOLD, stroke: STROKE_GOLD, weight: 0.6 },
-    // Brand strip
-    { d: "M6,16 L20,16", stroke: STROKE_GOLD_SOFT, weight: 0.5 },
-  ],
-};
-
-// COUNTER — 1.5m × 0.6m, plain kitchen counter.
-const counter: FurnitureSvg = {
-  viewBox: { w: 150, h: 60 },
-  paths: [
-    { d: rrect(0, 0, 150, 60, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Counter front-edge accent
-    { d: "M0,56 L150,56", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-    // Subtle modular splits
-    { d: "M50,0 L50,60", stroke: STROKE_GOLD_SOFT, weight: 0.5, dash: [3, 3] },
-    { d: "M100,0 L100,60", stroke: STROKE_GOLD_SOFT, weight: 0.5, dash: [3, 3] },
-  ],
-};
-
-// KITCHEN ISLAND — 1.6m × 0.9m with seating overhang line.
-const island: FurnitureSvg = {
-  viewBox: { w: 160, h: 90 },
-  paths: [
-    // Body
-    { d: rrect(0, 0, 160, 90, 4), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Inner counter line
-    { d: rrect(4, 4, 152, 82, 2), stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-    // Stool seating overhang (3 stools facing the long side)
-    { d: circle(42, 96, 7), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    { d: circle(80, 96, 7), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    { d: circle(118, 96, 7), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-    // Sink / stove inset hint
-    { d: rrect(58, 16, 44, 28, 2), stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-  ],
-};
-
-// WARDROBE — 2.0m × 0.6m, sliding doors indicated by arrows along the front edge.
-const wardrobe: FurnitureSvg = {
-  viewBox: { w: 200, h: 60 },
-  paths: [
-    { d: rrect(0, 0, 200, 60, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.4 },
-    // Door splits (3 doors)
-    { d: "M67,0 L67,60", stroke: STROKE_GOLD, weight: 0.9 },
-    { d: "M133,0 L133,60", stroke: STROKE_GOLD, weight: 0.9 },
-    // Sliding-door track lines along the front edge
-    { d: "M0,52 L200,52", stroke: STROKE_GOLD_SOFT, weight: 0.6, dash: [4, 3] },
-    { d: "M0,56 L200,56", stroke: STROKE_GOLD_SOFT, weight: 0.6, dash: [4, 3] },
-    // Slide direction arrow hints
-    { d: "M30,46 L40,46 L37,43 M40,46 L37,49", stroke: STROKE_GOLD, weight: 0.7 },
-    { d: "M170,46 L160,46 L163,43 M160,46 L163,49", stroke: STROKE_GOLD, weight: 0.7 },
-  ],
-};
-
-// DESK — 1.2m × 0.6m, with a chair behind it.
-const desk: FurnitureSvg = {
-  viewBox: { w: 120, h: 60 },
-  paths: [
-    // Desktop
-    { d: rrect(0, 0, 120, 42, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Drawer line
-    { d: "M84,0 L84,42 M84,12 L120,12", stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-    // Pull
-    { d: rrect(96, 4, 12, 4, 1), fill: STROKE_GOLD, stroke: STROKE_GOLD, weight: 0.5 },
-    // Chair
-    { d: rrect(40, 46, 40, 14, 3), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 0.9 },
-  ],
-};
-
-// CHAIR — 0.5m × 0.5m, simple seat with backrest line.
-const chair: FurnitureSvg = {
-  viewBox: { w: 50, h: 50 },
-  paths: [
-    { d: rrect(4, 4, 42, 42, 4), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.1 },
-    // Backrest line
-    { d: "M4,12 L46,12", stroke: STROKE_GOLD, weight: 0.8 },
-  ],
-};
-
-// BOOKSHELF — 1.0m × 0.4m. Shelves with vertical splits.
-const bookshelf: FurnitureSvg = {
-  viewBox: { w: 100, h: 40 },
-  paths: [
-    { d: rrect(0, 0, 100, 40, 1), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Vertical compartment splits
-    { d: "M25,0 L25,40 M50,0 L50,40 M75,0 L75,40", stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-    // Books / titles indication (small horizontal ticks)
-    { d: "M4,8 L21,8 M4,16 L21,16 M4,24 L21,24 M4,32 L21,32", stroke: STROKE_GOLD_SOFT, weight: 0.5 },
-    { d: "M29,8 L46,8 M29,16 L46,16 M29,24 L46,24 M29,32 L46,32", stroke: STROKE_GOLD_SOFT, weight: 0.5 },
-    { d: "M54,8 L71,8 M54,16 L71,16 M54,24 L71,24 M54,32 L71,32", stroke: STROKE_GOLD_SOFT, weight: 0.5 },
-    { d: "M79,8 L96,8 M79,16 L96,16 M79,24 L96,24 M79,32 L96,32", stroke: STROKE_GOLD_SOFT, weight: 0.5 },
-  ],
-};
-
-// WASHING MACHINE — 0.6m × 0.6m, top-loader plan with drum circle.
-const washing_machine: FurnitureSvg = {
-  viewBox: { w: 60, h: 60 },
-  paths: [
-    { d: rrect(0, 0, 60, 60, 2), fill: FILL_BODY, stroke: STROKE_GOLD, weight: 1.2 },
-    // Drum
-    { d: circle(30, 30, 20), fill: "rgba(15,15,25,0.55)", stroke: STROKE_GOLD, weight: 1.0 },
-    // Inner ring
-    { d: circle(30, 30, 15), stroke: STROKE_GOLD_SOFT, weight: 0.7 },
-    // Drum center
-    { d: circle(30, 30, 2), fill: STROKE_GOLD, stroke: STROKE_GOLD, weight: 0.5 },
-    // Control panel hint at top
-    { d: "M6,4 L26,4 M34,4 L54,4", stroke: STROKE_GOLD_SOFT, weight: 0.6 },
-  ],
-};
-
-export const FURNITURE_SVGS: Record<FurnitureType, FurnitureSvg> = {
-  sofa,
-  bed,
-  table,
-  tv,
-  sink,
-  toilet,
-  shower,
-  stove,
-  fridge,
-  counter,
-  island,
-  wardrobe,
-  desk,
-  chair,
-  bookshelf,
-  washing_machine,
-};
-
-export const DEFAULT_OUTLINE_STROKE = STROKE_GOLD;
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.scale(pw / vbW, ph / vbH);
+  for (const ps of def.paths) {
+    ctx.save();
+    if (ps.dashed) ctx.setLineDash([3, 3]);
+    if (ps.circle) {
+      ctx.beginPath();
+      ctx.arc(ps.circle.cx, ps.circle.cy, ps.circle.r, 0, Math.PI * 2);
+      if (ps.fill !== null) {
+        ctx.fillStyle = ps.fill ?? BODY;
+        ctx.fill();
+      }
+      ctx.strokeStyle = ps.stroke ?? STROKE;
+      ctx.lineWidth = (ps.strokeWidth ?? 1.2) * (vbW / Math.max(pw, 1));
+      ctx.stroke();
+    } else if (ps.d) {
+      const path = new Path2D(ps.d);
+      if (ps.fill !== null) {
+        ctx.fillStyle = ps.fill ?? BODY;
+        ctx.fill(path);
+      }
+      if (ps.stroke !== null) {
+        ctx.strokeStyle = ps.stroke ?? STROKE;
+        // Counter the scale so stroke width renders in true pixels.
+        ctx.lineWidth = (ps.strokeWidth ?? 1.2) * (vbW / Math.max(pw, 1));
+        ctx.stroke(path);
+      }
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}

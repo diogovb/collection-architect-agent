@@ -3,27 +3,74 @@ import type Anthropic from "@anthropic-ai/sdk";
 // Tool definitions for Claude. The frontend executes tools that mutate
 // the floor plan; the server simulates results so Claude can continue.
 
+const FURNITURE_TYPES = [
+  // legacy
+  "sofa", "bed", "table", "tv", "sink", "toilet", "shower", "stove", "fridge",
+  "counter", "island", "wardrobe", "desk", "chair", "bookshelf", "washing_machine",
+  // sala
+  "sofa_2seat", "sofa_3seat", "sofa_L", "armchair", "coffee_table", "side_table",
+  "tv_console", "floor_lamp", "rug_rect",
+  // quarto casal
+  "bed_double", "bed_king", "nightstand", "dresser", "wardrobe_sliding",
+  "wardrobe_hinged", "vanity",
+  // quarto solteiro / infantil
+  "bed_single", "bed_bunk", "desk_study", "desk_chair",
+  "crib", "bed_child", "toy_shelf", "play_table",
+  // cozinha
+  "stove_4burner", "stove_5burner", "cooktop", "fridge_single", "fridge_double",
+  "microwave", "dishwasher", "kitchen_sink_single", "kitchen_sink_double",
+  "kitchen_island", "bar_stool", "hood", "pantry",
+  // banheiro
+  "bidet", "sink_pedestal", "sink_vanity", "sink_double_vanity",
+  "shower_square", "shower_rect", "bathtub_rect", "bathtub_corner", "towel_rack",
+  // lavanderia
+  "dryer", "laundry_sink", "ironing_board",
+  // jantar
+  "dining_table_4", "dining_table_6", "dining_table_8", "dining_table_round_4",
+  "buffet", "dining_chair",
+  // escritório
+  "desk_L", "desk_straight", "office_chair", "filing_cabinet",
+  // comercial
+  "meeting_table_large", "reception_desk", "waiting_chair", "cubicle_desk",
+  "display_shelf", "checkout_counter", "restaurant_table_2", "restaurant_table_4",
+  "bar_counter", "commercial_stove",
+  // externo
+  "pool_rect", "hot_tub", "bbq_grill", "outdoor_table", "sun_lounger", "umbrella",
+  "planter_round", "tree_small", "tree_large", "pergola", "fountain",
+  // decoração
+  "plant_pot", "mirror_wall", "ceiling_fan",
+  // elétrico
+  "light_ceiling", "light_spot", "power_outlet", "switch",
+];
+
+const FLOOR_MATERIALS = ["madeira", "porcelanato", "ceramica", "marmore", "grama", "deck", "pedra"];
+
+const FURNITURE_GROUPS = [
+  "dining_set_4", "dining_set_6", "dining_set_8",
+  "living_basic", "living_full",
+  "bedroom_couple_basic", "bedroom_couple_full",
+  "bedroom_single_basic", "kids_room_basic",
+  "kitchen_basic", "kitchen_full",
+  "bathroom_basic", "bathroom_full",
+  "office_basic", "laundry_basic",
+  "garden_basic", "pool_set", "bbq_set",
+];
+
 export const tools: Anthropic.Tool[] = [
+  // ============ ROOMS ============
   {
     name: "create_room",
     description:
-      "Cria um cômodo retangular com o nome dado. Tamanho em metros. Se x/y forem omitidos, posiciona automaticamente. floor_type é opcional.",
+      "Cria um cômodo retangular com o nome dado. Tamanho em metros. Se x/y forem omitidos, posiciona automaticamente.",
     input_schema: {
       type: "object",
       properties: {
-        name: {
-          type: "string",
-          description: "Nome do cômodo, ex: 'Sala', 'Quarto 1', 'Cozinha'.",
-        },
+        name: { type: "string", description: "Nome do cômodo, ex: 'Sala', 'Quarto 1', 'Cozinha'." },
         x: { type: "number", description: "Coordenada X em metros (canto superior-esquerdo)." },
         y: { type: "number", description: "Coordenada Y em metros." },
         width: { type: "number", description: "Largura em metros." },
         height: { type: "number", description: "Altura em metros." },
-        floor_type: {
-          type: "string",
-          enum: ["madeira", "porcelanato", "ceramica", "marmore"],
-          description: "Material do piso.",
-        },
+        floor_type: { type: "string", enum: FLOOR_MATERIALS, description: "Material do piso." },
       },
       required: ["name", "width", "height"],
     },
@@ -33,12 +80,39 @@ export const tools: Anthropic.Tool[] = [
     description: "Remove um cômodo (e tudo dentro dele) pelo nome.",
     input_schema: {
       type: "object",
+      properties: { room_name: { type: "string" } },
+      required: ["room_name"],
+    },
+  },
+  {
+    name: "resize_room",
+    description: "Redimensiona um cômodo existente (mantém posição do canto superior-esquerdo).",
+    input_schema: {
+      type: "object",
       properties: {
         room_name: { type: "string" },
+        width: { type: "number" },
+        height: { type: "number" },
+      },
+      required: ["room_name", "width", "height"],
+    },
+  },
+  {
+    name: "duplicate_room",
+    description: "Duplica um cômodo existente (com móveis), com offset opcional.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        new_name: { type: "string" },
+        offset_x: { type: "number" },
+        offset_y: { type: "number" },
       },
       required: ["room_name"],
     },
   },
+
+  // ============ OPENINGS ============
   {
     name: "add_door",
     description: "Adiciona uma porta numa parede de um cômodo. position é 0..1 ao longo da parede.",
@@ -47,8 +121,8 @@ export const tools: Anthropic.Tool[] = [
       properties: {
         room_name: { type: "string" },
         wall: { type: "string", enum: ["north", "south", "east", "west"] },
-        position: { type: "number", description: "0 a 1, posição na parede.", default: 0.5 },
-        size: { type: "number", description: "Largura da porta em metros.", default: 0.9 },
+        position: { type: "number", default: 0.5 },
+        size: { type: "number", default: 0.9 },
       },
       required: ["room_name", "wall"],
     },
@@ -67,6 +141,125 @@ export const tools: Anthropic.Tool[] = [
       required: ["room_name", "wall"],
     },
   },
+
+  // ============ WALLS / STRUCTURE ============
+  {
+    name: "delete_wall",
+    description:
+      "Remove uma parede inteira de um cômodo (vira passagem aberta — útil pra integrar ambientes).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+      },
+      required: ["room_name", "wall"],
+    },
+  },
+  {
+    name: "merge_rooms",
+    description:
+      "Funde dois cômodos adjacentes em um só. Os cômodos precisam compartilhar uma parede inteira.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_a: { type: "string" },
+        room_b: { type: "string" },
+        new_name: { type: "string" },
+      },
+      required: ["room_a", "room_b"],
+    },
+  },
+  {
+    name: "add_partition",
+    description:
+      "Adiciona uma divisória interna num cômodo, criando um cômodo novo. Não muda o cômodo original (use split_room para dividir de fato).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        orientation: { type: "string", enum: ["horizontal", "vertical"] },
+        position: { type: "number", description: "0..1, posição da divisória.", default: 0.5 },
+        new_room_name: { type: "string" },
+      },
+      required: ["room_name", "orientation"],
+    },
+  },
+  {
+    name: "split_room",
+    description:
+      "Divide um cômodo em dois. orientation horizontal divide ao longo da largura (cria cômodo abaixo); vertical divide ao longo da altura (cria cômodo à direita).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        orientation: { type: "string", enum: ["horizontal", "vertical"] },
+        position: { type: "number", default: 0.5 },
+        new_room_name: { type: "string" },
+        new_room_floor: { type: "string", enum: FLOOR_MATERIALS },
+      },
+      required: ["room_name", "orientation"],
+    },
+  },
+  {
+    name: "move_wall",
+    description:
+      "Move uma parede de um cômodo (cresce ou diminui). delta em metros (positivo = parede pra fora).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        delta: { type: "number" },
+      },
+      required: ["room_name", "wall", "delta"],
+    },
+  },
+  {
+    name: "add_column",
+    description: "Adiciona uma coluna estrutural na planta (posição absoluta em metros).",
+    input_schema: {
+      type: "object",
+      properties: {
+        x: { type: "number" },
+        y: { type: "number" },
+        size: { type: "number", default: 0.3 },
+        shape: { type: "string", enum: ["square", "round"], default: "square" },
+      },
+      required: ["x", "y"],
+    },
+  },
+
+  // ============ FLOOR ============
+  {
+    name: "set_floor_material",
+    description: "Troca o material do piso de um cômodo inteiro.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        material: { type: "string", enum: FLOOR_MATERIALS },
+      },
+      required: ["room_name", "material"],
+    },
+  },
+  {
+    name: "split_floor",
+    description:
+      "Divide o piso de um cômodo em duas zonas com materiais diferentes (essencial para open-plan: ex: sala madeira / cozinha porcelanato no mesmo espaço).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        orientation: { type: "string", enum: ["horizontal", "vertical"] },
+        position: { type: "number", default: 0.5 },
+        second_material: { type: "string", enum: FLOOR_MATERIALS },
+      },
+      required: ["room_name", "orientation", "second_material"],
+    },
+  },
+
+  // ============ FURNITURE ============
   {
     name: "add_furniture",
     description:
@@ -75,28 +268,8 @@ export const tools: Anthropic.Tool[] = [
       type: "object",
       properties: {
         room_name: { type: "string" },
-        furniture_type: {
-          type: "string",
-          enum: [
-            "sofa",
-            "bed",
-            "table",
-            "tv",
-            "sink",
-            "toilet",
-            "shower",
-            "stove",
-            "fridge",
-            "counter",
-            "island",
-            "wardrobe",
-            "desk",
-            "chair",
-            "bookshelf",
-            "washing_machine",
-          ],
-        },
-        label: { type: "string", description: "Etiqueta a mostrar no canvas." },
+        furniture_type: { type: "string", enum: FURNITURE_TYPES },
+        label: { type: "string" },
         relative_x: { type: "number", default: 0.5 },
         relative_y: { type: "number", default: 0.5 },
       },
@@ -104,29 +277,36 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
-    name: "remove_furniture",
-    description: "Remove um móvel pelo id ou pela label (texto exato).",
-    input_schema: {
-      type: "object",
-      properties: {
-        furniture_id: { type: "string" },
-        label: { type: "string" },
-      },
-    },
-  },
-  {
-    name: "set_floor_material",
-    description: "Troca o material do piso de um cômodo.",
+    name: "add_furniture_group",
+    description:
+      "Adiciona um conjunto pré-definido de móveis num cômodo (ex: 'dining_set_6' = mesa de jantar 6 lugares + 6 cadeiras).",
     input_schema: {
       type: "object",
       properties: {
         room_name: { type: "string" },
-        material: {
-          type: "string",
-          enum: ["madeira", "porcelanato", "ceramica", "marmore"],
-        },
+        group: { type: "string", enum: FURNITURE_GROUPS },
       },
-      required: ["room_name", "material"],
+      required: ["room_name", "group"],
+    },
+  },
+  {
+    name: "swap_furniture",
+    description: "Troca o tipo de um móvel existente, mantendo a posição.",
+    input_schema: {
+      type: "object",
+      properties: {
+        furniture_id: { type: "string" },
+        new_type: { type: "string", enum: FURNITURE_TYPES },
+      },
+      required: ["furniture_id", "new_type"],
+    },
+  },
+  {
+    name: "remove_furniture",
+    description: "Remove um móvel pelo id ou pela label (texto exato).",
+    input_schema: {
+      type: "object",
+      properties: { furniture_id: { type: "string" }, label: { type: "string" } },
     },
   },
   {
@@ -142,6 +322,107 @@ export const tools: Anthropic.Tool[] = [
       required: ["furniture_id", "new_x", "new_y"],
     },
   },
+
+  // ============ LAYOUT TRANSFORMATIONS ============
+  {
+    name: "mirror_layout",
+    description: "Espelha toda a planta no eixo X ou Y.",
+    input_schema: {
+      type: "object",
+      properties: { axis: { type: "string", enum: ["x", "y"] } },
+      required: ["axis"],
+    },
+  },
+  {
+    name: "rotate_layout",
+    description: "Gira toda a planta 90, 180 ou 270 graus.",
+    input_schema: {
+      type: "object",
+      properties: { degrees: { type: "number", enum: [90, 180, 270] } },
+      required: ["degrees"],
+    },
+  },
+
+  // ============ STAIRS / BALCONY ============
+  {
+    name: "add_balcony",
+    description:
+      "Adiciona uma varanda. Se attached_to + wall forem fornecidos, cola na parede daquele cômodo. Senão, posiciona automaticamente.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        attached_to: { type: "string", description: "Nome do cômodo de referência." },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        width: { type: "number" },
+        depth: { type: "number" },
+      },
+      required: ["width", "depth"],
+    },
+  },
+  {
+    name: "add_stairs",
+    description: "Adiciona uma escada (straight, L, U ou spiral).",
+    input_schema: {
+      type: "object",
+      properties: {
+        shape: { type: "string", enum: ["straight", "L", "U", "spiral"] },
+        x: { type: "number" },
+        y: { type: "number" },
+        width: { type: "number" },
+        height: { type: "number" },
+        direction: { type: "string", enum: ["up", "down"], default: "up" },
+        rotation: { type: "number", default: 0 },
+        room_name: { type: "string" },
+      },
+      required: ["shape", "x", "y", "width", "height"],
+    },
+  },
+
+  // ============ ANNOTATIONS ============
+  {
+    name: "add_dimension",
+    description: "Adiciona uma cota dimensional entre dois pontos (em metros).",
+    input_schema: {
+      type: "object",
+      properties: {
+        x1: { type: "number" },
+        y1: { type: "number" },
+        x2: { type: "number" },
+        y2: { type: "number" },
+        text: { type: "string", description: "Texto opcional. Se omitido, calcula a distância." },
+      },
+      required: ["x1", "y1", "x2", "y2"],
+    },
+  },
+  {
+    name: "add_text_note",
+    description: "Adiciona uma anotação de texto livre na planta.",
+    input_schema: {
+      type: "object",
+      properties: {
+        x: { type: "number" },
+        y: { type: "number" },
+        text: { type: "string" },
+      },
+      required: ["x", "y", "text"],
+    },
+  },
+  {
+    name: "add_north_arrow",
+    description:
+      "Adiciona uma rosa-dos-ventos / seta de norte na planta. angle em graus (0 = norte para cima).",
+    input_schema: {
+      type: "object",
+      properties: {
+        x: { type: "number" },
+        y: { type: "number" },
+        angle: { type: "number", default: 0 },
+      },
+    },
+  },
+
+  // ============ HIGH-LEVEL ============
   {
     name: "create_apartment_layout",
     description:
@@ -149,14 +430,10 @@ export const tools: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: {
-        total_area: { type: "number", description: "Área total aproximada em m²." },
+        total_area: { type: "number" },
         num_bedrooms: { type: "number" },
         num_bathrooms: { type: "number" },
-        style: {
-          type: "string",
-          enum: ["modern", "classic", "compact"],
-          default: "modern",
-        },
+        style: { type: "string", enum: ["modern", "classic", "compact"], default: "modern" },
       },
       required: ["total_area", "num_bedrooms", "num_bathrooms"],
     },
@@ -168,11 +445,7 @@ export const tools: Anthropic.Tool[] = [
       type: "object",
       properties: {
         room_name: { type: "string" },
-        style: {
-          type: "string",
-          enum: ["modern", "minimal", "classic"],
-          default: "modern",
-        },
+        style: { type: "string", enum: ["modern", "minimal", "classic"], default: "modern" },
       },
       required: ["room_name"],
     },
@@ -180,9 +453,6 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "clear_all",
     description: "Apaga toda a planta. Pergunte antes se for destrutivo.",
-    input_schema: {
-      type: "object",
-      properties: {},
-    },
+    input_schema: { type: "object", properties: {} },
   },
 ];
