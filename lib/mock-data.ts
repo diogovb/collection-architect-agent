@@ -6,7 +6,14 @@ import type {
   Slide,
   Version,
 } from "./vibe-types";
-import type { FloorPlan } from "./types";
+import type { FloorPlan, ToolName } from "./types";
+
+/** Inline status for a single tool call inside a chat message. */
+export interface ToolCallStatus {
+  id: string;
+  name: ToolName;
+  status: "running" | "done" | "error";
+}
 
 /* -------------------- Seed floor plan --------------------
  * A loft with: foyer, living room, dining, kitchen with island,
@@ -195,6 +202,7 @@ export interface SeededMessage {
   time: string;
   diff?: { description: string; badge: string; targetId?: string };
   proactive?: boolean;
+  toolCalls?: ToolCallStatus[];
 }
 
 function nowTime() {

@@ -48,6 +48,98 @@ function computeBounds(plan: FloorPlan): Bounds {
   return { minX, minY, maxX, maxY };
 }
 
+// ----- Wall classification -----
+//
+// Each room is an axis-aligned rectangle. A wall segment is "internal" when
+// rooms exist on both sides of the line (shared wall between two rooms) and
+// "external" when only one side has a room (envelope perimeter).
+//
+// We treat each axis (horizontal / vertical) independently. For each unique
+// y-coordinate that any room has as a top or bottom edge, we collect intervals
+// where rooms sit above (north of) and below (south of) that line, then sweep
+// to find sub-intervals classified as internal or external. Same for vertical
+// lines, with rooms to the left/right.
+
+interface Interval { start: number; end: number; }
+interface WallSeg { axis: "h" | "v"; fixed: number; start: number; end: number; }
+
+const WALL_EPS = 1e-3; // 1mm tolerance — tighter than the 10cm furniture grid.
+
+function classifyAlongLine(setA: Interval[], setB: Interval[]):
+  { start: number; end: number; aHas: boolean; bHas: boolean; }[] {
+  const events: { x: number; delta: number; which: 0 | 1 }[] = [];
+  for (const i of setA) {
+    events.push({ x: i.start, delta: 1, which: 0 });
+    events.push({ x: i.end,   delta: -1, which: 0 });
+  }
+  for (const i of setB) {
+    events.push({ x: i.start, delta: 1, which: 1 });
+    events.push({ x: i.end,   delta: -1, which: 1 });
+  }
+  if (events.length === 0) return [];
+  events.sort((p, q) => p.x - q.x || p.delta - q.delta);
+  const out: { start: number; end: number; aHas: boolean; bHas: boolean }[] = [];
+  let aCount = 0, bCount = 0;
+  let prevX = events[0].x;
+  for (const ev of events) {
+    if (ev.x - prevX > WALL_EPS && (aCount > 0 || bCount > 0)) {
+      out.push({ start: prevX, end: ev.x, aHas: aCount > 0, bHas: bCount > 0 });
+    }
+    if (ev.which === 0) aCount += ev.delta; else bCount += ev.delta;
+    prevX = ev.x;
+  }
+  return out;
+}
+
+function computeWalls(rooms: Room[]): { external: WallSeg[]; internal: WallSeg[] } {
+  const horiz = new Map<number, { above: Interval[]; below: Interval[] }>();
+  const vert  = new Map<number, { left: Interval[]; right: Interval[] }>();
+  const k = (n: number) => Math.round(n * 1000);
+  const getH = (y: number) => {
+    const yk = k(y);
+    let g = horiz.get(yk);
+    if (!g) { g = { above: [], below: [] }; horiz.set(yk, g); }
+    return g;
+  };
+  const getV = (x: number) => {
+    const xk = k(x);
+    let g = vert.get(xk);
+    if (!g) { g = { left: [], right: [] }; vert.set(xk, g); }
+    return g;
+  };
+
+  for (const r of rooms) {
+    // Top edge: room interior lies BELOW this y line.
+    getH(r.y).below.push({ start: r.x, end: r.x + r.width });
+    // Bottom edge: room interior lies ABOVE this y line.
+    getH(r.y + r.height).above.push({ start: r.x, end: r.x + r.width });
+    // Left edge: room interior lies to the RIGHT of this x line.
+    getV(r.x).right.push({ start: r.y, end: r.y + r.height });
+    // Right edge: room interior lies to the LEFT.
+    getV(r.x + r.width).left.push({ start: r.y, end: r.y + r.height });
+  }
+
+  const external: WallSeg[] = [];
+  const internal: WallSeg[] = [];
+
+  horiz.forEach(({ above, below }, yk) => {
+    const y = yk / 1000;
+    for (const s of classifyAlongLine(above, below)) {
+      const seg: WallSeg = { axis: "h", fixed: y, start: s.start, end: s.end };
+      (s.aHas && s.bHas ? internal : external).push(seg);
+    }
+  });
+  vert.forEach(({ left, right }, xk) => {
+    const x = xk / 1000;
+    for (const s of classifyAlongLine(left, right)) {
+      const seg: WallSeg = { axis: "v", fixed: x, start: s.start, end: s.end };
+      (s.aHas && s.bHas ? internal : external).push(seg);
+    }
+  });
+
+  return { external, internal };
+}
+
 function fmtMm(m: number): string {
   return `${(m * 1000).toFixed(0)}`;
 }
@@ -83,6 +175,7 @@ export function FloorPlan({
   onLoadExample,
 }: Props) {
   const bounds = useMemo(() => computeBounds(plan), [plan]);
+  const walls = useMemo(() => computeWalls(plan.rooms), [plan.rooms]);
   const padding = 2;
   const widthM = bounds.maxX - bounds.minX + padding * 2;
   const heightM = bounds.maxY - bounds.minY + padding * 2;
@@ -420,25 +513,35 @@ export function FloorPlan({
           );
         })}
 
-        {/* Walls — drawn as room outlines (visual only, no events). */}
-        {plan.rooms.map((r) => {
-          const isSel = selected?.type === "room" && selected.id === r.id;
-          return (
-            <rect
-              key={`wall-${r.id}`}
-              x={toX(r.x)} y={toY(r.y)}
-              width={r.width * M_TO_PX} height={r.height * M_TO_PX}
-              fill="none"
+        {/* Walls — segment-based, classified into external (12px) and
+            internal/shared (8px). Each segment is rendered exactly once,
+            so shared walls between adjacent rooms no longer double up. */}
+        <g pointerEvents="none" shapeRendering="crispEdges">
+          {walls.internal.map((s, i) => (
+            <line
+              key={`iw-${i}`}
+              x1={s.axis === "h" ? toX(s.start) : toX(s.fixed)}
+              y1={s.axis === "h" ? toY(s.fixed) : toY(s.start)}
+              x2={s.axis === "h" ? toX(s.end)   : toX(s.fixed)}
+              y2={s.axis === "h" ? toY(s.fixed) : toY(s.end)}
               stroke="#1F1B16"
-              strokeWidth={isSel ? 9 : 8}
-              shapeRendering="crispEdges"
-              pointerEvents="none"
+              strokeWidth={8}
+              strokeLinecap="square"
             />
-          );
-        })}
-
-        {/* External walls overlay */}
-        <ExternalOutline plan={plan} toX={toX} toY={toY} />
+          ))}
+          {walls.external.map((s, i) => (
+            <line
+              key={`ew-${i}`}
+              x1={s.axis === "h" ? toX(s.start) : toX(s.fixed)}
+              y1={s.axis === "h" ? toY(s.fixed) : toY(s.start)}
+              x2={s.axis === "h" ? toX(s.end)   : toX(s.fixed)}
+              y2={s.axis === "h" ? toY(s.fixed) : toY(s.end)}
+              stroke="#1F1B16"
+              strokeWidth={12}
+              strokeLinecap="square"
+            />
+          ))}
+        </g>
 
         {/* Door openings */}
         {plan.doors.map((d) => {
@@ -726,22 +829,6 @@ function ContextMenu({
 
 // ---------- Helpers (subcomponents) ----------
 
-function ExternalOutline({ plan, toX, toY }: { plan: FloorPlan; toX: (m: number) => number; toY: (m: number) => number; }) {
-  if (plan.rooms.length === 0) return null;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const r of plan.rooms) {
-    minX = Math.min(minX, r.x); minY = Math.min(minY, r.y);
-    maxX = Math.max(maxX, r.x + r.width); maxY = Math.max(maxY, r.y + r.height);
-  }
-  return (
-    <rect
-      x={toX(minX) - 2} y={toY(minY) - 2}
-      width={(maxX - minX) * M_TO_PX + 4} height={(maxY - minY) * M_TO_PX + 4}
-      fill="none" stroke="#1F1B16" strokeWidth="12" shapeRendering="crispEdges" pointerEvents="none"
-    />
-  );
-}
-
 function wallSegment(room: Room, wall: Door["wall"], pos: number, size: number) {
   const along = (start: number, len: number) => start + (len * pos) - size / 2;
   if (wall === "north") {
@@ -772,32 +859,51 @@ function DoorMark({ door, plan, toX, toY, selected, hover, onSelect, onContextMe
   const seg = wallSegment(room, door.wall, door.position, door.size);
   const sx = toX(Math.min(seg.x1, seg.x2));
   const sy = toY(Math.min(seg.y1, seg.y2));
-  const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 12;
-  const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 12;
+  const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 14;
+  const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 14;
   const radius = door.size * M_TO_PX;
+  // Leaf: solid line from the hinge, perpendicular into the room (90° open).
+  // Arc: dashed quarter-circle from leaf tip back to the closed position
+  // along the wall, indicating the door's swing path.
+  let leaf = "";
   let arc = "";
   if (seg.axis === "h") {
-    const cx = toX(seg.x1);
-    const cy = toY(seg.y1);
-    const sweepDir = door.wall === "north" ? 1 : -1;
-    arc = `M ${cx} ${cy} a ${radius} ${radius} 0 0 1 ${radius} ${sweepDir * radius}`;
+    const hx = toX(seg.x1);                                  // hinge x
+    const hy = toY(seg.y1);                                  // wall y
+    const into = door.wall === "north" ? 1 : -1;             // y direction into room
+    const tipX = hx;
+    const tipY = hy + into * radius;
+    leaf = `M ${hx} ${hy} L ${tipX} ${tipY}`;
+    // Arc from tip (perpendicular to wall) back to closed end (along wall, hx+radius).
+    const sweep = door.wall === "north" ? 0 : 1;
+    arc = `M ${tipX} ${tipY} A ${radius} ${radius} 0 0 ${sweep} ${hx + radius} ${hy}`;
   } else {
-    const cx = toX(seg.x1);
-    const cy = toY(seg.y1);
-    const sweepDir = door.wall === "west" ? 1 : -1;
-    arc = `M ${cx} ${cy} a ${radius} ${radius} 0 0 1 ${sweepDir * radius} ${radius}`;
+    const hx = toX(seg.x1);                                  // wall x
+    const hy = toY(seg.y1);                                  // hinge y
+    const into = door.wall === "west" ? 1 : -1;              // x direction into room
+    const tipX = hx + into * radius;
+    const tipY = hy;
+    leaf = `M ${hx} ${hy} L ${tipX} ${tipY}`;
+    const sweep = door.wall === "west" ? 1 : 0;
+    arc = `M ${tipX} ${tipY} A ${radius} ${radius} 0 0 ${sweep} ${hx} ${hy + radius}`;
   }
-  const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#8C8478";
-  const sw = selected ? 1.4 : 0.8;
+  const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#1F1B16";
+  const arcStroke = selected ? "#B8552E" : hover ? "#B8552E" : "#8C8478";
+  // Punch-out fill: clear the wall behind the opening. Sized to comfortably
+  // cover the 12px external wall stroke.
+  const clearW = seg.axis === "h" ? w : 14;
+  const clearH = seg.axis === "v" ? h : 14;
+  const clearX = seg.axis === "h" ? sx : sx - 7;
+  const clearY = seg.axis === "v" ? sy : sy - 7;
   return (
     <g onClick={onSelect}
        onContextMenu={onContextMenu}
        onMouseEnter={() => onHoverChange(true)}
        onMouseLeave={() => onHoverChange(false)}
        style={{ cursor: interactive ? "pointer" : "default" }}>
-      <rect x={sx - (seg.axis === "h" ? 0 : 6)} y={sy - (seg.axis === "v" ? 0 : 6)}
-            width={w} height={h} fill="#FAF7F0" />
-      <path d={arc} fill="none" stroke={stroke} strokeWidth={sw} />
+      <rect x={clearX} y={clearY} width={clearW} height={clearH} fill="#FAF7F0" />
+      <path d={leaf} fill="none" stroke={stroke} strokeWidth={selected ? 2 : 1.4} strokeLinecap="square" />
+      <path d={arc} fill="none" stroke={arcStroke} strokeWidth={selected ? 1.2 : 0.8} strokeDasharray="3 2" />
       {selected && (
         <rect x={sx - 6} y={sy - 6} width={w + 12} height={h + 12} fill="none"
               stroke="#B8552E" strokeWidth="1" strokeDasharray="3 3" pointerEvents="none" />
@@ -818,21 +924,38 @@ function WindowMark({ win, plan, toX, toY, selected, hover, onSelect, onContextM
   const seg = wallSegment(room, win.wall, win.position, win.size);
   const sx = toX(Math.min(seg.x1, seg.x2));
   const sy = toY(Math.min(seg.y1, seg.y2));
-  const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 10;
-  const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 10;
+  const w = seg.axis === "h" ? Math.abs(seg.x2 - seg.x1) * M_TO_PX : 14;
+  const h = seg.axis === "v" ? Math.abs(seg.y2 - seg.y1) * M_TO_PX : 14;
   const stroke = selected ? "#B8552E" : hover ? "#B8552E" : "#1F1B16";
+  // Thin double-line glass: two parallel 2px lines with a 3px gap, drawn
+  // straight on the wall axis. Punch out the wall behind the opening with a
+  // bone-coloured rect so the 12px wall stroke doesn't show through.
+  const clearW = seg.axis === "h" ? w : 14;
+  const clearH = seg.axis === "v" ? h : 14;
+  const clearX = seg.axis === "h" ? sx : sx - 7;
+  const clearY = seg.axis === "v" ? sy : sy - 7;
+  const gapHalf = 1.5;
   return (
     <g onClick={onSelect}
        onContextMenu={onContextMenu}
        onMouseEnter={() => onHoverChange(true)}
        onMouseLeave={() => onHoverChange(false)}
        style={{ cursor: interactive ? "pointer" : "default" }}>
-      <rect x={sx - (seg.axis === "h" ? 0 : 5)} y={sy - (seg.axis === "v" ? 0 : 5)}
-            width={w} height={h} fill="#FAF7F0" stroke={stroke} strokeWidth="1.5" />
+      <rect x={clearX} y={clearY} width={clearW} height={clearH} fill="#FAF7F0" />
       {seg.axis === "h" ? (
-        <line x1={sx} y1={sy} x2={sx + w} y2={sy} stroke="#1F1B16" strokeWidth="1" />
+        <>
+          <line x1={sx} y1={sy - gapHalf} x2={sx + w} y2={sy - gapHalf} stroke={stroke} strokeWidth="2" />
+          <line x1={sx} y1={sy + gapHalf} x2={sx + w} y2={sy + gapHalf} stroke={stroke} strokeWidth="2" />
+        </>
       ) : (
-        <line x1={sx} y1={sy} x2={sx} y2={sy + h} stroke="#1F1B16" strokeWidth="1" />
+        <>
+          <line x1={sx - gapHalf} y1={sy} x2={sx - gapHalf} y2={sy + h} stroke={stroke} strokeWidth="2" />
+          <line x1={sx + gapHalf} y1={sy} x2={sx + gapHalf} y2={sy + h} stroke={stroke} strokeWidth="2" />
+        </>
+      )}
+      {selected && (
+        <rect x={clearX - 4} y={clearY - 4} width={clearW + 8} height={clearH + 8} fill="none"
+              stroke="#B8552E" strokeWidth="1" strokeDasharray="3 3" pointerEvents="none" />
       )}
     </g>
   );

@@ -5,7 +5,7 @@ import { resolveSelection } from "@/lib/floor-plan-engine";
 import type { FloorPlan, SelectedElement, StreamEvent, ToolName } from "@/lib/types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import type { SeededMessage } from "@/lib/mock-data";
+import type { SeededMessage, ToolCallStatus } from "@/lib/mock-data";
 
 type ModelId = "claude-opus-4-7" | "claude-sonnet-4-6";
 
@@ -34,6 +34,24 @@ const PROJECT_PROMPTS = [
   "Adicionar varanda",
   "Versão econômica",
 ];
+
+/** Portuguese labels surfaced in the inline tool indicator. Falls back to the
+ * raw tool name if a key is missing — keeps unknown tools visible without
+ * blocking the UI. */
+const TOOL_LABEL_PT: Partial<Record<ToolName, string>> = {
+  create_room: "Criando cômodo",
+  add_furniture: "Posicionando mobiliário",
+  add_door: "Inserindo porta",
+  add_window: "Inserindo janela",
+  set_floor_material: "Aplicando piso",
+  create_apartment_layout: "Gerando layout",
+  furnish_room: "Mobiliando ambiente",
+  search_knowledge_base: "Consultando base técnica",
+  delete_wall: "Removendo parede",
+  merge_rooms: "Integrando ambientes",
+  resize_room: "Redimensionando",
+  clear_all: "Limpando projeto",
+};
 
 function quickPromptsFor(plan: FloorPlan, ctxKind: string | null, ctxName: string | null): string[] {
   if (ctxKind === "room" && ctxName) {
@@ -77,6 +95,7 @@ export function ChatPanel({
   const [model, setModel] = useState<ModelId>("claude-opus-4-7");
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
+  const [streamingTools, setStreamingTools] = useState<ToolCallStatus[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const planRef = useRef(plan); planRef.current = plan;
   const selectedRef = useRef(selected); selectedRef.current = selected;
@@ -90,10 +109,16 @@ export function ChatPanel({
     ctx ? ((ctx.payload.label ?? ctx.payload.name ?? null) as string | null) : null
   );
 
+  // Hide composer chips when the most recent assistant message already shows
+  // suggestion chips ([brackets] in its body) — prevents visual duplication.
+  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  const lastAssistantHasSuggestions = !!lastAssistant && stripSuggestions(lastAssistant.content).suggestions.length > 0;
+  const showComposerChips = !busy && !lastAssistantHasSuggestions;
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [history, streamingText]);
+  }, [history, streamingText, streamingTools]);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -105,12 +130,15 @@ export function ChatPanel({
     setHistory((prev) => [...prev, userMsg]);
     setStreamingId(assistantId);
     setStreamingText("");
+    setStreamingTools([]);
     setInput("");
     setBusy(true);
 
     const apiHistory = [...history, userMsg]
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    const localTools: ToolCallStatus[] = [];
 
     try {
       const resp = await fetch("/api/chat", {
@@ -145,25 +173,41 @@ export function ChatPanel({
           let ev: StreamEvent;
           try { ev = JSON.parse(json); } catch { continue; }
           if (ev.type === "text_delta") { acc += ev.text; setStreamingText(acc); }
-          else if (ev.type === "tool_start") { toolNameByIdRef.current.set(ev.id, ev.name); }
+          else if (ev.type === "tool_start") {
+            toolNameByIdRef.current.set(ev.id, ev.name);
+            localTools.push({ id: ev.id, name: ev.name, status: "running" });
+            setStreamingTools([...localTools]);
+          }
           else if (ev.type === "tool_input") {
             const n = toolNameByIdRef.current.get(ev.id);
             if (n) onApplyTool(n, ev.input);
+          }
+          else if (ev.type === "tool_result") {
+            const idx = localTools.findIndex((t) => t.id === ev.id);
+            if (idx >= 0) {
+              localTools[idx] = { ...localTools[idx], status: ev.ok ? "done" : "error" };
+              setStreamingTools([...localTools]);
+            }
           }
           else if (ev.type === "error") { acc += `\n\n_Erro: ${ev.message}_`; setStreamingText(acc); }
         }
       }
       const time2 = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-      setHistory((prev) => [...prev, { id: assistantId, role: "assistant", content: acc, time: time2 }]);
+      setHistory((prev) => [...prev, {
+        id: assistantId, role: "assistant", content: acc, time: time2,
+        toolCalls: localTools.length > 0 ? localTools : undefined,
+      }]);
     } catch (err) {
       const m = err instanceof Error ? err.message : "Erro desconhecido.";
       setHistory((prev) => [...prev, {
         id: assistantId, role: "assistant", content: `_Erro: ${m}_`,
         time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
+        toolCalls: localTools.length > 0 ? localTools : undefined,
       }]);
     } finally {
       setStreamingId(null);
       setStreamingText("");
+      setStreamingTools([]);
       setBusy(false);
     }
   }
@@ -193,7 +237,14 @@ export function ChatPanel({
                 <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
                 <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
               </div>
-              <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{stripped}<span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" /></div>
+              {streamingTools.length > 0 && (
+                <div className="space-y-1">
+                  {streamingTools.map((tc) => <ToolIndicator key={tc.id} tc={tc} />)}
+                </div>
+              )}
+              {stripped && (
+                <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{stripped}<span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" /></div>
+              )}
             </div>
           );
         })()}
@@ -203,19 +254,23 @@ export function ChatPanel({
       <div className="shrink-0 border-t border-line bg-panel-alt px-3 pt-2.5 pb-3 space-y-2">
         {/* Quick prompts — contextual: starter chips on empty projects,
             project-level chips otherwise, and selection-aware chips when
-            an element is selected. Click sends the prompt directly. */}
-        <div className="flex gap-1.5 flex-wrap">
-          {quickPrompts.map((q) => (
-            <button
-              key={q}
-              onClick={() => send(q)}
-              disabled={busy}
-              className="chip text-[11px] disabled:opacity-40"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
+            an element is selected. Hidden when the most recent assistant
+            message already shows suggestion chips, so the user doesn't see
+            two competing chip rows at once. */}
+        {showComposerChips && (
+          <div className="flex gap-1.5 flex-wrap">
+            {quickPrompts.map((q) => (
+              <button
+                key={q}
+                onClick={() => send(q)}
+                disabled={busy}
+                className="chip text-[11px] disabled:opacity-40"
+              >
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="card p-2">
           <textarea
@@ -269,11 +324,16 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
         <span className={`font-mono text-[9.5px] uppercase tracking-[0.14em] ${labelColor}`}>{t(lang, labelKey)}</span>
         <span className="font-mono text-[9.5px] text-muted">{m.time}</span>
       </div>
+      {isAssistant && m.toolCalls && m.toolCalls.length > 0 && (
+        <div className="space-y-1">
+          {m.toolCalls.map((tc) => <ToolIndicator key={tc.id} tc={tc} />)}
+        </div>
+      )}
       {role === "system" ? (
         <div className="editorial text-[13.5px] leading-relaxed text-muted">{m.content}</div>
-      ) : (
+      ) : stripped ? (
         <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(stripped)}</div>
-      )}
+      ) : null}
       {isAssistant && suggestions.length > 0 && onSuggestionClick && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {suggestions.map((s, i) => (
@@ -300,6 +360,36 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ToolIndicator({ tc }: { tc: ToolCallStatus }) {
+  const label = TOOL_LABEL_PT[tc.name] ?? tc.name;
+  const isError = tc.status === "error";
+  return (
+    <div
+      className={`flex items-center gap-2 rounded-md border bg-panel-alt px-2 py-1 text-[11px] fade-up ${
+        isError ? "border-[#B8552E]/40" : "border-line"
+      }`}
+    >
+      <span className="text-accent text-[12px] leading-none">✶</span>
+      <span
+        className="font-mono uppercase tracking-[0.08em] text-[10px] text-muted"
+        style={{ fontFamily: "var(--font-jetbrains-mono)" }}
+      >
+        {tc.name}
+      </span>
+      <span className="text-ink">{label}</span>
+      <span className="ml-auto text-[11px] leading-none">
+        {tc.status === "running" ? (
+          <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin align-middle" />
+        ) : tc.status === "done" ? (
+          <span className="text-accent">✓</span>
+        ) : (
+          <span className="text-[#B8552E]">!</span>
+        )}
+      </span>
     </div>
   );
 }
