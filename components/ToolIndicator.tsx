@@ -31,6 +31,7 @@ const LABELS: Record<ToolName, string> = {
   create_apartment_layout: "Gerando planta do apartamento",
   furnish_room: "Mobiliando cômodo",
   clear_all: "Apagando planta",
+  search_knowledge_base: "Consultando base de conhecimento",
 };
 
 interface ToolIndicatorProps {

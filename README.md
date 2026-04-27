@@ -71,15 +71,45 @@ collection-architect-agent/
 │   ├── ChatPanel.tsx       # Chat
 │   └── ToolIndicator.tsx
 └── lib/
-    ├── anthropic-tools.ts  # Definição das ferramentas para Claude
-    ├── floor-plan-engine.ts# Algoritmos de layout e mobília
+    ├── anthropic-tools.ts       # Definição das ferramentas para Claude
+    ├── floor-plan-engine.ts     # Algoritmos de layout e mobília
     ├── system-prompt.ts
-    └── types.ts
+    ├── types.ts
+    ├── embeddings.ts            # Voyage AI + Supabase pgvector
+    ├── knowledge-base-content.ts# 102 trechos de Neufert/NBR/etc
+    └── supabase-setup.sql       # Schema + função match_knowledge
 ```
 
 ## Modelo
 
 Por padrão usa `claude-sonnet-4-6`. Se quiser trocar, edite `app/api/chat/route.ts`.
+
+## Base de conhecimento (RAG) — opcional
+
+O agente pode consultar uma base vetorial de **102 trechos** sobre Neufert, NBR 15575, NBR 9050, orientação solar, zoneamento, materiais, paisagismo, projetos comerciais e instalações. A IA chama a tool `search_knowledge_base` antes de tomar decisões e cita as fontes.
+
+Sem essas variáveis o app continua funcionando — Claude só não vai ter o RAG e responderá com base no system prompt e conhecimento próprio.
+
+### Setup
+
+1. Crie um projeto no [Supabase](https://supabase.com/) e copie URL + service role key.
+2. Pegue uma chave da [Voyage AI](https://www.voyageai.com/) (modelo `voyage-3-lite`, 512 dim).
+3. Preencha no `.env.local`:
+   ```
+   VOYAGE_API_KEY=...
+   SUPABASE_URL=https://xxx.supabase.co
+   SUPABASE_SERVICE_KEY=...
+   SEED_SECRET=qualquer-string-secreta
+   ```
+4. No Supabase SQL Editor, rode o script `lib/supabase-setup.sql` (cria a tabela `knowledge_chunks`, índice ivfflat, e função `match_knowledge`).
+5. Popule a base chamando o endpoint de seed:
+   ```bash
+   curl -X POST http://localhost:3000/api/seed \
+     -H "Authorization: Bearer SEU_SEED_SECRET"
+   ```
+   Vai gerar embeddings em lotes de 10 e gravar no Supabase. Resposta: `{ ok: true, total: 102, inserted: 102, batches: 11 }`.
+
+Depois disso a tool `search_knowledge_base` fica ativa nas conversas.
 
 ## Build de produção
 

@@ -455,4 +455,25 @@ export const tools: Anthropic.Tool[] = [
     description: "Apaga toda a planta. Pergunte antes se for destrutivo.",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "search_knowledge_base",
+    description:
+      "Consulta a base de conhecimento arquitetônico (Neufert, NBR 15575, NBR 9050, orientação solar, zoneamento, materiais, paisagismo, comercial, instalações). Use SEMPRE antes de tomar decisões de projeto que envolvam dimensões mínimas, normas, orientação solar, ergonomia ou recomendações técnicas — não confie só na sua memória; busque a referência. Retorna até `limit` trechos relevantes com título e fonte. Cite os títulos dos trechos retornados ao justificar decisões. Se quiser restringir, use `category` (ex: 'neufert', 'nbr-15575', 'nbr-9050', 'orientacao-solar', 'zoneamento', 'materiais', 'paisagismo', 'comercial', 'instalacoes').",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Pergunta ou tema a buscar, em português, ex: 'largura mínima de corredor', 'triângulo de trabalho cozinha', 'orientação solar quarto'.",
+        },
+        category: {
+          type: "string",
+          description:
+            "Filtro opcional por categoria. Omita para buscar em toda a base.",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ];

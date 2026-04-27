@@ -2,6 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { tools } from "@/lib/anthropic-tools";
 import { applyTool, summarizePlan } from "@/lib/floor-plan-engine";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
+import {
+  isRagConfigured,
+  searchKnowledgeBase,
+  type KnowledgeMatch,
+} from "@/lib/embeddings";
 import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -143,13 +148,23 @@ export async function POST(req: Request) {
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           for (const tu of toolUses) {
             send({ type: "tool_input", id: tu.id, input: tu.input });
-            const r = applyTool(localPlan, tu.name, tu.input);
-            send({ type: "tool_result", id: tu.id, ok: r.ok, message: r.message });
+            let ok: boolean;
+            let message: string;
+            if (tu.name === "search_knowledge_base") {
+              const r = await runKnowledgeSearch(tu.input);
+              ok = r.ok;
+              message = r.message;
+            } else {
+              const r = applyTool(localPlan, tu.name, tu.input);
+              ok = r.ok;
+              message = r.message;
+            }
+            send({ type: "tool_result", id: tu.id, ok, message });
             toolResults.push({
               type: "tool_result",
               tool_use_id: tu.id,
-              content: r.message,
-              is_error: !r.ok,
+              content: message,
+              is_error: !ok,
             });
           }
 
@@ -174,4 +189,52 @@ export async function POST(req: Request) {
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+interface KnowledgeSearchInput {
+  query?: string;
+  category?: string;
+}
+
+async function runKnowledgeSearch(
+  input: unknown
+): Promise<{ ok: boolean; message: string }> {
+  const { query, category } = (input ?? {}) as KnowledgeSearchInput;
+  if (!query || typeof query !== "string" || query.trim().length === 0) {
+    return { ok: false, message: "search_knowledge_base: parâmetro `query` é obrigatório." };
+  }
+  if (!isRagConfigured()) {
+    return {
+      ok: true,
+      message:
+        "Base de conhecimento indisponível neste ambiente (VOYAGE_API_KEY/SUPABASE_URL/SUPABASE_SERVICE_KEY não configurados). " +
+        "Continue baseado no seu conhecimento técnico, citando Neufert/NBR/orientação solar quando aplicável.",
+    };
+  }
+  try {
+    const all = await searchKnowledgeBase(query, 8);
+    const filtered = category
+      ? all.filter((m) => m.category === category)
+      : all;
+    const top = filtered.slice(0, 5);
+    if (top.length === 0) {
+      return {
+        ok: true,
+        message: `Nenhum trecho encontrado para "${query}"${category ? ` (categoria=${category})` : ""}.`,
+      };
+    }
+    return { ok: true, message: formatMatches(top) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "erro desconhecido";
+    return { ok: false, message: `Falha ao consultar base: ${msg}` };
+  }
+}
+
+function formatMatches(matches: KnowledgeMatch[]): string {
+  return matches
+    .map((m, i) => {
+      const score = (m.similarity * 100).toFixed(1);
+      return `[${i + 1}] (${m.category}) ${m.title} — ${score}%\n${m.content}`;
+    })
+    .join("\n\n---\n\n");
 }

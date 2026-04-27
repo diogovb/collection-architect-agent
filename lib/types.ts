@@ -293,7 +293,9 @@ export type ToolName =
   // ---- annotations ----
   | "add_dimension"
   | "add_text_note"
-  | "add_north_arrow";
+  | "add_north_arrow"
+  // ---- knowledge base (RAG) ----
+  | "search_knowledge_base";
 
 export type FurnitureGroup =
   | "dining_set_4"
@@ -444,6 +446,7 @@ export interface ToolInputs {
     y?: number;
     angle?: number;
   };
+  search_knowledge_base: { query: string; category?: string };
 }
 
 // ----- Selection -----
