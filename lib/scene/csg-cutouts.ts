@@ -23,15 +23,8 @@ import { v2Norm, v2Sub } from "./types";
 // One-time install: extend BufferGeometry/Mesh prototypes with BVH helpers.
 // three-bvh-csg uses these under the hood; without them every Brush rebuilds
 // its bounds tree on demand (slow).
-declare module "three" {
-  interface BufferGeometry {
-    computeBoundsTree?: typeof computeBoundsTree;
-    disposeBoundsTree?: typeof disposeBoundsTree;
-  }
-  interface Mesh {
-    raycast: typeof acceleratedRaycast;
-  }
-}
+// NOTE: three-mesh-bvh already augments the "three" module — no re-declaration
+// needed here (it would cause TS2689 "duplicate modifiers" if repeated).
 let _bvhInstalled = false;
 function ensureBvhInstalled(): void {
   if (_bvhInstalled) return;
@@ -70,7 +63,9 @@ function toOpening(o: DoorNode | WindowNode): Opening {
  *  Caller is responsible for disposing the geometry afterward. */
 function makeBrush(geom: THREE.BufferGeometry): Brush {
   ensureBvhInstalled();
-  geom.computeBoundsTree?.({ maxLeafSize: 10 } as Parameters<typeof computeBoundsTree>[0]);
+  if (geom.computeBoundsTree) {
+    geom.computeBoundsTree({ maxLeafTris: 10 });
+  }
   const b = new Brush(geom);
   b.updateMatrixWorld();
   return b;
