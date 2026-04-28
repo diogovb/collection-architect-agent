@@ -1,12 +1,17 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { useVibeState } from "@/lib/use-vibe-state";
 import { TopBar } from "@/components/vibe/TopBar";
 import { LeftNav } from "@/components/vibe/LeftNav";
 import { RightPanel } from "@/components/vibe/RightPanel";
-import { FloorPlan } from "@/components/vibe/FloorPlan";
 import { SelectionToolbar } from "@/components/vibe/SelectionToolbar";
+
+const Scene3D = dynamic(
+  () => import("@/components/vibe/Scene3D").then((m) => m.Scene3D),
+  { ssr: false, loading: () => <div className="w-full h-full bg-bg" /> }
+);
 import { RenderMode } from "@/components/vibe/RenderMode";
 import { PresentationMode } from "@/components/vibe/PresentationMode";
 import { ShoppingMode } from "@/components/vibe/ShoppingMode";
@@ -160,20 +165,11 @@ export default function Page() {
             />
             <section className="flex-1 min-w-0 min-h-0 relative bg-bg overflow-hidden flex items-center justify-center">
               <SelectionToolbar plan={v.plan} selected={v.selected} />
-              <div className="w-full h-full p-6 flex items-center justify-center min-h-0 min-w-0">
-                <FloorPlan
+              <div className="w-full h-full min-h-0 min-w-0">
+                <Scene3D
                   plan={v.plan}
                   selected={v.selected}
                   onSelect={v.setSelected}
-                  cameras={v.cameras}
-                  activeCameraId={v.activeCameraId}
-                  onSelectCamera={v.setActiveCameraId}
-                  showDiff={v.showDiff}
-                  diffTargetId={v.diffTargetId}
-                  updateFurniture={updateFurniture}
-                  updateRoom={updateRoom}
-                  removeSelected={removeSelected}
-                  rotateSelected={rotateSelected}
                   onLoadExample={v.loadExample}
                 />
               </div>
