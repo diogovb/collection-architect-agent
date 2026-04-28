@@ -29,6 +29,7 @@ import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { ContextMenu } from "./ContextMenu";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
+import { buildWallEnvelope, envelopeToPath } from "@/lib/scene/envelope";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -134,6 +135,18 @@ export function Floorplan2D({ onLoadExample }: Props) {
   }, [nodes, walls, liveTransforms]);
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
+
+  // Outline-only envelope (Fase F). The wall body is painted by each
+  // individual <polygon> below, but adjacent walls share a mitered edge
+  // and the strokes of each polygon would draw a transversal line right
+  // across the corner ("quina"). Solution: render a single <path> on top
+  // tracing only the OUTER apartment perimeter + the inner room rings,
+  // with fill=none. Junctions vanish — the line is continuous across
+  // every corner including 3-way Y-junctions.
+  const envelopeOutlinePath = useMemo(() => {
+    const env = buildWallEnvelope(walls);
+    return env ? envelopeToPath(env) : null;
+  }, [walls]);
   const isEmpty = walls.length === 0;
 
   // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
@@ -656,36 +669,32 @@ export function Floorplan2D({ onLoadExample }: Props) {
           ))}
         </g>
 
-        {/* Walls — solid fill per wall (Fase A). Each polygon is the
-            mitered quad from `getWallCorners`, so adjacent walls share
-            their corner vertices and there are no visible seams between
-            them — the look is identical to a continuous envelope but
-            every wall stays individually hit-testable. The strokeWidth
-            stays constant across selection states; only the colour
-            changes (ink → accent) so the wall never appears to "inflate"
-            when clicked. */}
+        {/* Walls — solid fill per wall, NO stroke (Fase F). The mitered
+            quads from `getWallCorners` already share corner vertices so
+            adjacent fills meet without gaps, but rendering a stroke on
+            each polygon would draw the diagonal "quina" line across every
+            corner. We let the envelope outline path below paint a single
+            continuous border instead. Hover / selection get a tinted
+            accent OVERLAY (also without stroke — just a lighter fill) so
+            the user still has visual feedback. */}
         <g className="walls">
           {walls.map((w) => {
             const c = corners.get(w.id);
             if (!c) return null;
             const isSel = selected.includes(w.id);
             const isHov = hovered === w.id;
-            const stroke = isSel
+            const fill = isSel
               ? PALETTE.accent
               : isHov
                 ? PALETTE.hoverStroke
-                : PALETTE.ink;
+                : PALETTE.wallFill;
             return (
               <polygon
                 key={w.id}
                 data-node-id={w.id}
                 points={cornersToSvg(c)}
-                fill={PALETTE.wallFill}
-                stroke={stroke}
-                strokeWidth={1.2}
-                strokeLinejoin="miter"
-                strokeMiterlimit={6}
-                vectorEffect="non-scaling-stroke"
+                fill={fill}
+                stroke="none"
                 onPointerOver={(e) => { e.stopPropagation(); setHover(w.id); }}
                 onPointerOut={(e) => { e.stopPropagation(); setHover(null); }}
                 onClick={(e) => { e.stopPropagation(); toggleSelection(w.id, e.shiftKey); }}
@@ -694,6 +703,25 @@ export function Floorplan2D({ onLoadExample }: Props) {
             );
           })}
         </g>
+
+        {/* Wall envelope outline — single SVG path that traces the
+            apartment outer perimeter + each room's inner ring. fill=none,
+            stroke=ink. Because it's one continuous path, the corners
+            (including 3+ junctions) render as clean miter joints with no
+            transversal seams. Pointer-events disabled so it doesn't
+            steal clicks from the wall fills below. */}
+        {envelopeOutlinePath && (
+          <path
+            d={envelopeOutlinePath}
+            fill="none"
+            stroke={PALETTE.ink}
+            strokeWidth={1.2}
+            strokeLinejoin="miter"
+            strokeMiterlimit={6}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        )}
 
         {/* Doors */}
         <g className="doors">
