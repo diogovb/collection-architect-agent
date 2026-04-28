@@ -11,6 +11,10 @@ import { PALETTE } from "../materials";
 const SERIF_FONT: string | undefined = undefined;
 const MONO_FONT: string | undefined = undefined;
 
+/** Rooms below this size only show the name (no area), to avoid overlap with
+ *  small labels for sub-1m elements like swing arcs and door openings. */
+const SUPPRESS_AREA_BELOW = 4; // m²
+
 interface Props {
   room: RoomNode;
   viewMode: ViewMode;
@@ -19,6 +23,7 @@ interface Props {
 export function RoomLabel({ room, viewMode }: Props) {
   if (viewMode !== "2d") return null;
   const c = polygonCentroid(room.polygon);
+  const showArea = room.area >= SUPPRESS_AREA_BELOW;
   const areaTxt = `${room.area.toFixed(2).replace(".", ",")} m²`.toUpperCase();
   return (
     <group position={[c.x, 0.05, c.z]}>
@@ -29,24 +34,26 @@ export function RoomLabel({ room, viewMode }: Props) {
         color={PALETTE.inkSoft}
         anchorX="center"
         anchorY="middle"
-        position={[0, 0, -0.16]}
+        position={[0, 0, showArea ? -0.2 : 0]}
         renderOrder={10}
       >
         {room.name}
       </Text>
-      <Text
-        rotation={[-Math.PI / 2, 0, 0]}
-        font={MONO_FONT}
-        fontSize={0.16}
-        color={PALETTE.muted}
-        anchorX="center"
-        anchorY="middle"
-        position={[0, 0, 0.12]}
-        letterSpacing={0.1}
-        renderOrder={10}
-      >
-        {areaTxt}
-      </Text>
+      {showArea && (
+        <Text
+          rotation={[-Math.PI / 2, 0, 0]}
+          font={MONO_FONT}
+          fontSize={0.14}
+          color={PALETTE.muted}
+          anchorX="center"
+          anchorY="middle"
+          position={[0, 0, 0.2]}
+          letterSpacing={0.1}
+          renderOrder={10}
+        >
+          {areaTxt}
+        </Text>
+      )}
     </group>
   );
 }

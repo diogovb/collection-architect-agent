@@ -9,7 +9,9 @@
 
 import type { DimensionNode, NodeId, Vec2, WallNode } from "./types";
 
-const ENVELOPE_OFFSET = 0.6;
+// Distance from the envelope (outermost wall edge) to the dimension line.
+// Calibrated to keep the label clear of swing arcs and exterior wall thickness.
+const ENVELOPE_OFFSET = 0.9;
 
 interface Bounds { minX: number; maxX: number; minZ: number; maxZ: number; }
 

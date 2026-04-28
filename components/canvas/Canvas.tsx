@@ -24,7 +24,6 @@ import {
 } from "@/lib/scene/types";
 import { computeWallCorners } from "@/lib/scene/wall-mitering";
 
-import { PALETTE } from "./materials";
 import { WallView } from "./nodes/WallView";
 import { SlabView } from "./nodes/SlabView";
 import { DoorView } from "./nodes/DoorView";
@@ -110,10 +109,10 @@ export function Canvas({ onLoadExample }: Props) {
           intensity={viewMode === "2d" ? 0.0 : 0.85}
           castShadow={false}
         />
-        {/* Background paper — only when the scene has content. Showing it on an
-            empty scene was perceived as a stray "gray square" behind the empty
-            state card. */}
-        {!isEmpty && <PaperBackground bounds={bounds} viewMode={viewMode} />}
+        {/* No paper background — the canvas background color (#FAF7F0) is the
+            paper. The PaperBackground mesh used to add a 4 m margin around the
+            envelope which appeared as a stray "gray square" beyond the rooms.
+            Slabs (SlabView) provide the floor surface inside rooms. */}
         {viewMode === "3d" && (
           <gridHelper args={[60, 60, "#D6CCB8", "#ECE4D2"]} position={[center.x, -0.06, center.z]} />
         )}
@@ -196,27 +195,6 @@ function CameraSync({
     }
   }, [camera, center.x, center.z, span, size.width, size.height, viewMode]);
   return null;
-}
-
-function PaperBackground({
-  bounds,
-  viewMode,
-}: {
-  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
-  viewMode: ViewMode;
-}) {
-  if (viewMode !== "2d") return null;
-  const margin = 4;
-  const w = bounds.maxX - bounds.minX + margin * 2;
-  const d = bounds.maxZ - bounds.minZ + margin * 2;
-  const cx = (bounds.minX + bounds.maxX) / 2;
-  const cz = (bounds.minZ + bounds.maxZ) / 2;
-  return (
-    <mesh position={[cx, -0.001, cz]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[w, d]} />
-      <meshBasicMaterial color={PALETTE.paper} />
-    </mesh>
-  );
 }
 
 function ScaleBarPx() {

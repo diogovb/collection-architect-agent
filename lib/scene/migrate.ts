@@ -31,7 +31,7 @@ import type {
   WindowNode,
 } from "./types";
 import type { Door, FloorPlan, Furniture, Room, Wall as WallSide, Window as PlanWindow } from "../types";
-import { polygonAbsArea } from "./types";
+import { outsetPolygon, polygonAbsArea } from "./types";
 import { polygonSignature } from "./signature";
 import { categoryFromName, defaultFloorForCategory } from "./slab-sync";
 
@@ -365,15 +365,21 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
   // half-edge space-detection, which struggles with multi-room shared walls.
   // The legacy FloorPlan stores rooms as axis-aligned rectangles, so the
   // canonical polygon is just the 4 corners.
+  //
+  // SLAB_OUTSET: the slab polygon is inflated by half the EXTERNAL wall
+  // thickness so the floor encostada embaixo das paredes externas (no gap
+  // visível). Pattern do Pascal (slab-system.tsx > outsetPolygon).
+  const SLAB_OUTSET = EXTERNAL_THICKNESS / 2;
   for (const r of plan.rooms) {
     if (r.isExterior) continue;
-    const polygon: Vec2[] = [
+    const roomPolygon: Vec2[] = [
       { x: r.x, z: r.y },
       { x: r.x + r.width, z: r.y },
       { x: r.x + r.width, z: r.y + r.height },
       { x: r.x, z: r.y + r.height },
     ];
-    const area = polygonAbsArea(polygon);
+    const slabPolygon = outsetPolygon(roomPolygon, SLAB_OUTSET);
+    const area = polygonAbsArea(roomPolygon); // area shown to user is the inner room, not inflated
     const slabId = `slab:legacy-${r.id}`;
     const roomId = `room:legacy-${r.id}`;
     const category = categoryFromName(r.name);
@@ -384,17 +390,17 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       parentId: LEVEL_ID,
       name: r.name,
       category,
-      polygon,
+      polygon: roomPolygon,
       area,
       floorMaterial: floor,
       slabId,
-      signature: polygonSignature(polygon),
+      signature: polygonSignature(roomPolygon),
     };
     const slab: SlabNode = {
       id: slabId,
       type: "slab",
       parentId: LEVEL_ID,
-      polygon,
+      polygon: slabPolygon,
       thickness: SLAB_THICKNESS,
       elevation: 0,
       material: floor,

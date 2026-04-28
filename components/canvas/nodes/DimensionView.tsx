@@ -85,7 +85,8 @@ export function DimensionView({ dim }: Props) {
         color={PALETTE.inkSoft}
         lineWidth={0.9}
       />
-      {/* Label */}
+      {/* Label — push perpendicular by 0.45m so it doesn't sit on the dimension
+          line itself (and keeps clear of room labels). */}
       <Text
         rotation={[-Math.PI / 2, 0, 0]}
         font={MONO_FONT}
@@ -94,9 +95,9 @@ export function DimensionView({ dim }: Props) {
         anchorX="center"
         anchorY="middle"
         position={[
-          data.center.x + data.perp.x * 0.18,
+          data.center.x + data.perp.x * 0.45,
           0.06,
-          data.center.z + data.perp.z * 0.18,
+          data.center.z + data.perp.z * 0.45,
         ]}
         renderOrder={11}
       >

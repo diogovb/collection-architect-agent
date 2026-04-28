@@ -1,47 +1,84 @@
-// Slab geometry: polygon → flat top + downward-extruded bottom.
+// Slab geometry: triangulated polygon (top + bottom + sides), built directly
+// in world XZ. The previous version used ShapeGeometry/ExtrudeGeometry +
+// rotateX(-π/2), which numerically inverted Z and made the slab end up at
+// world.z = -polygon.z while walls/doors used positive z. Building directly
+// in world XZ keeps everything aligned.
 //
-// FIX BUG A: ExtrudeGeometry on a polygon in XZ extrudes along +Z (now +Y after
-// rotate). To make the slab sit BELOW the floor surface (so the floor sits
-// exactly at y=0 and never overflows above), we translate by -thickness so
-// the top face is at y=0 and the bottom at y=-thickness.
+// FIX BUG A: top face is at y = elevation, bottom at y = elevation - thickness.
+// So the floor surface is exactly at elevation (default 0) and the slab
+// volume sits below — never poking above the floor.
 
 import * as THREE from "three";
 import type { SlabNode, Vec2 } from "./types";
 
+/** Triangulate a simple polygon (no holes) using THREE.ShapeUtils.
+ *  Returns a flat list of triangle indices. */
+function triangulatePolygon(polygon: Vec2[]): number[] {
+  const contour = polygon.map((p) => new THREE.Vector2(p.x, p.z));
+  const tris = THREE.ShapeUtils.triangulateShape(contour, []);
+  const flat: number[] = [];
+  for (const t of tris) for (const i of t) flat.push(i);
+  return flat;
+}
+
 export function createSlabGeometry2D(slab: SlabNode): THREE.BufferGeometry {
   if (slab.polygon.length < 3) return new THREE.BufferGeometry();
-  const shape = polygonToShape(slab.polygon, slab.holes ?? []);
-  const g = new THREE.ShapeGeometry(shape);
-  g.rotateX(-Math.PI / 2);
   // Tiny lift to avoid z-fighting with grid/wall bottoms.
-  g.translate(0, slab.elevation + 0.001, 0);
+  const y = slab.elevation + 0.001;
+  const positions = new Float32Array(slab.polygon.length * 3);
+  for (let i = 0; i < slab.polygon.length; i++) {
+    positions[i * 3] = slab.polygon[i].x;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = slab.polygon[i].z;
+  }
+  const indices = triangulatePolygon(slab.polygon);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
   return g;
 }
 
 export function createSlabGeometry3D(slab: SlabNode): THREE.BufferGeometry {
   if (slab.polygon.length < 3) return new THREE.BufferGeometry();
-  const shape = polygonToShape(slab.polygon, slab.holes ?? []);
-  const g = new THREE.ExtrudeGeometry(shape, { depth: slab.thickness, bevelEnabled: false });
-  g.rotateX(-Math.PI / 2);
-  // Translate so TOP face = elevation (y=0 by default), BOTTOM = -thickness.
-  g.translate(0, slab.elevation, 0);
-  // After rotateX(-π/2), the originally top of the extrude is now at y=0
-  // and the depth went toward -Y. Confirmed by ExtrudeGeometry default.
-  return g;
-}
+  const n = slab.polygon.length;
+  const top = slab.elevation;
+  const bottom = slab.elevation - slab.thickness;
 
-function polygonToShape(polygon: Vec2[], holes: Vec2[][]): THREE.Shape {
-  const shape = new THREE.Shape();
-  shape.moveTo(polygon[0].x, polygon[0].z);
-  for (let i = 1; i < polygon.length; i++) shape.lineTo(polygon[i].x, polygon[i].z);
-  shape.closePath();
-  for (const h of holes) {
-    if (h.length < 3) continue;
-    const path = new THREE.Path();
-    path.moveTo(h[0].x, h[0].z);
-    for (let i = 1; i < h.length; i++) path.lineTo(h[i].x, h[i].z);
-    path.closePath();
-    shape.holes.push(path);
+  // 2N vertices: N at top (indices 0..n-1), N at bottom (indices n..2n-1).
+  const positions = new Float32Array(n * 2 * 3);
+  for (let i = 0; i < n; i++) {
+    positions[i * 3] = slab.polygon[i].x;
+    positions[i * 3 + 1] = top;
+    positions[i * 3 + 2] = slab.polygon[i].z;
   }
-  return shape;
+  for (let i = 0; i < n; i++) {
+    positions[(n + i) * 3] = slab.polygon[i].x;
+    positions[(n + i) * 3 + 1] = bottom;
+    positions[(n + i) * 3 + 2] = slab.polygon[i].z;
+  }
+
+  const indices: number[] = [];
+  // Top face (CCW from above)
+  const topTris = triangulatePolygon(slab.polygon);
+  for (const idx of topTris) indices.push(idx);
+  // Bottom face (reverse winding so normal points down)
+  for (let i = 0; i < topTris.length; i += 3) {
+    indices.push(topTris[i] + n, topTris[i + 2] + n, topTris[i + 1] + n);
+  }
+  // Side quads (4 vertices, 2 triangles each)
+  for (let i = 0; i < n; i++) {
+    const a = i;
+    const b = (i + 1) % n;
+    // a (top), b (top), b (bottom)
+    indices.push(a, b, b + n);
+    // a (top), b (bottom), a (bottom)
+    indices.push(a, b + n, a + n);
+  }
+
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
 }

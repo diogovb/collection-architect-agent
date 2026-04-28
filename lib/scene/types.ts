@@ -382,3 +382,61 @@ export function polygonBounds(poly: Vec2[]): { minX: number; maxX: number; minZ:
   }
   return { minX, maxX, minZ, maxZ };
 }
+
+/**
+ * Offset (inflate or shrink) a closed polygon by `distance` along the outward
+ * miter direction at each vertex. Positive = outward (inflate); negative = inward (shrink).
+ *
+ * Assumes the polygon is CCW (when looking down the +Y axis with +X right and
+ * +Z away from viewer). For CCW polygons the outward normal at each edge is
+ * obtained by rotating the edge direction by -90° (right-hand turn): (dx, dz) → (dz, -dx).
+ *
+ * Used to make slabs encostarem embaixo das paredes (Pascal-style SLAB_OUTSET) without
+ * gaps or z-fighting.
+ */
+export function outsetPolygon(poly: Vec2[], distance: number): Vec2[] {
+  if (Math.abs(distance) < 1e-9 || poly.length < 3) return poly.map((p) => ({ ...p }));
+  const n = poly.length;
+  const result: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = poly[(i - 1 + n) % n];
+    const cur = poly[i];
+    const next = poly[(i + 1) % n];
+
+    const e1x = cur.x - prev.x;
+    const e1z = cur.z - prev.z;
+    const e2x = next.x - cur.x;
+    const e2z = next.z - cur.z;
+    const l1 = Math.hypot(e1x, e1z);
+    const l2 = Math.hypot(e2x, e2z);
+    if (l1 < 1e-9 || l2 < 1e-9) {
+      result.push({ x: cur.x, z: cur.z });
+      continue;
+    }
+
+    // Outward normal for CCW polygon: rotate edge dir by -90° → (dz, -dx).
+    const n1x = e1z / l1;
+    const n1z = -e1x / l1;
+    const n2x = e2z / l2;
+    const n2z = -e2x / l2;
+
+    // Bisector of the two outward normals.
+    const bx = n1x + n2x;
+    const bz = n1z + n2z;
+    const bLen = Math.hypot(bx, bz);
+    if (bLen < 1e-9) {
+      // 180° turn — collinear neighbour edges; fallback to one normal.
+      result.push({ x: cur.x + n1x * distance, z: cur.z + n1z * distance });
+      continue;
+    }
+    const bnx = bx / bLen;
+    const bnz = bz / bLen;
+    // Distance along bisector to keep edge offset = `distance`:
+    //   t = distance / cos(angle between bisector and edge normal)
+    const cosHalf = bnx * n1x + bnz * n1z;
+    const t = cosHalf > 1e-3 ? distance / cosHalf : distance;
+
+    result.push({ x: cur.x + bnx * t, z: cur.z + bnz * t });
+  }
+  return result;
+}
