@@ -1,4 +1,4 @@
-// Vibe Project specific types — UI state, mock entities, modes.
+// Intento Project specific types — UI state, mock entities, modes.
 
 export type Mode = "plan" | "render" | "presentation" | "shopping";
 

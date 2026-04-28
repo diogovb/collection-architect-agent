@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Door, FloorPlan, Furniture, Room, SelectedElement, Wall, Window as PlanWindow } from "@/lib/types";
-import type { Camera } from "@/lib/vibe-types";
+import type { Camera } from "@/lib/intento-types";
 
 const M_TO_PX = 50; // 1 meter = 50px
 const SNAP_M = 0.1; // 10cm grid for furniture/walls
@@ -649,7 +649,7 @@ export function FloorPlan({
             <div className="editorial text-[18px] mb-1">Comece pelo briefing</div>
             <p className="text-[12.5px] text-muted leading-relaxed mb-3">
               Descreva o projeto na conversa à direita — área, ambientes, estilo —
-              e o Vibe começa a desenhar a planta.
+              e o seu agente começa a desenhar a planta.
             </p>
             {onLoadExample && (
               <button onClick={onLoadExample} className="btn-outline text-[11.5px] py-1 px-2.5">

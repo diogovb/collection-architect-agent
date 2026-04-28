@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { FloorPlan } from "@/lib/types";
-import type { Camera, Slide, SlideKind } from "@/lib/vibe-types";
+import type { Camera, Slide, SlideKind } from "@/lib/intento-types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { FloorPlan as FloorPlanSvg } from "./FloorPlan";
@@ -63,7 +63,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
           <div className="label-mono mb-2">APRESENTAÇÃO</div>
           <div className="editorial text-[20px] mb-2">Nenhum slide ainda</div>
           <p className="text-[12.5px] text-muted leading-relaxed">
-            Conforme o projeto evolui, peça ao Vibe para gerar uma apresentação a partir das câmeras e materiais.
+            Conforme o projeto evolui, peça ao seu agente para gerar uma apresentação a partir das câmeras e materiais.
           </p>
         </div>
       </div>
@@ -213,7 +213,7 @@ function SlideContent({ slide, plan, cameras, editable, onChange }:
   if (slide.kind === "cover") {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center" style={{ background: "linear-gradient(135deg,#FAF7F0,#E6DFD2)" }}>
-        <div className="label-mono mb-4">VIBE · PROJECT</div>
+        <div className="label-mono mb-4">INTENTO · PROJECT</div>
         <h1
           className="font-serif italic text-[64px] leading-[0.95] mb-3"
           contentEditable={editable}

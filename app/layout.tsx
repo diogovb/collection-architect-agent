@@ -25,7 +25,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vibe·Project — Collection Architect",
+  title: "Intento·Project — Collection Architect",
   description: "Sistema de arquitetura colaborativa com IA",
 };
 

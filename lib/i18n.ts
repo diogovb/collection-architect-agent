@@ -27,14 +27,14 @@ const DICT: Dict = {
   // Chat
   "chat.context": { pt: "CONTEXTO", en: "CONTEXT" },
   "chat.send": { pt: "Enviar", en: "Send" },
-  "chat.placeholder": { pt: "Pergunte ao Vibe…", en: "Ask Vibe…" },
+  "chat.placeholder": { pt: "Pergunte ao seu agente…", en: "Ask your agent…" },
   "chat.you": { pt: "VOCÊ", en: "YOU" },
-  "chat.vibe": { pt: "VIBE", en: "VIBE" },
+  "chat.intento": { pt: "INTENTO", en: "INTENTO" },
   "chat.system": { pt: "SISTEMA", en: "SYSTEM" },
   "chat.compare": { pt: "Comparar", en: "Compare" },
   "chat.apply": { pt: "Aplicar", en: "Apply" },
   "chat.discard": { pt: "Descartar", en: "Discard" },
-  "chat.thinking": { pt: "Vibe está pensando…", en: "Vibe is thinking…" },
+  "chat.thinking": { pt: "Intento está pensando…", en: "Intento is thinking…" },
 
   // Render mode
   "render.empty": { pt: "Câmera ainda não gerada", en: "Camera not generated yet" },

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { FloorPlan, SelectedElement, ToolName } from "@/lib/types";
-import type { CollectionItem, ReferenceImage, RightTab, Version } from "@/lib/vibe-types";
+import type { CollectionItem, ReferenceImage, RightTab, Version } from "@/lib/intento-types";
 import { resolveSelection } from "@/lib/floor-plan-engine";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";

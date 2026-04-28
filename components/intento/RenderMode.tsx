@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Camera, CameraStatus } from "@/lib/vibe-types";
+import type { Camera, CameraStatus } from "@/lib/intento-types";
 import { t } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n";
 
@@ -28,7 +28,7 @@ export function RenderMode({ cameras, setCameras, activeCameraId, setActiveCamer
           <div className="label-mono mb-2">RENDER</div>
           <div className="editorial text-[20px] mb-2">Sem câmeras ainda</div>
           <p className="text-[12.5px] text-muted leading-relaxed">
-            Volte para a Planta e peça ao Vibe para posicionar uma câmera no ambiente que você quer renderizar.
+            Volte para a Planta e peça ao seu agente para posicionar uma câmera no ambiente que você quer renderizar.
           </p>
         </div>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { FulfillmentChannel, ItemStatus, ShoppingRow } from "@/lib/vibe-types";
+import type { FulfillmentChannel, ItemStatus, ShoppingRow } from "@/lib/intento-types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 

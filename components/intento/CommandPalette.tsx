@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Mode } from "@/lib/vibe-types";
+import type { Mode } from "@/lib/intento-types";
 
 interface Props {
   open: boolean;

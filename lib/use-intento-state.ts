@@ -26,9 +26,9 @@ import type {
   ShoppingRow,
   Slide,
   Version,
-} from "./vibe-types";
+} from "./intento-types";
 
-export interface VibeState {
+export interface IntentoState {
   // Mode + view
   mode: Mode;
   setMode: (m: Mode) => void;
@@ -82,7 +82,7 @@ export interface VibeState {
   loadExample: () => void;
 }
 
-export function useVibeState(): VibeState {
+export function useIntentoState(): IntentoState {
   const [mode, setMode] = useState<Mode>("plan");
   const [rightTab, setRightTab] = useState<RightTab>("chat");
   const [lang, setLang] = useState<Lang>("pt");

@@ -1,7 +1,7 @@
 "use client";
 
 import type { FloorPlan, SelectedElement } from "@/lib/types";
-import type { Camera, CameraStatus } from "@/lib/vibe-types";
+import type { Camera, CameraStatus } from "@/lib/intento-types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 

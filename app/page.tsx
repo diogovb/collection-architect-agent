@@ -2,29 +2,29 @@
 
 import { useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { useVibeState } from "@/lib/use-vibe-state";
+import { useIntentoState } from "@/lib/use-intento-state";
 import { useFloorPlanBridge } from "@/lib/scene/bridge";
 import { useSceneStore } from "@/lib/scene/store";
 import { logRemove } from "@/lib/scene/user-action-log";
-import { TopBar } from "@/components/vibe/TopBar";
-import { LeftNav } from "@/components/vibe/LeftNav";
-import { RightPanel } from "@/components/vibe/RightPanel";
-import { SelectionToolbar } from "@/components/vibe/SelectionToolbar";
+import { TopBar } from "@/components/intento/TopBar";
+import { LeftNav } from "@/components/intento/LeftNav";
+import { RightPanel } from "@/components/intento/RightPanel";
+import { SelectionToolbar } from "@/components/intento/SelectionToolbar";
 
 const Canvas = dynamic(
   () => import("@/components/canvas/Canvas").then((m) => m.Canvas),
   { ssr: false, loading: () => <div className="w-full h-full" style={{ background: "#FAF7F0" }} /> }
 );
-import { RenderMode } from "@/components/vibe/RenderMode";
-import { PresentationMode } from "@/components/vibe/PresentationMode";
-import { ShoppingMode } from "@/components/vibe/ShoppingMode";
-import { CommandPalette } from "@/components/vibe/CommandPalette";
+import { RenderMode } from "@/components/intento/RenderMode";
+import { PresentationMode } from "@/components/intento/PresentationMode";
+import { ShoppingMode } from "@/components/intento/ShoppingMode";
+import { CommandPalette } from "@/components/intento/CommandPalette";
 import type { Furniture, Room } from "@/lib/types";
 
 const NUDGE_M = 0.1; // arrow-key nudge step
 
 export default function Page() {
-  const v = useVibeState();
+  const v = useIntentoState();
   const { selected, setSelected, plan, setPlan, mode } = v;
 
   // Sync the legacy FloorPlan state into the new SceneStore on every change.

@@ -5,7 +5,7 @@ import type {
   ShoppingRow,
   Slide,
   Version,
-} from "./vibe-types";
+} from "./intento-types";
 import type { FloorPlan, ToolName } from "./types";
 
 /** Inline status for a single tool call inside a chat message. */
@@ -174,11 +174,11 @@ export const SEED_SHOPPING: ShoppingRow[] = [
 
 /* -------------------- Versions -------------------- */
 export const SEED_VERSIONS: Version[] = [
-  { id: "v-5", label: "v5 — Layout final aprovado", author: "Vibe", createdAt: "2026-04-27T09:30:00Z", note: "Cliente aprovou TV mais alta", current: true },
+  { id: "v-5", label: "v5 — Layout final aprovado", author: "Intento", createdAt: "2026-04-27T09:30:00Z", note: "Cliente aprovou TV mais alta", current: true },
   { id: "v-4", label: "v4 — Cozinha repensada", author: "Diogo", createdAt: "2026-04-25T17:10:00Z" },
-  { id: "v-3", label: "v3 — Suíte ampliada", author: "Vibe", createdAt: "2026-04-23T14:00:00Z" },
+  { id: "v-3", label: "v3 — Suíte ampliada", author: "Intento", createdAt: "2026-04-23T14:00:00Z" },
   { id: "v-2", label: "v2 — Após reunião cliente", author: "Diogo", createdAt: "2026-04-21T11:20:00Z" },
-  { id: "v-1", label: "v1 — Concepção inicial", author: "Vibe", createdAt: "2026-04-19T15:50:00Z" },
+  { id: "v-1", label: "v1 — Concepção inicial", author: "Intento", createdAt: "2026-04-19T15:50:00Z" },
 ];
 
 /* -------------------- Slides -------------------- */
@@ -249,7 +249,7 @@ export const INITIAL_VERSIONS: Version[] = [
   {
     id: "v-0.1",
     label: "v0.1 — Projeto criado",
-    author: "Vibe",
+    author: "Intento",
     createdAt: new Date().toISOString(),
     note: "Aguardando briefing",
     current: true,

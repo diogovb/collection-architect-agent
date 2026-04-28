@@ -2,7 +2,7 @@
 
 import { t } from "@/lib/i18n";
 import type { Lang } from "@/lib/i18n";
-import type { Mode } from "@/lib/vibe-types";
+import type { Mode } from "@/lib/intento-types";
 import type { FloorPlan } from "@/lib/types";
 
 interface Props {
@@ -28,7 +28,7 @@ export function TopBar({ mode, setMode, lang, setLang, onCommandPalette, plan, v
     <header className="h-[52px] shrink-0 border-b border-line bg-panel flex items-center px-5 gap-6">
       {/* Logo */}
       <div className="flex items-center gap-2">
-        <span className="font-serif italic text-[19px] tracking-tight">Vibe</span>
+        <span className="font-serif italic text-[19px] tracking-tight">Intento</span>
         <span className="w-[5px] h-[5px] rounded-full bg-accent" />
         <span className="font-serif italic text-[19px] tracking-tight">Project</span>
       </div>

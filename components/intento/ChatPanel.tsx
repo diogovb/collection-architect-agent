@@ -390,7 +390,7 @@ export function ChatPanel({
         {streamingId && (
           <div className="space-y-1.5 fade-up">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
+              <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.intento")}</span>
               <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
             </div>
             <BlockSequence blocks={streamingBlocks} streaming />
@@ -459,7 +459,7 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff }: {
   onApplyDiff?: () => void; onCompareDiff?: () => void;
 }) {
   const role = m.role;
-  const labelKey = role === "system" ? "chat.system" : role === "user" ? "chat.you" : "chat.vibe";
+  const labelKey = role === "system" ? "chat.system" : role === "user" ? "chat.you" : "chat.intento";
   const labelColor = role === "assistant" ? "text-accent" : role === "user" ? "text-ink" : "text-muted";
   const proactive = m.proactive;
   const isAssistant = role === "assistant";
