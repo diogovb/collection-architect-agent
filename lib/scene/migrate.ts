@@ -86,6 +86,13 @@ interface SegmentSpec {
   isExterior: boolean;
 }
 
+/** Quantization step for room edges (Fase N). Snapping every coordinate to a
+ *  5 cm grid before the sweep guarantees that walls coming from different
+ *  agent calls land at IDENTICAL endpoints — no sub-mm epsilon left between
+ *  neighbours, which translates to crisp junctions in 3D. */
+const COORD_SNAP_M = 0.05;
+const snapCoord = (n: number): number => Math.round(n / COORD_SNAP_M) * COORD_SNAP_M;
+
 function buildSegments(plan: FloorPlan): SegmentSpec[] {
   const horiz = new Map<number, { above: Interval[]; below: Interval[] }>();
   const vert = new Map<number, { left: Interval[]; right: Interval[] }>();
@@ -105,10 +112,19 @@ function buildSegments(plan: FloorPlan): SegmentSpec[] {
 
   for (const r of plan.rooms) {
     if (r.isExterior) continue; // exterior rooms (gardens) don't generate walls
-    getH(r.y).below.push({ start: r.x, end: r.x + r.width });
-    getH(r.y + r.height).above.push({ start: r.x, end: r.x + r.width });
-    getV(r.x).right.push({ start: r.y, end: r.y + r.height });
-    getV(r.x + r.width).left.push({ start: r.y, end: r.y + r.height });
+    // Snap every edge coordinate to the 5 cm grid (Fase N). Without this,
+    // floating-point arithmetic in doCreateApartment ("cursorX += r.w")
+    // can leave neighbouring rooms with edges that differ by sub-mm —
+    // enough to skip the vk() snap in computeWallCorners and produce
+    // unmitered, gap-y junctions in 3D.
+    const x = snapCoord(r.x);
+    const y = snapCoord(r.y);
+    const x2 = snapCoord(r.x + r.width);
+    const y2 = snapCoord(r.y + r.height);
+    getH(y).below.push({ start: x, end: x2 });
+    getH(y2).above.push({ start: x, end: x2 });
+    getV(x).right.push({ start: y, end: y2 });
+    getV(x2).left.push({ start: y, end: y2 });
   }
 
   const out: SegmentSpec[] = [];
