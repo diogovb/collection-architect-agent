@@ -26,6 +26,17 @@ import { type WallCorners } from "@/lib/scene/wall-mitering";
 import { getWallCorners } from "@/lib/scene/wall-corners-cache";
 import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/label-placement";
 import { useSvgTools } from "./floorplan/use-svg-tools";
+
+// SVG `font-size` is in user-space units. Our viewBox is in metres, so
+// fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
+// default zoom. With a typical apartment view of ~15m at ~1100px wide
+// (≈ 73 px/m), 14px = 14/73 ≈ 0.19 user units. We use 1/60 as a stable
+// constant — close enough for typical apartments and consistent with the
+// PX_PER_M heuristic in the bbox-fallback path.
+const WORLD_PER_CSS_PX = 1 / 60;
+function pxToWorld(px: number): number {
+  return px * WORLD_PER_CSS_PX;
+}
 import {
   polygonBounds,
   polygonCentroid,
@@ -629,10 +640,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
                   style={{
                     fontFamily: "var(--font-instrument-serif), serif",
                     fontStyle: "italic",
-                    fontSize: 14,
+                    fontSize: pxToWorld(14),
                     fill: PALETTE.inkSoft,
                   }}
-                  fontSize={14}
+                  fontSize={pxToWorld(14)}
                 >
                   {r.name}
                 </text>
@@ -645,10 +656,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
                     style={{
                       fontFamily: "var(--font-jetbrains-mono), monospace",
                       letterSpacing: "0.1em",
-                      fontSize: 10,
+                      fontSize: pxToWorld(10),
                       fill: PALETTE.muted,
                     }}
-                    fontSize={10}
+                    fontSize={pxToWorld(10)}
                   >
                     {`${r.area.toFixed(2).replace(".", ",")} M²`}
                   </text>
@@ -661,7 +672,8 @@ export function Floorplan2D({ onLoadExample }: Props) {
         {/* Hidden measurement layer — produces a real getBBox() for every label
             so the auto-layout can use accurate widths instead of heuristics.
             Rendered with visibility:hidden (still laid out) so the user never
-            sees the duplicated text. */}
+            sees the duplicated text. Font size is in WORLD units (metres) — see
+            WORLD_PER_CSS_PX above for the conversion. */}
         <g
           className="label-measure"
           style={{ visibility: "hidden" }}
@@ -681,10 +693,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
               style={{
                 fontFamily: spec.fontFamily,
                 fontStyle: spec.fontStyle,
-                fontSize: spec.fontSizePx,
+                fontSize: pxToWorld(spec.fontSizePx),
                 letterSpacing: spec.letterSpacing,
               }}
-              fontSize={spec.fontSizePx}
+              fontSize={pxToWorld(spec.fontSizePx)}
             >
               {spec.text}
             </text>
@@ -973,10 +985,10 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         dominantBaseline="middle"
         style={{
           fontFamily: "var(--font-jetbrains-mono), monospace",
-          fontSize: 11,
+          fontSize: pxToWorld(11),
           fill: PALETTE.inkSoft,
         }}
-        fontSize={11}
+        fontSize={pxToWorld(11)}
       >
         {text}
       </text>
