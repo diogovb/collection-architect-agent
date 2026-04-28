@@ -181,13 +181,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
       const showArea =
         r.area >= ROOM_LABEL_SUPPRESS_AREA_BELOW &&
         shortSide >= ROOM_LABEL_NARROW_DIM_THRESHOLD;
-      // Style Guide §9.3 — labels go in the top-left corner of the room with
-      // an inset (40 cm for big rooms, 36 cm for small). Centroid placement
-      // wastes the prime real estate where furniture lives.
+      // Fase I — labels back to the centre of the room. The user prefers
+      // centred typography (more "editorial" read) over corner-pinned
+      // labels. Auto-layout still nudges them when they would collide.
       const isPrincipal = r.area >= 15;
-      const inset = isPrincipal ? 0.4 : 0.36;
-      const nameAnchorX = b.minX + inset;
-      const nameAnchorZ = b.minZ + inset;
+      const c = polygonCentroid(r.polygon);
+      const nameAnchorX = c.x;
+      const nameAnchorZ = c.z;
       out.push({
         id: `name:${r.id}`,
         text: r.name,
@@ -195,11 +195,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
         fontStyle: "normal",
         fontSizePx: isPrincipal ? 13 : 11,
         anchor: { x: nameAnchorX, z: nameAnchorZ },
-        align: "top-left",
+        align: "center",
         priority: 2,
         searchDirs: [
-          { x: 1, z: 0 },
           { x: 0, z: 1 },
+          { x: 0, z: -1 },
+          { x: 1, z: 0 },
+          { x: -1, z: 0 },
         ],
         maxOffset: 0.4,
       });
@@ -212,11 +214,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
           fontSizePx: isPrincipal ? 8 : 7,
           letterSpacing: "0.13em",
           anchor: { x: nameAnchorX, z: nameAnchorZ + 0.22 },
-          align: "top-left",
+          align: "center",
           priority: 1,
           searchDirs: [
-            { x: 1, z: 0 },
             { x: 0, z: 1 },
+            { x: 0, z: -1 },
           ],
           maxOffset: 0.4,
         });
@@ -886,8 +888,8 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 <text
                   x={namePos.x}
                   y={namePos.z}
-                  textAnchor="start"
-                  dominantBaseline="hanging"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
                   style={{
                     fontFamily: "var(--font-instrument-serif), serif",
                     fontSize: pxToWorld(namePx),
@@ -901,8 +903,8 @@ export function Floorplan2D({ onLoadExample }: Props) {
                   <text
                     x={areaPos.x}
                     y={areaPos.z}
-                    textAnchor="start"
-                    dominantBaseline="hanging"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
                     style={{
                       fontFamily: "var(--font-jetbrains-mono), monospace",
                       letterSpacing: isPrincipal ? "0.13em" : "0.06em",
