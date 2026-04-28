@@ -74,6 +74,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
   const hovered = useSceneStore((s) => s.hovered);
   const setHover = useSceneStore((s) => s.setHover);
   const toggleSelection = useSceneStore((s) => s.toggleSelection);
+  // Hard-coded root id of the BuildingNode so we can read the optional
+  // `north` marker from the scene graph without having to plumb the id
+  // through props. Matches lib/scene/store.ts.
+  const ROOT_ID_FOR_NORTH = "building:root";
 
   // Merge live drag transforms into the node graph so the SVG re-renders
   // immediately on every pointermove. Without this, drag previews are silent
@@ -1056,7 +1060,26 @@ export function Floorplan2D({ onLoadExample }: Props) {
         {/* Norte (North arrow) — Style Guide §10.1: canto superior-direito da
             viewBox, círculo r 14 px + seta + letra "N" mono 8 px. Always
             present, never hidden. */}
-        <NorthSymbol viewX={v.x} viewY={v.y} viewW={v.w} />
+        {/* North marker is OPT-IN now (see BuildingNode.north). Hidden
+            by default to keep the canvas clean; the agent's
+            add_north_arrow tool turns it on, and the user can drag it
+            around like a furniture piece. */}
+        {(() => {
+          const building = nodes[ROOT_ID_FOR_NORTH] as { north?: { x: number; z: number; angle: number } | null } | undefined;
+          if (!building?.north) return null;
+          return (
+            <NorthSymbol
+              x={building.north.x}
+              z={building.north.z}
+              angle={building.north.angle}
+              onDrag={(nx, nz) => {
+                useSceneStore.getState().updateNode(ROOT_ID_FOR_NORTH, {
+                  north: { x: nx, z: nz, angle: building.north!.angle },
+                });
+              }}
+            />
+          );
+        })()}
 
         {/* Scale bar moved to a top-left HTML overlay (see Canvas.tsx
             :ScaleBarOverlay). The old SVG in-canvas version lived in the
@@ -1285,18 +1308,19 @@ export function Floorplan2D({ onLoadExample }: Props) {
 
       {/* Floating measurement chip. Two modes:
           (a) Live preview: cursor + anchor define a non-trivial segment
-              → chip shows that length. TAB or click swaps for an input
-              that commits a wall of the exact value.
-          (b) Just-committed: the previous click landed less than 5 cm
-              ago, so the cursor is still sitting on the new anchor and
-              the live length would be ~0. We show the length of the
-              just-committed wall instead, and a click on the chip lets
-              the user adjust IT (not create a new wall of length 0). */}
-      {tool === "wall" && pointerScreen && (() => {
+              → chip glued near the cursor, shows length, TAB/click
+              swaps for input that commits the exact value.
+          (b) Just-committed: cursor still on the new anchor (live len
+              ~0). Chip "freezes" at the MIDPOINT of the just-committed
+              wall (in screen coords) so the user can still see the
+              measurement next to the wall they drew, and click it to
+              adjust the wall's length retroactively. */}
+      {tool === "wall" && (() => {
         const a = tools.wallDraw.state.anchor;
         const e = tools.wallDraw.pointerWorld;
         const liveLen = a && e ? Math.hypot(e.x - a.x, e.z - a.z) : 0;
-        if (a && e && liveLen >= 0.05) {
+        const svg = svgRef.current;
+        if (a && e && liveLen >= 0.05 && pointerScreen) {
           return (
             <MeasurementChip
               screen={pointerScreen}
@@ -1306,14 +1330,18 @@ export function Floorplan2D({ onLoadExample }: Props) {
           );
         }
         const recent = tools.recentlyDrawnWall;
-        if (recent) {
+        if (recent && svg) {
+          const midX = (recent.start.x + recent.end.x) / 2;
+          const midZ = (recent.start.z + recent.end.z) / 2;
+          const screen = worldToClient(svg, midX, midZ);
+          if (!screen) return null;
           const recentLen = Math.hypot(
             recent.end.x - recent.start.x,
             recent.end.z - recent.start.z,
           );
           return (
             <MeasurementChip
-              screen={pointerScreen}
+              screen={screen}
               meters={recentLen}
               onCommit={(m) => tools.setWallLength(recent.id, m)}
             />
@@ -2030,28 +2058,68 @@ function DimensionSvg({
 // Style Guide §10.1. Sized in WORLD metres (1 user unit = 1 m on our viewBox).
 // We anchor 0.6 m inside the viewBox top-right corner.
 
-function NorthSymbol({ viewX, viewY, viewW }: { viewX: number; viewY: number; viewW: number }) {
-  const cx = viewX + viewW - 0.6;
-  const cy = viewY + 0.6;
+function NorthSymbol({
+  x,
+  z,
+  angle,
+  onDrag,
+}: {
+  x: number;
+  z: number;
+  angle: number;
+  onDrag?: (x: number, z: number) => void;
+}) {
   const r = 0.22; // ≈ 22 cm — reads well at apartment scale
-  // NOTE: SVG `stroke-width` and `font-size` on a <g> are interpreted in
-  // user-space units (= metres here). Without per-element `vector-effect`,
-  // strokes balloon to absurd metre-thick lines. We attach the effect to
-  // every stroked child explicitly because browsers don't always inherit it
-  // through grouping the way the spec implies.
+  // Drag handling: click and hold → onPointerMove updates the building's
+  // north position via the callback. We use SVG client→viewBox math by
+  // grabbing the parent SVG with .closest("svg").
+  const onPointerDown = (e: React.PointerEvent<SVGGElement>) => {
+    if (e.button !== 0 || !onDrag) return;
+    e.stopPropagation();
+    const svg = (e.currentTarget as SVGGElement).ownerSVGElement;
+    if (!svg) return;
+    const grabPt = svgClientToWorld(svg, e.clientX, e.clientY);
+    if (!grabPt) return;
+    const startX = x;
+    const startZ = z;
+    const offX = grabPt.x - startX;
+    const offZ = grabPt.z - startZ;
+    const onMove = (ev: PointerEvent) => {
+      const w = svgClientToWorld(svg, ev.clientX, ev.clientY);
+      if (!w) return;
+      onDrag(w.x - offX, w.z - offZ);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "grabbing";
+  };
   return (
-    <g transform={`translate(${cx} ${cy})`} pointerEvents="none">
+    <g
+      transform={`translate(${x} ${z}) rotate(${angle})`}
+      onPointerDown={onPointerDown}
+      style={{ cursor: onDrag ? "grab" : "default" }}
+    >
+      {/* Hit zone — invisible disc so the user can grab the symbol from
+          anywhere inside the circle, not just the strokes. */}
+      <circle r={r * 1.05} fill="transparent" />
       <circle
         r={r}
         fill="none"
         stroke={PALETTE.ink}
         strokeWidth={0.6}
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       {/* Arrow pointing up. */}
       <path
         d={`M0 ${-r * 0.7} L${r * 0.28} ${r * 0.55} L0 ${r * 0.28} L${-r * 0.28} ${r * 0.55} Z`}
         fill={PALETTE.ink}
+        pointerEvents="none"
       />
       <text
         x={0}
@@ -2066,11 +2134,49 @@ function NorthSymbol({ viewX, viewY, viewW }: { viewX: number; viewY: number; vi
         }}
         fontSize={pxToWorld(8)}
         fill={PALETTE.ink}
+        pointerEvents="none"
       >
         N
       </text>
     </g>
   );
+}
+
+/** Convert a clientX/Y pair to world (viewBox) coordinates of the given
+ *  SVG element. Returns null if the SVG has no current viewBox. */
+function svgClientToWorld(
+  svg: SVGSVGElement,
+  clientX: number,
+  clientY: number,
+): { x: number; z: number } | null {
+  const vb = svg.viewBox.baseVal;
+  if (!vb) return null;
+  const rect = svg.getBoundingClientRect();
+  const fracX = (clientX - rect.left) / rect.width;
+  const fracY = (clientY - rect.top) / rect.height;
+  return {
+    x: vb.x + fracX * vb.width,
+    z: vb.y + fracY * vb.height,
+  };
+}
+
+/** Inverse of svgClientToWorld — projects a world (x,z) back to screen
+ *  pixel coords, used to anchor HTML overlays (the measurement chip)
+ *  to a fixed world point even as the user pans/zooms. */
+function worldToClient(
+  svg: SVGSVGElement,
+  worldX: number,
+  worldZ: number,
+): { x: number; y: number } | null {
+  const vb = svg.viewBox.baseVal;
+  if (!vb || vb.width === 0 || vb.height === 0) return null;
+  const rect = svg.getBoundingClientRect();
+  const fracX = (worldX - vb.x) / vb.width;
+  const fracY = (worldZ - vb.y) / vb.height;
+  return {
+    x: rect.left + fracX * rect.width,
+    y: rect.top + fracY * rect.height,
+  };
 }
 
 // ---- Scale bar -----------------------------------------------------------

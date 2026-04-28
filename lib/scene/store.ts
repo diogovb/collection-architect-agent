@@ -51,21 +51,17 @@ function emptyScene(): SceneState {
   };
 }
 
-/** Snap preference is user-level (not per-project). Persisted in localStorage
- *  so toggling it once carries across reloads. Default ON. */
-const SNAP_LS_KEY = "ca:snapEnabled";
+/** Snap preference. Each session starts with snap ON — the user reported
+ *  it "vinha ligado mas depois desligava sozinho", which usually meant a
+ *  stray Shift/S press in a previous session got persisted. We now reset
+ *  to true on every session boot; user can still toggle within the
+ *  session via the Toolbar or the S key, but it doesn't bleed across
+ *  reloads. */
 function readSnapPreference(): boolean {
-  if (typeof window === "undefined") return true;
-  const v = window.localStorage.getItem(SNAP_LS_KEY);
-  return v === null ? true : v === "1";
+  return true;
 }
-function writeSnapPreference(v: boolean): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(SNAP_LS_KEY, v ? "1" : "0");
-  } catch {
-    // storage may be disabled — silently ignore.
-  }
+function writeSnapPreference(_v: boolean): void {
+  // No-op: snap state is session-scoped now.
 }
 
 interface SceneStore extends SceneState {

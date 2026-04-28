@@ -51,6 +51,15 @@ export interface BuildingNode extends BaseNode {
   name: string;
   /** Rotation of the building in radians around Y. North is +Z when 0. */
   northRotation: number;
+  /** When set, a north-arrow marker is rendered at this world position
+   *  in 2D. By default it's hidden — the user can ask the agent to add
+   *  one and then drag it around like a piece of furniture. */
+  north?: {
+    x: number;
+    z: number;
+    /** Angle in degrees, 0 = pointing up. */
+    angle: number;
+  } | null;
 }
 
 export interface LevelNode extends BaseNode {

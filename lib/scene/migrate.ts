@@ -306,6 +306,16 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
     parentId: null,
     name: "Projeto",
     northRotation: ((plan.northArrow?.angle ?? 0) * Math.PI) / 180,
+    // The 2D north marker is opt-in: only shown when the user (or the
+    // agent's add_north_arrow tool) explicitly placed one. Plan-level
+    // x/y coords come straight through from the legacy NorthArrow.
+    north: plan.northArrow
+      ? {
+          x: plan.northArrow.x,
+          z: plan.northArrow.y,
+          angle: plan.northArrow.angle ?? 0,
+        }
+      : null,
   };
   const level: LevelNode = {
     id: LEVEL_ID,
