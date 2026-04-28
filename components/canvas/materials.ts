@@ -26,6 +26,19 @@ export const PALETTE = {
   wallRight: "#E0D9CB",
   wallStart: "#D2CBBE",
   wallEnd: "#D2CBBE",
+  // Furniture palette — calibrated terra pigments (Style Guide §2.3).
+  // Each piece uses ONE token; internal details are stroke-on-fill.
+  furnUpholstery: "#D9CFB8",     // sofá principal
+  furnUpholstery2: "#CBBFA8",    // poltronas
+  furnWoodLight: "#BFAE8E",      // cadeiras de madeira
+  furnWoodMid: "#A8967A",        // mesa de jantar
+  furnWoodDark: "#3F362A",       // estante TV, marcenaria escura
+  furnStoneDark: "#3A332A",      // bancada, cooktop
+  furnCoffee: "#C9BC9F",         // mesa de centro
+  furnIslandTop: "#F0E8D6",      // tampo ilha (mármore)
+  furnAppliance: "#E8DEC8",      // geladeira, vaso, cuba
+  // Carpet base (pattern fill behind tapetes).
+  floorCarpetBase: "#E8DDC8",
   floorWood: "#EFE8DB",
   floorWoodLine: "#1F1B16",
   floorTile: "#EEE6D6",
