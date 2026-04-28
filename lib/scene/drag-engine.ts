@@ -23,7 +23,7 @@ import type {
 } from "./types";
 import { pointInPolygon, v2Norm, v2Sub } from "./types";
 import { useSceneStore } from "./store";
-import { clampToPolygon, snapToEndpoints, snapToGrid, snapVec2 } from "./snap";
+import { clampToPolygon, snapAngle, snapToEndpoints, snapToGrid, snapVec2 } from "./snap";
 import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
 import { logEditOpening, logMove } from "./user-action-log";
@@ -264,9 +264,18 @@ export function beginWallEndpointDrag(
 
   const update = (world: Vec2) => {
     const store = useSceneStore.getState();
-    const snapped = store.snapEnabled
+    let snapped = store.snapEnabled
       ? { x: snapToGrid(world.x), z: snapToGrid(world.z) }
       : world;
+    // Angular snap (0°/45°/90°) within 5° of an ortho/diagonal axis.
+    // Anchor is the OTHER endpoint of the wall being dragged — we want
+    // the segment (anchor → snapped) to lock onto a clean axis when we
+    // are close enough. Junction siblings still move by the same Δ, so
+    // their relative orientation is preserved.
+    if (store.snapEnabled) {
+      const anchor = endpoint === "start" ? wall.end : wall.start;
+      snapped = snapAngle(anchor, snapped, 5);
+    }
     // If junction exists and Alt is NOT pressed, move every member to the
     // new position — preserves connectivity. Otherwise only the picked
     // endpoint moves (detach).
@@ -405,15 +414,19 @@ export function commitManualDimension(start: Vec2, end: Vec2): NodeId {
 }
 
 /** Commit a new wall from the anchor to the snapped end point, then re-derive
- *  rooms/slabs and refresh auto dimensions. Returns the new wall id. */
+ *  rooms/slabs and refresh auto dimensions. Returns the new wall id.
+ *
+ *  Applies angular snap (0°/45°/90°, ±5° tolerance) when snapEnabled so
+ *  freshly-drawn walls click into ortho or diagonal axes naturally. */
 export function commitDrawWall(anchor: Vec2, end: Vec2): NodeId {
   const store = useSceneStore.getState();
+  const finalEnd = store.snapEnabled ? snapAngle(anchor, end, 5) : end;
   const newWall: WallNode = {
     id: newWallId(),
     type: "wall",
     parentId: store.activeLevelId,
     start: anchor,
-    end,
+    end: finalEnd,
     thickness: INTERNAL_THICKNESS,
     height: DEFAULT_HEIGHT,
     isExterior: false,

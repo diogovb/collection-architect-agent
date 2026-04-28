@@ -34,6 +34,38 @@ export function snapToEndpoints(
   return { snapped: v, isSnapped: false };
 }
 
+/** Snap a wall direction to the nearest 0°/45°/90° axis when within
+ *  `toleranceDeg` of one. Returns a new `end` such that the segment
+ *  start→end has the snapped angle, preserving its length.
+ *
+ *  This makes ortho/diagonal walls "click" into place during a drag
+ *  while still allowing arbitrary angles outside the tolerance band. */
+export function snapAngle(
+  start: Vec2,
+  end: Vec2,
+  toleranceDeg: number = 5,
+): Vec2 {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const length = Math.hypot(dx, dz);
+  if (length < 1e-6) return end;
+
+  const angle = Math.atan2(dz, dx); // [-π, π]
+  // Allowed angles in radians: every 45° step from -180° to 180°.
+  const step = Math.PI / 4;
+  const tolerance = (toleranceDeg * Math.PI) / 180;
+
+  // Find the snap candidate: nearest multiple of step within tolerance.
+  const candidate = Math.round(angle / step) * step;
+  const delta = Math.abs(angle - candidate);
+  if (delta > tolerance) return end;
+
+  return {
+    x: start.x + length * Math.cos(candidate),
+    z: start.z + length * Math.sin(candidate),
+  };
+}
+
 /** Constrain a vector inside a polygon using a fallback to nearest vertex if outside. */
 export function clampToPolygon(p: Vec2, polygon: Vec2[]): Vec2 {
   // For axis-aligned rectangle rooms, clamp to bounds.
