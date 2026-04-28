@@ -44,6 +44,10 @@ export interface SvgToolHandlers {
   beginDimensionOffsetDrag: (id: NodeId, clientX: number, clientY: number) => void;
   onSvgBackgroundClick: (clientX: number, clientY: number) => void;
   onSvgBackgroundMove: (clientX: number, clientY: number) => void;
+  /** Commit the in-progress wall draw with an EXACT length (Fase R).
+   *  Uses the current pointer direction from the anchor and projects to
+   *  the requested metres. */
+  commitDrawWallWithLength: (meters: number) => void;
   wallDraw: { state: WallDrawState; pointerWorld: Vec2 | null };
   dimensionDraw: { state: DimensionDrawState; pointerWorld: Vec2 | null };
 }
@@ -202,6 +206,24 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     [screenToWorld]
   );
 
+  const commitDrawWallWithLength = useCallback(
+    (meters: number) => {
+      const a = wallDrawState.anchor;
+      const p = pointerWorld;
+      if (!a || !p || meters <= 0) return;
+      const dx = p.x - a.x;
+      const dz = p.z - a.z;
+      const cur = Math.hypot(dx, dz);
+      if (cur < 1e-6) return;
+      const k = meters / cur;
+      const newEnd = { x: a.x + dx * k, z: a.z + dz * k };
+      commitDrawWall(a, newEnd);
+      // Re-anchor so the chain can continue from the committed end.
+      setWallDrawState({ phase: "anchored", anchor: newEnd });
+    },
+    [wallDrawState.anchor, pointerWorld],
+  );
+
   const onSvgBackgroundMove = useCallback(
     (clientX: number, clientY: number) => {
       if (tool !== "wall" && tool !== "dimension") return;
@@ -271,6 +293,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     beginDimensionOffsetDrag: handleBeginDimensionOffsetDrag,
     onSvgBackgroundClick,
     onSvgBackgroundMove,
+    commitDrawWallWithLength,
     wallDraw: { state: wallDrawState, pointerWorld: tool === "wall" ? pointerWorld : null },
     dimensionDraw: {
       state: dimDrawState,

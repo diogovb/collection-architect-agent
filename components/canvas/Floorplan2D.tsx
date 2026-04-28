@@ -30,6 +30,7 @@ import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { ContextMenu } from "./ContextMenu";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
 import { buildWallOutlinePath } from "@/lib/scene/wall-outline";
+import { MeasurementChip } from "./MeasurementChip";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -435,7 +436,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     panRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: v.x, vy: v.y };
   };
+  // Track the pointer in screen-space so the floating measurement chip
+  // (Fase R) can position itself next to the cursor without re-doing the
+  // world→screen conversion.
+  const [pointerScreen, setPointerScreen] = useState<{ x: number; y: number } | null>(null);
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    setPointerScreen({ x: e.clientX, y: e.clientY });
     // Wall + dimension draw preview tracking.
     if (tool === "wall" || tool === "dimension") {
       tools.onSvgBackgroundMove(e.clientX, e.clientY);
@@ -1162,6 +1168,28 @@ export function Floorplan2D({ onLoadExample }: Props) {
           DOM element via data-node-id. We rebind on every selection / live
           transform change so it tracks panning and dragging. */}
       <FloorplanContextMenu svgRef={svgRef} selected={selected} liveSig={liveTransforms.size} />
+
+      {/* Floating measurement chip — Fase R. Shows the live length of the
+          wall being drawn next to the cursor. TAB or click swaps the chip
+          for a numeric input; Enter commits a wall of that exact length. */}
+      {tool === "wall" &&
+        tools.wallDraw.state.phase === "anchored" &&
+        tools.wallDraw.state.anchor &&
+        tools.wallDraw.pointerWorld &&
+        pointerScreen && (
+          (() => {
+            const a = tools.wallDraw.state.anchor;
+            const e = tools.wallDraw.pointerWorld;
+            const len = Math.hypot(e.x - a.x, e.z - a.z);
+            return (
+              <MeasurementChip
+                screen={pointerScreen}
+                meters={len}
+                onCommit={(m) => tools.commitDrawWallWithLength(m)}
+              />
+            );
+          })()
+        )}
 
       {/* Empty state overlay */}
       {showEmptyState && (
