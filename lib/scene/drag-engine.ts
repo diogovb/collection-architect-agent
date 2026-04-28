@@ -27,6 +27,7 @@ import { clampToPolygon, snapToEndpoints, snapToGrid, snapVec2 } from "./snap";
 import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
 import { logEditOpening, logMove } from "./user-action-log";
+import { resolveCorner } from "./collision";
 
 // ---- Furniture drag --------------------------------------------------------
 
@@ -52,13 +53,33 @@ export function beginFurnitureDrag(
   const startZ = f.position.z;
   const label = f.label || f.catalogId || "móvel";
 
+  // Track the last position we let the move land on, so collision resolution
+  // can bisect back toward it instead of teleporting through walls.
+  let lastValidCorner: Vec2 = { x: startX, z: startZ };
+
   const update = (world: Vec2) => {
     const fNow = useSceneStore.getState().nodes[id] as FurnitureNode | undefined;
     if (!fNow) return;
     const raw = { x: world.x - offsetX, z: world.z - offsetZ };
     const corner = useSceneStore.getState().snapEnabled ? snapVec2(raw) : raw;
-    let cornerX = corner.x;
-    let cornerZ = corner.z;
+
+    // Wall collision (Fase 3A) — resolve the proposed corner against every
+    // wall quad. Furniture is allowed to slide along a wall but cannot
+    // overlap one. Bisection keeps the response smooth.
+    const walls = Object.values(useSceneStore.getState().nodes).filter(
+      (n) => n.type === "wall"
+    ) as WallNode[];
+    const resolved = resolveCorner(
+      { x: corner.x, z: corner.z },
+      lastValidCorner,
+      fNow.dimensions,
+      fNow.rotation || 0,
+      walls
+    );
+    lastValidCorner = resolved;
+    let cornerX = resolved.x;
+    let cornerZ = resolved.z;
+
     if (fNow.roomId) {
       const room = useSceneStore.getState().nodes[fNow.roomId] as RoomNode | undefined;
       if (room) {
@@ -70,6 +91,7 @@ export function beginFurnitureDrag(
           const c = clampToPolygon(center, room.polygon);
           cornerX = c.x - fNow.dimensions.x / 2;
           cornerZ = c.z - fNow.dimensions.z / 2;
+          lastValidCorner = { x: cornerX, z: cornerZ };
         }
       }
     }
@@ -172,6 +194,113 @@ export function snapDrawPoint(p: Vec2): Vec2 {
     (n) => n.type === "wall"
   ) as WallNode[];
   return snapToEndpoints(snapVec2(p), walls, 0.20).snapped;
+}
+
+// ---- Wall endpoint + translate ---------------------------------------------
+
+export interface WallEditSession {
+  update: (world: Vec2) => void;
+  commit: () => void;
+  cancel: () => void;
+}
+
+/** Drag a single endpoint (start or end) of a wall. Adjacent walls remitre
+ *  automatically because computeWallCorners reads from the live state. */
+export function beginWallEndpointDrag(
+  wallId: NodeId,
+  endpoint: "start" | "end",
+  pointerWorld: Vec2
+): WallEditSession | null {
+  const wall = useSceneStore.getState().nodes[wallId] as WallNode | undefined;
+  if (!wall) return null;
+  const startStart = { ...wall.start };
+  const startEnd = { ...wall.end };
+
+  const update = (world: Vec2) => {
+    const snapped = useSceneStore.getState().snapEnabled
+      ? { x: snapToGrid(world.x), z: snapToGrid(world.z) }
+      : world;
+    if (endpoint === "start") {
+      useSceneStore.getState().setLive(wallId, { start: snapped });
+    } else {
+      useSceneStore.getState().setLive(wallId, { end: snapped });
+    }
+  };
+
+  const commit = () => {
+    const live = useSceneStore.getState().liveTransforms.get(wallId);
+    useSceneStore.getState().commitLive(wallId);
+    rederiveAfterWallChange();
+    const next =
+      endpoint === "start"
+        ? (live?.start ?? startStart)
+        : (live?.end ?? startEnd);
+    const before = endpoint === "start" ? startStart : startEnd;
+    const dx = next.x - before.x;
+    const dz = next.z - before.z;
+    if (Math.hypot(dx, dz) > 0.05) {
+      // Imported lazily so this module stays compatible with non-DOM uses.
+      import("./user-action-log").then(({ logEditWall }) => {
+        logEditWall(`endpoint ${endpoint}: Δ ${dx.toFixed(2)} m, ${dz.toFixed(2)} m`);
+      });
+    }
+  };
+
+  const cancel = () => useSceneStore.getState().clearLive(wallId);
+  return { update, commit, cancel };
+}
+
+/** Translate the entire wall — both endpoints move in parallel. Useful for
+ *  re-positioning a divider without disturbing the angle. */
+export function beginWallTranslate(
+  wallId: NodeId,
+  pointerWorld: Vec2
+): WallEditSession | null {
+  const wall = useSceneStore.getState().nodes[wallId] as WallNode | undefined;
+  if (!wall) return null;
+  const startStart = { ...wall.start };
+  const startEnd = { ...wall.end };
+  const startCx = (startStart.x + startEnd.x) / 2;
+  const startCz = (startStart.z + startEnd.z) / 2;
+  const offsetX = pointerWorld.x - startCx;
+  const offsetZ = pointerWorld.z - startCz;
+
+  const update = (world: Vec2) => {
+    const targetCx = world.x - offsetX;
+    const targetCz = world.z - offsetZ;
+    const dx = targetCx - startCx;
+    const dz = targetCz - startCz;
+    const snap = useSceneStore.getState().snapEnabled;
+    const sdx = snap ? snapToGrid(dx) : dx;
+    const sdz = snap ? snapToGrid(dz) : dz;
+    useSceneStore
+      .getState()
+      .setLive(wallId, {
+        start: { x: startStart.x + sdx, z: startStart.z + sdz },
+        end: { x: startEnd.x + sdx, z: startEnd.z + sdz },
+      });
+  };
+
+  const commit = () => {
+    useSceneStore.getState().commitLive(wallId);
+    rederiveAfterWallChange();
+    import("./user-action-log").then(({ logEditWall }) => {
+      logEditWall("translade da parede");
+    });
+  };
+
+  const cancel = () => useSceneStore.getState().clearLive(wallId);
+  return { update, commit, cancel };
+}
+
+/** Re-run space detection + auto dimensions after any wall structural change.
+ *  Keeps slabs/rooms/cotas consistent with the new geometry. */
+function rederiveAfterWallChange() {
+  const store = useSceneStore.getState();
+  const out = runDerivation(store.nodes, store.activeLevelId);
+  const walls = Object.values(out.nodes).filter((n) => n.type === "wall") as WallNode[];
+  const withDims = applyAutoDimensions(out.nodes, walls);
+  useSceneStore.setState({ nodes: withDims });
 }
 
 // ---- Manual dimension creation ---------------------------------------------

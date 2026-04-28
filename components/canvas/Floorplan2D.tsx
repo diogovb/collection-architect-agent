@@ -110,10 +110,28 @@ export function Floorplan2D({ onLoadExample }: Props) {
     () => Object.values(nodes).filter((n): n is FurnitureNode => n.type === "furniture"),
     [nodes]
   );
-  const dimensions = useMemo(
-    () => Object.values(nodes).filter((n): n is DimensionNode => n.type === "dimension"),
-    [nodes]
-  );
+  // Style Guide §8 — auto-dimensions need to reflect the LIVE wall positions
+  // during drag, not the committed ones. We re-run computeEnvelopeDimensions
+  // on the effective walls (with liveTransforms applied) and overlay the
+  // result on top of the stored auto-envelope cotas. Manual cotas pass
+  // through unchanged.
+  const dimensions = useMemo(() => {
+    const stored = Object.values(nodes).filter((n): n is DimensionNode => n.type === "dimension");
+    if (liveTransforms.size === 0) return stored;
+    const liveAuto = (() => {
+      // Lazy require to avoid an import cycle at module load.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { computeEnvelopeDimensions } = require("@/lib/scene/auto-dimensions") as typeof import("@/lib/scene/auto-dimensions");
+        return computeEnvelopeDimensions(walls);
+      } catch {
+        return [] as DimensionNode[];
+      }
+    })();
+    // Replace stored auto-envelope dims with the live ones; keep manual.
+    const manual = stored.filter((d) => d.scope === "manual");
+    return [...liveAuto, ...manual];
+  }, [nodes, walls, liveTransforms]);
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
   const isEmpty = walls.length === 0;
@@ -966,6 +984,68 @@ export function Floorplan2D({ onLoadExample }: Props) {
             )}
           </g>
         )}
+
+        {/* Wall edit handles — appear when a single wall is selected. Two
+            endpoint circles (start / end) and one center handle for parallel
+            translate. liveTransforms applied via the merged `nodes` so the
+            handle positions track the drag in real time. */}
+        {selected.length === 1 &&
+          (() => {
+            const sel = selected[0];
+            const w = nodes[sel] as WallNode | undefined;
+            if (!w || w.type !== "wall") return null;
+            const cx = (w.start.x + w.end.x) / 2;
+            const cz = (w.start.z + w.end.z) / 2;
+            return (
+              <g className="wall-handles">
+                <circle
+                  cx={w.start.x}
+                  cy={w.start.z}
+                  r={0.10}
+                  fill={PALETTE.paper}
+                  stroke={PALETTE.accent}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    tools.beginWallEndpointDrag(w.id, "start", e.clientX, e.clientY);
+                  }}
+                  style={{ cursor: "grab" }}
+                />
+                <circle
+                  cx={w.end.x}
+                  cy={w.end.z}
+                  r={0.10}
+                  fill={PALETTE.paper}
+                  stroke={PALETTE.accent}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    tools.beginWallEndpointDrag(w.id, "end", e.clientX, e.clientY);
+                  }}
+                  style={{ cursor: "grab" }}
+                />
+                <circle
+                  cx={cx}
+                  cy={cz}
+                  r={0.08}
+                  fill={PALETTE.accent}
+                  stroke={PALETTE.paper}
+                  strokeWidth={1.5}
+                  vectorEffect="non-scaling-stroke"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.stopPropagation();
+                    tools.beginWallTranslate(w.id, e.clientX, e.clientY);
+                  }}
+                  style={{ cursor: "move" }}
+                />
+              </g>
+            );
+          })()}
 
         {/* Dimension-draw tool overlay: same visual language as wall-draw,
             but only renders the anchor + ghost line. The committed
