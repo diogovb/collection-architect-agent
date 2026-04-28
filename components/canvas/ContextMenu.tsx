@@ -26,6 +26,14 @@ import type {
 } from "@/lib/scene/types";
 import { runDerivation } from "@/lib/scene/derive";
 import { applyAutoDimensions } from "@/lib/scene/auto-dimensions";
+import {
+  logEditOpening,
+  logEditWall,
+  logMaterial,
+  logRemove,
+  logRename,
+  logRotate,
+} from "@/lib/scene/user-action-log";
 
 interface ContextMenuProps {
   /** When provided, this element is used as the anchor for positioning.
@@ -325,6 +333,7 @@ function wallMenu(w: WallNode): MenuConfig {
           const next = Math.min(0.20, w.thickness + 0.04);
           useSceneStore.getState().updateNode<WallNode>(w.id, { thickness: next });
           rederive();
+          logEditWall(`espessura ${thicknessCm} cm → ${Math.round(next * 100)} cm`);
         },
       },
       {
@@ -333,11 +342,15 @@ function wallMenu(w: WallNode): MenuConfig {
           const next = Math.max(0.04, w.thickness - 0.04);
           useSceneStore.getState().updateNode<WallNode>(w.id, { thickness: next });
           rederive();
+          logEditWall(`espessura ${thicknessCm} cm → ${Math.round(next * 100)} cm`);
         },
       },
       {
         label: "Abrir vão",
-        run: () => openVoidOnWall(w),
+        run: () => {
+          openVoidOnWall(w);
+          logEditWall("abriu vão (porta padrão 80 cm)");
+        },
       },
       {
         label: "Demolir",
@@ -345,6 +358,7 @@ function wallMenu(w: WallNode): MenuConfig {
         run: () => {
           useSceneStore.getState().removeNode(w.id);
           rederive();
+          logRemove("parede");
         },
       },
     ],
@@ -358,40 +372,49 @@ function doorMenu(d: DoorNode): MenuConfig {
     actions: [
       {
         label: "Inverter lado",
-        run: () =>
+        run: () => {
           useSceneStore
             .getState()
             .updateNode<DoorNode>(d.id, {
               hingeSide: d.hingeSide === "start" ? "end" : "start",
-            }),
+            });
+          logEditOpening("porta", "inverteu lado da dobradiça");
+        },
       },
       {
         label: "Inverter giro",
-        run: () =>
+        run: () => {
           useSceneStore
             .getState()
             .updateNode<DoorNode>(d.id, {
               swingDirection: d.swingDirection === "in" ? "out" : "in",
-            }),
+            });
+          logEditOpening("porta", `agora abre p/ ${d.swingDirection === "in" ? "fora" : "dentro"}`);
+        },
       },
       {
         label: "+ 10 cm largura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<DoorNode>(d.id, { width: Math.min(2, d.width + 0.1) }),
+        run: () => {
+          const next = Math.min(2, d.width + 0.1);
+          useSceneStore.getState().updateNode<DoorNode>(d.id, { width: next });
+          logEditOpening("porta", `largura ${fmtMeter(d.width)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "− 10 cm largura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<DoorNode>(d.id, { width: Math.max(0.6, d.width - 0.1) }),
+        run: () => {
+          const next = Math.max(0.6, d.width - 0.1);
+          useSceneStore.getState().updateNode<DoorNode>(d.id, { width: next });
+          logEditOpening("porta", `largura ${fmtMeter(d.width)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "Remover",
         danger: true,
-        run: () => useSceneStore.getState().removeNode(d.id),
+        run: () => {
+          useSceneStore.getState().removeNode(d.id);
+          logRemove("porta");
+        },
       },
     ],
   };
@@ -404,42 +427,50 @@ function windowMenu(w: WindowNode): MenuConfig {
     actions: [
       {
         label: "+ 20 cm largura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<WindowNode>(w.id, { width: Math.min(4, w.width + 0.2) }),
+        run: () => {
+          const next = Math.min(4, w.width + 0.2);
+          useSceneStore.getState().updateNode<WindowNode>(w.id, { width: next });
+          logEditOpening("janela", `largura ${fmtMeter(w.width)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "− 20 cm largura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<WindowNode>(w.id, { width: Math.max(0.4, w.width - 0.2) }),
+        run: () => {
+          const next = Math.max(0.4, w.width - 0.2);
+          useSceneStore.getState().updateNode<WindowNode>(w.id, { width: next });
+          logEditOpening("janela", `largura ${fmtMeter(w.width)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "+ 10 cm altura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<WindowNode>(w.id, { height: Math.min(2.4, w.height + 0.1) }),
+        run: () => {
+          const next = Math.min(2.4, w.height + 0.1);
+          useSceneStore.getState().updateNode<WindowNode>(w.id, { height: next });
+          logEditOpening("janela", `altura ${fmtMeter(w.height)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "− 10 cm altura",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<WindowNode>(w.id, { height: Math.max(0.4, w.height - 0.1) }),
+        run: () => {
+          const next = Math.max(0.4, w.height - 0.1);
+          useSceneStore.getState().updateNode<WindowNode>(w.id, { height: next });
+          logEditOpening("janela", `altura ${fmtMeter(w.height)} → ${fmtMeter(next)}`);
+        },
       },
       {
         label: "Remover",
         danger: true,
-        run: () => useSceneStore.getState().removeNode(w.id),
+        run: () => {
+          useSceneStore.getState().removeNode(w.id);
+          logRemove("janela");
+        },
       },
     ],
   };
 }
 
 function furnitureMenu(f: FurnitureNode): MenuConfig {
+  const label = f.label || f.catalogId;
   return {
     kindLabel: "Móvel",
     description: `${fmtMeter(f.dimensions.x)} × ${fmtMeter(f.dimensions.z)} · ${f.catalogId}`,
@@ -449,6 +480,7 @@ function furnitureMenu(f: FurnitureNode): MenuConfig {
         run: () => {
           const r = (f.rotation || 0) + Math.PI / 2;
           useSceneStore.getState().updateNode<FurnitureNode>(f.id, { rotation: r });
+          logRotate(label);
         },
       },
       {
@@ -456,12 +488,16 @@ function furnitureMenu(f: FurnitureNode): MenuConfig {
         run: () => {
           const r = -(f.rotation || 0);
           useSceneStore.getState().updateNode<FurnitureNode>(f.id, { rotation: r });
+          logRotate(`${label} (espelhado)`);
         },
       },
       {
         label: "Remover",
         danger: true,
-        run: () => useSceneStore.getState().removeNode(f.id),
+        run: () => {
+          useSceneStore.getState().removeNode(f.id);
+          logRemove(label);
+        },
       },
     ],
   };
@@ -478,6 +514,7 @@ function roomMenu(r: RoomNode): MenuConfig {
           const name = window.prompt("Novo nome do ambiente:", r.name) ?? r.name;
           if (name && name !== r.name) {
             useSceneStore.getState().updateNode<RoomNode>(r.id, { name });
+            logRename(r.name, name);
           }
         },
       },
@@ -499,37 +536,38 @@ function roomMenu(r: RoomNode): MenuConfig {
 }
 
 function slabMenu(s: SlabNode): MenuConfig {
+  const label = "piso";
   return {
     kindLabel: "Piso",
     description: `${s.material ?? "—"} · ${s.thickness ? fmtMeter(s.thickness) : ""}`,
     actions: [
       {
         label: "Madeira",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<SlabNode>(s.id, { material: "madeira" }),
+        run: () => {
+          useSceneStore.getState().updateNode<SlabNode>(s.id, { material: "madeira" });
+          logMaterial(label, "madeira");
+        },
       },
       {
         label: "Porcelanato",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<SlabNode>(s.id, { material: "porcelanato" }),
+        run: () => {
+          useSceneStore.getState().updateNode<SlabNode>(s.id, { material: "porcelanato" });
+          logMaterial(label, "porcelanato");
+        },
       },
       {
         label: "Carpete",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<SlabNode>(s.id, { material: "carpete" }),
+        run: () => {
+          useSceneStore.getState().updateNode<SlabNode>(s.id, { material: "carpete" });
+          logMaterial(label, "carpete");
+        },
       },
       {
         label: "Pedra",
-        run: () =>
-          useSceneStore
-            .getState()
-            .updateNode<SlabNode>(s.id, { material: "pedra" }),
+        run: () => {
+          useSceneStore.getState().updateNode<SlabNode>(s.id, { material: "pedra" });
+          logMaterial(label, "pedra");
+        },
       },
     ],
   };
@@ -564,7 +602,10 @@ function dimensionMenu(d: DimensionNode): MenuConfig {
       {
         label: "Remover",
         danger: true,
-        run: () => useSceneStore.getState().removeNode(d.id),
+        run: () => {
+          useSceneStore.getState().removeNode(d.id);
+          logRemove("cota");
+        },
       },
     ],
   };

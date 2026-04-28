@@ -26,6 +26,7 @@ import { useSceneStore } from "./store";
 import { clampToPolygon, snapToEndpoints, snapToGrid, snapVec2 } from "./snap";
 import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
+import { logEditOpening, logMove } from "./user-action-log";
 
 // ---- Furniture drag --------------------------------------------------------
 
@@ -46,6 +47,10 @@ export function beginFurnitureDrag(
   if (!f) return null;
   const offsetX = pointerWorld.x - f.position.x;
   const offsetZ = pointerWorld.z - f.position.z;
+  // Capture the pre-drag position so commit() can compute a Δ for the log.
+  const startX = f.position.x;
+  const startZ = f.position.z;
+  const label = f.label || f.catalogId || "móvel";
 
   const update = (world: Vec2) => {
     const fNow = useSceneStore.getState().nodes[id] as FurnitureNode | undefined;
@@ -73,7 +78,18 @@ export function beginFurnitureDrag(
       .setLive(id, { position: { x: cornerX, y: fNow.position.y, z: cornerZ } });
   };
 
-  const commit = () => useSceneStore.getState().commitLive(id);
+  const commit = () => {
+    const fAfter = useSceneStore.getState().nodes[id] as FurnitureNode | undefined;
+    const live = useSceneStore.getState().liveTransforms.get(id);
+    const finalX = live?.position?.x ?? fAfter?.position.x ?? startX;
+    const finalZ = live?.position?.z ?? fAfter?.position.z ?? startZ;
+    useSceneStore.getState().commitLive(id);
+    const dx = finalX - startX;
+    const dz = finalZ - startZ;
+    if (Math.hypot(dx, dz) > 0.05) {
+      logMove(label, `Δ ${dx >= 0 ? "+" : ""}${dx.toFixed(2)} m, ${dz >= 0 ? "+" : ""}${dz.toFixed(2)} m`);
+    }
+  };
   const cancel = () => useSceneStore.getState().clearLive(id);
   return { update, commit, cancel };
 }
@@ -99,6 +115,7 @@ export function beginOpeningSlide(
   const startAlong =
     (pointerWorld.x - wall.start.x) * dir.x + (pointerWorld.z - wall.start.z) * dir.z;
   const startOffset = opening.offset;
+  const kindLabel = opening.type === "door" ? "porta" : "janela";
 
   const update = (world: Vec2) => {
     const wNow = useSceneStore.getState().nodes[opening.wallId] as WallNode | undefined;
@@ -119,7 +136,18 @@ export function beginOpeningSlide(
     useSceneStore.getState().setLive(id, { offset: clamped });
   };
 
-  const commit = () => useSceneStore.getState().commitLive(id);
+  const commit = () => {
+    const live = useSceneStore.getState().liveTransforms.get(id);
+    const finalOffset = live?.offset ?? startOffset;
+    useSceneStore.getState().commitLive(id);
+    const delta = finalOffset - startOffset;
+    if (Math.abs(delta) > 0.03) {
+      logEditOpening(
+        kindLabel,
+        `posição ${startOffset.toFixed(2)} → ${finalOffset.toFixed(2)} m`
+      );
+    }
+  };
   const cancel = () => useSceneStore.getState().clearLive(id);
   return { update, commit, cancel };
 }

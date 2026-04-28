@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useVibeState } from "@/lib/use-vibe-state";
 import { useFloorPlanBridge } from "@/lib/scene/bridge";
 import { useSceneStore } from "@/lib/scene/store";
+import { logRemove } from "@/lib/scene/user-action-log";
 import { TopBar } from "@/components/vibe/TopBar";
 import { LeftNav } from "@/components/vibe/LeftNav";
 import { RightPanel } from "@/components/vibe/RightPanel";
@@ -29,26 +30,34 @@ export default function Page() {
   // Sync the legacy FloorPlan state into the new SceneStore on every change.
   useFloorPlanBridge(plan);
 
+  // Helper to log a manual canvas action so it shows up in the chat log.
+  // Imported lazily here to keep the page bundle thin.
+
   // ---- Selection mutations ----
   const removeSelected = useCallback(() => {
     if (!selected) return;
     if (selected.type === "furniture") {
+      const f = plan.furniture.find((x) => x.id === selected.id);
       v.applyPlanTool("remove_furniture", { furniture_id: selected.id });
+      logRemove(f?.label || "móvel");
       setSelected(null);
     } else if (selected.type === "door") {
       const next = JSON.parse(JSON.stringify(plan));
       next.doors = next.doors.filter((d: { id: string }) => d.id !== selected.id);
       setPlan(next);
+      logRemove("porta");
       setSelected(null);
     } else if (selected.type === "window") {
       const next = JSON.parse(JSON.stringify(plan));
       next.windows = next.windows.filter((w: { id: string }) => w.id !== selected.id);
       setPlan(next);
+      logRemove("janela");
       setSelected(null);
     } else if (selected.type === "room") {
       const r = plan.rooms.find((rr) => rr.id === selected.id);
       if (r) {
         v.applyPlanTool("remove_room", { room_name: r.name });
+        logRemove(`ambiente ${r.name}`);
         setSelected(null);
       }
     }

@@ -5,7 +5,8 @@ import { resolveSelection } from "@/lib/floor-plan-engine";
 import type { FloorPlan, SelectedElement, StreamEvent, ToolName } from "@/lib/types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
-import type { SeededMessage, ToolCallStatus } from "@/lib/mock-data";
+import type { ChatBlock, SeededMessage, ToolCallStatus } from "@/lib/mock-data";
+import { USER_ACTION_EVENT, type UserActionPayload } from "@/lib/scene/user-action-log";
 
 type ModelId = "claude-opus-4-7" | "claude-sonnet-4-6";
 
@@ -122,8 +123,11 @@ export function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState<ModelId>("claude-opus-4-7");
   const [streamingId, setStreamingId] = useState<string | null>(null);
-  const [streamingText, setStreamingText] = useState("");
-  const [streamingTools, setStreamingTools] = useState<ToolCallStatus[]>([]);
+  // Block-based streaming state (Fase 4A): chronological text/tool blocks
+  // accumulated as events arrive. Renders verbatim — tools appear exactly
+  // where they happened, between text deltas, instead of being grouped at
+  // the end of the message.
+  const [streamingBlocks, setStreamingBlocks] = useState<ChatBlock[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const planRef = useRef(plan); planRef.current = plan;
   const selectedRef = useRef(selected); selectedRef.current = selected;
@@ -149,7 +153,7 @@ export function ChatPanel({
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [history, streamingText, streamingTools]);
+  }, [history, streamingBlocks]);
 
   // Bridge: the canvas context menu can dispatch a `ca:agent-prompt` event
   // ("Mobiliar Sala", "abrir vão 80cm" etc). We forward it to send() so the
@@ -166,6 +170,33 @@ export function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
 
+  // Synthetic user-action log (Fase 4B) — when a manual canvas mutation is
+  // logged via lib/scene/user-action-log.ts, append a synthetic "assistant"
+  // entry whose only content is a user-action block. The agent reads its
+  // text content via apiHistory the next time the user sends a message, so
+  // it knows what the user just did.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<UserActionPayload>).detail;
+      if (!detail || detail.type !== "user-action") return;
+      const time = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const id = `ua-${Date.now()}`;
+      const fallbackText = `[${detail.label}${detail.detail ? ` — ${detail.detail}` : ""}]`;
+      setHistory((prev) => [
+        ...prev,
+        {
+          id,
+          role: "assistant",
+          time,
+          content: fallbackText,
+          blocks: [detail],
+        },
+      ]);
+    };
+    window.addEventListener(USER_ACTION_EVENT, handler);
+    return () => window.removeEventListener(USER_ACTION_EVENT, handler);
+  }, [setHistory]);
+
   async function send(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
@@ -175,8 +206,7 @@ export function ChatPanel({
     const assistantId = `a-${Date.now()}`;
     setHistory((prev) => [...prev, userMsg]);
     setStreamingId(assistantId);
-    setStreamingText("");
-    setStreamingTools([]);
+    setStreamingBlocks([]);
     setInput("");
     setBusy(true);
 
@@ -184,7 +214,55 @@ export function ChatPanel({
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
-    const localTools: ToolCallStatus[] = [];
+    // Block accumulator. Each text_delta either appends to the last text
+    // block or opens a new one (right after a tool block). Each tool_start
+    // pushes a fresh tool block. tool_result patches the matching tool
+    // status. The order of arrival defines the order of render.
+    const blocks: ChatBlock[] = [];
+
+    function commitBlocks(): ChatBlock[] {
+      // Compact consecutive text blocks (paranoia — should only occur in
+      // adversarial streams).
+      const out: ChatBlock[] = [];
+      for (const b of blocks) {
+        const last = out[out.length - 1];
+        if (last && last.type === "text" && b.type === "text") {
+          last.content += b.content;
+        } else {
+          out.push(b);
+        }
+      }
+      return out;
+    }
+
+    function appendText(t: string) {
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === "text") {
+        last.content += t;
+      } else {
+        blocks.push({ type: "text", content: t });
+      }
+      setStreamingBlocks([...blocks]);
+    }
+
+    function startTool(id: string, name: ToolName) {
+      blocks.push({
+        type: "tool",
+        tool: { id, name, status: "running" },
+      });
+      setStreamingBlocks([...blocks]);
+    }
+
+    function patchTool(id: string, ok: boolean) {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        if (b.type === "tool" && b.tool.id === id) {
+          b.tool = { ...b.tool, status: ok ? "done" : "error" };
+          break;
+        }
+      }
+      setStreamingBlocks([...blocks]);
+    }
 
     try {
       const resp = await fetch("/api/chat", {
@@ -204,7 +282,6 @@ export function ChatPanel({
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let acc = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -218,42 +295,45 @@ export function ChatPanel({
           if (!json) continue;
           let ev: StreamEvent;
           try { ev = JSON.parse(json); } catch { continue; }
-          if (ev.type === "text_delta") { acc += ev.text; setStreamingText(acc); }
-          else if (ev.type === "tool_start") {
+          if (ev.type === "text_delta") {
+            appendText(ev.text);
+          } else if (ev.type === "tool_start") {
             toolNameByIdRef.current.set(ev.id, ev.name);
-            localTools.push({ id: ev.id, name: ev.name, status: "running" });
-            setStreamingTools([...localTools]);
-          }
-          else if (ev.type === "tool_input") {
+            startTool(ev.id, ev.name);
+          } else if (ev.type === "tool_input") {
             const n = toolNameByIdRef.current.get(ev.id);
             if (n) onApplyTool(n, ev.input);
+          } else if (ev.type === "tool_result") {
+            patchTool(ev.id, ev.ok);
+          } else if (ev.type === "error") {
+            appendText(`\n\n_Erro: ${ev.message}_`);
           }
-          else if (ev.type === "tool_result") {
-            const idx = localTools.findIndex((t) => t.id === ev.id);
-            if (idx >= 0) {
-              localTools[idx] = { ...localTools[idx], status: ev.ok ? "done" : "error" };
-              setStreamingTools([...localTools]);
-            }
-          }
-          else if (ev.type === "error") { acc += `\n\n_Erro: ${ev.message}_`; setStreamingText(acc); }
         }
       }
       const time2 = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const finalBlocks = commitBlocks();
+      const finalText = finalBlocks
+        .filter((b): b is { type: "text"; content: string } => b.type === "text")
+        .map((b) => b.content)
+        .join("");
       setHistory((prev) => [...prev, {
-        id: assistantId, role: "assistant", content: acc, time: time2,
-        toolCalls: localTools.length > 0 ? localTools : undefined,
+        id: assistantId,
+        role: "assistant",
+        content: finalText,
+        time: time2,
+        blocks: finalBlocks,
       }]);
     } catch (err) {
       const m = err instanceof Error ? err.message : "Erro desconhecido.";
+      const fallback: ChatBlock[] = [{ type: "text", content: `_Erro: ${m}_` }];
       setHistory((prev) => [...prev, {
         id: assistantId, role: "assistant", content: `_Erro: ${m}_`,
         time: new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }),
-        toolCalls: localTools.length > 0 ? localTools : undefined,
+        blocks: fallback,
       }]);
     } finally {
       setStreamingId(null);
-      setStreamingText("");
-      setStreamingTools([]);
+      setStreamingBlocks([]);
       setBusy(false);
     }
   }
@@ -287,25 +367,15 @@ export function ChatPanel({
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 py-4 space-y-5">
         {history.map((m) => <MessageRow key={m.id} m={m} lang={lang} onApplyDiff={onApplyDiff} onCompareDiff={onCompareDiff} onSuggestionClick={send} />)}
-        {streamingId && (() => {
-          const { stripped } = stripSuggestions(streamingText);
-          return (
-            <div className="space-y-1.5 fade-up">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
-                <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
-              </div>
-              {streamingTools.length > 0 && (
-                <div className="space-y-1">
-                  {streamingTools.map((tc) => <ToolIndicator key={tc.id} tc={tc} />)}
-                </div>
-              )}
-              {stripped && (
-                <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{stripped}<span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" /></div>
-              )}
+        {streamingId && (
+          <div className="space-y-1.5 fade-up">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[9.5px] tracking-[0.14em] text-accent">{t(lang, "chat.vibe")}</span>
+              <span className="text-[10px] text-muted pulse">{t(lang, "chat.thinking")}</span>
             </div>
-          );
-        })()}
+            <BlockSequence blocks={streamingBlocks} streaming />
+          </div>
+        )}
       </div>
 
       {/* Composer */}
@@ -374,7 +444,14 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
   const labelColor = role === "assistant" ? "text-accent" : role === "user" ? "text-ink" : "text-muted";
   const proactive = m.proactive;
   const isAssistant = role === "assistant";
-  const { stripped, suggestions } = isAssistant ? stripSuggestions(m.content) : { stripped: m.content, suggestions: [] as string[] };
+  const { stripped, suggestions } = isAssistant
+    ? stripSuggestions(m.content)
+    : { stripped: m.content, suggestions: [] as string[] };
+
+  // Prefer block-based rendering when available (Fase 4A). Falls back to the
+  // legacy "tools dropped at the end" layout for seeded messages that haven't
+  // been migrated.
+  const blocksForRender = isAssistant ? m.blocks ?? null : null;
 
   return (
     <div className={`space-y-1.5 fade-up ${proactive ? "rounded-md border border-dashed border-accent/40 p-2.5 bg-accent-soft/30" : ""}`}>
@@ -383,16 +460,23 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
         <span className={`font-mono text-[9.5px] uppercase tracking-[0.14em] ${labelColor}`}>{t(lang, labelKey)}</span>
         <span className="font-mono text-[9.5px] text-muted" suppressHydrationWarning>{m.time}</span>
       </div>
-      {isAssistant && m.toolCalls && m.toolCalls.length > 0 && (
-        <div className="space-y-1">
-          {m.toolCalls.map((tc) => <ToolIndicator key={tc.id} tc={tc} />)}
-        </div>
+
+      {blocksForRender ? (
+        <BlockSequence blocks={blocksForRender} />
+      ) : (
+        <>
+          {isAssistant && m.toolCalls && m.toolCalls.length > 0 && (
+            <div className="space-y-1">
+              {m.toolCalls.map((tc) => <ToolIndicator key={tc.id} tc={tc} />)}
+            </div>
+          )}
+          {role === "system" ? (
+            <div className="editorial text-[13.5px] leading-relaxed text-muted">{m.content}</div>
+          ) : stripped ? (
+            <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(stripped)}</div>
+          ) : null}
+        </>
       )}
-      {role === "system" ? (
-        <div className="editorial text-[13.5px] leading-relaxed text-muted">{m.content}</div>
-      ) : stripped ? (
-        <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(stripped)}</div>
-      ) : null}
       {isAssistant && suggestions.length > 0 && onSuggestionClick && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {suggestions.map((s, i) => (
@@ -421,6 +505,99 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
       )}
     </div>
   );
+}
+
+// Render a chronological sequence of chat blocks (text → tool → text → …).
+// Used by both the in-flight streaming preview and finalized messages.
+function BlockSequence({
+  blocks,
+  streaming = false,
+}: {
+  blocks: ChatBlock[];
+  streaming?: boolean;
+}) {
+  if (blocks.length === 0 && streaming) {
+    return null;
+  }
+  // Strip suggestion tags from text blocks so [Mobiliar Sala] etc. don't
+  // appear inline; they'll render as chips at the message level.
+  return (
+    <div className="space-y-1.5">
+      {blocks.map((b, i) => {
+        const last = i === blocks.length - 1;
+        if (b.type === "text") {
+          const { stripped } = stripSuggestions(b.content);
+          if (!stripped) return null;
+          return (
+            <div
+              key={i}
+              className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap"
+            >
+              {renderInline(stripped)}
+              {streaming && last && (
+                <span className="inline-block w-1.5 h-3 bg-accent ml-0.5 align-middle pulse" />
+              )}
+            </div>
+          );
+        }
+        if (b.type === "tool") {
+          return <ToolIndicator key={i} tc={b.tool} />;
+        }
+        if (b.type === "user-action") {
+          return <UserActionBlock key={i} block={b} />;
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
+// User-initiated canvas mutations (delete, drag, edit, rename) appear in the
+// chat as a distinct grey card with the badge "VOCÊ", an action glyph, and a
+// short label. Visually different from agent tool entries so the user can
+// scan history and tell who did what.
+function UserActionBlock({
+  block,
+}: {
+  block: Extract<ChatBlock, { type: "user-action" }>;
+}) {
+  const glyph = userActionGlyph(block.kind);
+  return (
+    <div
+      className="flex items-start gap-2.5 rounded-md border border-line bg-panel-alt/70 px-2.5 py-1.5"
+      style={{ borderStyle: "dashed" }}
+    >
+      <span
+        className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted shrink-0 mt-0.5"
+        title="Ação manual no canvas"
+      >
+        Você
+      </span>
+      <span className="text-muted text-[12px] shrink-0">{glyph}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] leading-snug text-ink">{block.label}</div>
+        {block.detail && (
+          <div className="text-[10.5px] text-muted font-mono leading-snug mt-0.5">
+            {block.detail}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function userActionGlyph(kind: string): string {
+  switch (kind) {
+    case "remove": return "−";
+    case "move": return "↔";
+    case "edit-wall": return "▭";
+    case "edit-furniture": return "▣";
+    case "edit-opening": return "⊐";
+    case "rename": return "Aa";
+    case "material": return "▦";
+    case "rotate": return "↻";
+    default: return "•";
+  }
 }
 
 function ToolIndicator({ tc }: { tc: ToolCallStatus }) {

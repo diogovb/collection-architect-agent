@@ -195,14 +195,38 @@ export const SEED_SLIDES: Slide[] = [
 ];
 
 /* -------------------- Initial chat history -------------------- */
+
+/** A single chunk of an assistant message. The chat panel renders these
+ *  in order, allowing text → tool → text → tool sequences to read like a
+ *  real timeline of what the agent did. */
+export type ChatBlock =
+  | { type: "text"; content: string }
+  | { type: "tool"; tool: ToolCallStatus }
+  | {
+      type: "user-action";
+      kind: "remove" | "move" | "edit-wall" | "edit-furniture" | "edit-opening" | "rename" | "material" | "rotate";
+      label: string;
+      /** Optional payload — diff data the user can read at a glance. */
+      detail?: string;
+      /** Optional undo handler. */
+      undoLabel?: string;
+    };
+
 export interface SeededMessage {
   id: string;
   role: "system" | "user" | "assistant";
+  /** Legacy plain-text content. When `blocks` is present, this is rendered
+   *  only as the fallback and for API submission. */
   content: string;
   time: string;
   diff?: { description: string; badge: string; targetId?: string };
   proactive?: boolean;
+  /** Legacy: tools shown as a flat list at the END of the message. Kept for
+   *  back-compat with seeded chats. New chats use `blocks` instead. */
   toolCalls?: ToolCallStatus[];
+  /** Preferred (Fase 4A): chronological blocks. Renderer prefers this
+   *  field when present. */
+  blocks?: ChatBlock[];
 }
 
 function nowTime() {
