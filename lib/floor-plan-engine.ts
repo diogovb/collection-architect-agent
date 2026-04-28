@@ -267,15 +267,55 @@ function doDuplicateRoom(plan: FloorPlan, input: ToolInputs["duplicate_room"]): 
 function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  const position = clamp01(input.position ?? 0.5);
+  const size = input.size ?? 0.9;
+
+  // Dedup: skip if there's already a door whose world centre is within
+  // ~50 cm of the new one. Catches both repeated calls on the same
+  // (room, wall) pair AND the common pattern of two adjacent rooms
+  // each adding a door on their shared wall (one physical door, two
+  // logical entries).
+  const newCenter = doorWorldCenter(room, input.wall, position);
+  for (const d of plan.doors) {
+    const dRoom = plan.rooms.find((r) => r.id === d.roomId);
+    if (!dRoom) continue;
+    const c = doorWorldCenter(dRoom, d.wall, d.position);
+    if (Math.hypot(c.x - newCenter.x, c.y - newCenter.y) < 0.5) {
+      return {
+        ok: true,
+        message: `Porta já existe próximo a '${room.name}' (${input.wall}); pulando duplicata.`,
+      };
+    }
+  }
+
   const door: Door = {
     id: nextId("door"),
     roomId: room.id,
     wall: input.wall,
-    position: clamp01(input.position ?? 0.5),
-    size: input.size ?? 0.9,
+    position,
+    size,
   };
   plan.doors.push(door);
   return { ok: true, message: `Porta adicionada em '${room.name}' (${input.wall}).` };
+}
+
+/** World-space centre of a door given its (room, wall, position) tuple.
+ *  Used to detect duplicates across rooms that share a wall. */
+function doorWorldCenter(
+  room: { x: number; y: number; width: number; height: number },
+  wall: "north" | "south" | "east" | "west",
+  position: number,
+): { x: number; y: number } {
+  switch (wall) {
+    case "north":
+      return { x: room.x + position * room.width, y: room.y };
+    case "south":
+      return { x: room.x + position * room.width, y: room.y + room.height };
+    case "west":
+      return { x: room.x, y: room.y + position * room.height };
+    case "east":
+      return { x: room.x + room.width, y: room.y + position * room.height };
+  }
 }
 
 function doAddWindow(plan: FloorPlan, input: ToolInputs["add_window"]): ApplyResult {
@@ -400,26 +440,106 @@ function doMoveWall(plan: FloorPlan, input: ToolInputs["move_wall"]): ApplyResul
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
   const d = input.delta;
-  if (input.wall === "north") {
-    const newY = room.y - d;
-    const newH = room.height + d;
+  const EPS = 0.01;
+
+  // Validate first so we don't mutate part-way and leave the plan in a
+  // bad state if the second pass fails.
+  if (input.wall === "north" || input.wall === "south") {
+    const newH = input.wall === "north" ? room.height + d : room.height + d;
     if (newH < 1) return { ok: false, message: "Cômodo ficaria pequeno demais." };
-    room.y = newY;
-    room.height = newH;
+  } else {
+    const newW = input.wall === "west" ? room.width + d : room.width + d;
+    if (newW < 1) return { ok: false, message: "Cômodo ficaria pequeno demais." };
+  }
+
+  // Capture the world coordinate of the wall BEFORE mutating so we can
+  // find neighbours that share it. e.g. moving Sala.east finds Varanda
+  // whose west aligned with sala.x + sala.width.
+  type WallEdge = "north" | "south" | "east" | "west";
+  function wallCoord(r: Room, w: WallEdge): number {
+    switch (w) {
+      case "north": return r.y;
+      case "south": return r.y + r.height;
+      case "west": return r.x;
+      case "east": return r.x + r.width;
+    }
+  }
+  const opposite: Record<WallEdge, WallEdge> = {
+    north: "south",
+    south: "north",
+    east: "west",
+    west: "east",
+  };
+  function rangeOverlaps(
+    aStart: number, aEnd: number, bStart: number, bEnd: number,
+  ): boolean {
+    return aEnd > bStart + EPS && aStart < bEnd - EPS;
+  }
+
+  const originalCoord = wallCoord(room, input.wall);
+
+  // Find every neighbouring room whose OPPOSITE wall sits at this exact
+  // coordinate AND whose along-wall span overlaps ours. Shift their wall
+  // by the same Δ so the shared boundary stays a single line.
+  const neighbours: { room: Room; wall: WallEdge }[] = [];
+  for (const other of plan.rooms) {
+    if (other === room) continue;
+    const oppWall = opposite[input.wall];
+    if (Math.abs(wallCoord(other, oppWall) - originalCoord) > EPS) continue;
+    // Span overlap: both rooms must actually share the wall — not just
+    // sit on the same coord at different X/Y ranges.
+    let sameSpan = false;
+    if (input.wall === "north" || input.wall === "south") {
+      sameSpan = rangeOverlaps(room.x, room.x + room.width, other.x, other.x + other.width);
+    } else {
+      sameSpan = rangeOverlaps(room.y, room.y + room.height, other.y, other.y + other.height);
+    }
+    if (sameSpan) neighbours.push({ room: other, wall: oppWall });
+  }
+
+  // Apply the move to the primary room.
+  if (input.wall === "north") {
+    room.y -= d;
+    room.height += d;
   } else if (input.wall === "south") {
-    if (room.height + d < 1) return { ok: false, message: "Cômodo ficaria pequeno demais." };
     room.height += d;
   } else if (input.wall === "west") {
-    const newX = room.x - d;
-    const newW = room.width + d;
-    if (newW < 1) return { ok: false, message: "Cômodo ficaria pequeno demais." };
-    room.x = newX;
-    room.width = newW;
+    room.x -= d;
+    room.width += d;
   } else {
-    if (room.width + d < 1) return { ok: false, message: "Cômodo ficaria pequeno demais." };
     room.width += d;
   }
-  return { ok: true, message: `Parede ${input.wall} de '${room.name}' movida ${d}m.` };
+
+  // Apply the inverse adjustment to neighbours so the shared wall stays
+  // shared — they shrink by Δ on the opposite side.
+  for (const n of neighbours) {
+    const w = n.wall;
+    const r = n.room;
+    if (w === "north") {
+      // The neighbour's NORTH wall is the same coord as our wall before
+      // the move; shrink it by Δ (move south by Δ).
+      const newH = r.height - d;
+      if (newH < 1) continue;
+      r.y += d;
+      r.height = newH;
+    } else if (w === "south") {
+      const newH = r.height - d;
+      if (newH < 1) continue;
+      r.height = newH;
+    } else if (w === "west") {
+      const newW = r.width - d;
+      if (newW < 1) continue;
+      r.x += d;
+      r.width = newW;
+    } else {
+      const newW = r.width - d;
+      if (newW < 1) continue;
+      r.width = newW;
+    }
+  }
+
+  const suffix = neighbours.length > 0 ? ` (+ ${neighbours.length} vizinho${neighbours.length > 1 ? "s" : ""})` : "";
+  return { ok: true, message: `Parede ${input.wall} de '${room.name}' movida ${d}m${suffix}.` };
 }
 
 function doAddColumn(plan: FloorPlan, input: ToolInputs["add_column"]): ApplyResult {
