@@ -1568,21 +1568,24 @@ function NorthSymbol({ viewX, viewY, viewW }: { viewX: number; viewY: number; vi
   const cx = viewX + viewW - 0.6;
   const cy = viewY + 0.6;
   const r = 0.22; // ≈ 22 cm — reads well at apartment scale
+  // NOTE: SVG `stroke-width` and `font-size` on a <g> are interpreted in
+  // user-space units (= metres here). Without per-element `vector-effect`,
+  // strokes balloon to absurd metre-thick lines. We attach the effect to
+  // every stroked child explicitly because browsers don't always inherit it
+  // through grouping the way the spec implies.
   return (
-    <g
-      transform={`translate(${cx} ${cy})`}
-      stroke={PALETTE.ink}
-      strokeWidth={0.6}
-      fill="none"
-      vectorEffect="non-scaling-stroke"
-      pointerEvents="none"
-    >
-      <circle r={r} />
+    <g transform={`translate(${cx} ${cy})`} pointerEvents="none">
+      <circle
+        r={r}
+        fill="none"
+        stroke={PALETTE.ink}
+        strokeWidth={0.6}
+        vectorEffect="non-scaling-stroke"
+      />
       {/* Arrow pointing up. */}
       <path
         d={`M0 ${-r * 0.7} L${r * 0.28} ${r * 0.55} L0 ${r * 0.28} L${-r * 0.28} ${r * 0.55} Z`}
         fill={PALETTE.ink}
-        stroke="none"
       />
       <text
         x={0}
@@ -1596,7 +1599,7 @@ function NorthSymbol({ viewX, viewY, viewW }: { viewX: number; viewY: number; vi
           letterSpacing: "0.06em",
         }}
         fontSize={pxToWorld(8)}
-        stroke="none"
+        fill={PALETTE.ink}
       >
         N
       </text>
@@ -1619,19 +1622,18 @@ function ScaleBarSymbol({
   const startX = viewX + 0.6;
   const startY = viewY + viewH - 0.6;
   const length = 2; // 2 m
+  // Same vector-effect-per-child rule as the north symbol — see comment there.
+  const lineProps = {
+    stroke: PALETTE.ink,
+    strokeWidth: 0.5,
+    vectorEffect: "non-scaling-stroke" as const,
+  };
   return (
-    <g
-      transform={`translate(${startX} ${startY})`}
-      stroke={PALETTE.ink}
-      strokeWidth={0.5}
-      fill="none"
-      vectorEffect="non-scaling-stroke"
-      pointerEvents="none"
-    >
-      <line x1={0} y1={0} x2={length} y2={0} />
-      <line x1={0} y1={-0.06} x2={0} y2={0.06} />
-      <line x1={length / 2} y1={-0.04} x2={length / 2} y2={0.04} />
-      <line x1={length} y1={-0.06} x2={length} y2={0.06} />
+    <g transform={`translate(${startX} ${startY})`} pointerEvents="none">
+      <line x1={0} y1={0} x2={length} y2={0} {...lineProps} />
+      <line x1={0} y1={-0.06} x2={0} y2={0.06} {...lineProps} />
+      <line x1={length / 2} y1={-0.04} x2={length / 2} y2={0.04} {...lineProps} />
+      <line x1={length} y1={-0.06} x2={length} y2={0.06} {...lineProps} />
       <text
         x={0}
         y={0.18}
@@ -1644,7 +1646,7 @@ function ScaleBarSymbol({
           opacity: 0.6,
         }}
         fontSize={pxToWorld(8)}
-        stroke="none"
+        fill={PALETTE.ink}
       >
         0
       </text>
@@ -1660,7 +1662,7 @@ function ScaleBarSymbol({
           opacity: 0.6,
         }}
         fontSize={pxToWorld(8)}
-        stroke="none"
+        fill={PALETTE.ink}
       >
         2 m
       </text>
