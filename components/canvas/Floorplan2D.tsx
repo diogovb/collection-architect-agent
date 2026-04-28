@@ -702,6 +702,37 @@ export function Floorplan2D({ onLoadExample }: Props) {
           ))}
         </g>
 
+        {/* Floor zones (split_floor tool) — paint a sub-region of the
+            room with a different material AND draw a dashed divider on
+            the boundary so the split is visually unmistakable. Without
+            this layer the user's split_floor was a silent no-op. */}
+        <g className="floor-zones" pointerEvents="none">
+          {rooms.map((r) => {
+            if (!r.floorZones || r.floorZones.length === 0) return null;
+            return (
+              <g key={`zones-${r.id}`}>
+                {r.floorZones.map((z) => (
+                  <g key={z.id}>
+                    <polygon
+                      points={polygonToSvg(z.polygon)}
+                      fill={slabPatternUrl(z.material) ?? floorColor(z.material)}
+                    />
+                    <polygon
+                      points={polygonToSvg(z.polygon)}
+                      fill="none"
+                      stroke={PALETTE.ink}
+                      strokeOpacity={0.45}
+                      strokeWidth={0.6}
+                      strokeDasharray="0.18 0.12"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </g>
+                ))}
+              </g>
+            );
+          })}
+        </g>
+
         {/* Walls — solid fill per wall, NO stroke (Fase F). The mitered
             quads from `getWallCorners` already share corner vertices so
             adjacent fills meet without gaps, but rendering a stroke on

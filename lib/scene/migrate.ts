@@ -410,6 +410,26 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
     const roomId = `room:legacy-${r.id}`;
     const category = categoryFromName(r.name);
     const floor = (r.floor as FloorMaterial) ?? defaultFloorForCategory(category);
+    // Carry over floor zones (split_floor tool) so the canvas can render
+    // the secondary material strip + a dashed divider line. Legacy
+    // zones use relative {rx,ry,rw,rh} 0..1 within the room; scene
+    // zones store absolute polygons, so we convert here.
+    const sceneZones = r.floorZones?.map((z, idx) => {
+      const ax = r.x + z.rx * r.width;
+      const ay = r.y + z.ry * r.height;
+      const aw = z.rw * r.width;
+      const ah = z.rh * r.height;
+      return {
+        id: `zone:${r.id}:${idx}`,
+        polygon: [
+          { x: ax, z: ay },
+          { x: ax + aw, z: ay },
+          { x: ax + aw, z: ay + ah },
+          { x: ax, z: ay + ah },
+        ],
+        material: z.material,
+      };
+    });
     const room: RoomNode = {
       id: roomId,
       type: "room",
@@ -419,6 +439,7 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       polygon: roomPolygon,
       area,
       floorMaterial: floor,
+      floorZones: sceneZones,
       slabId,
       signature: polygonSignature(roomPolygon),
     };

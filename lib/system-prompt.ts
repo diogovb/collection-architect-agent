@@ -165,7 +165,7 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 
 ## Pisos
 - **set_floor_material** — troca o piso inteiro.
-- **split_floor** — duas zonas dentro do mesmo cômodo (ESSENCIAL pra open-plan: madeira na sala, porcelanato na cozinha integrada).
+- **split_floor** — duas zonas dentro do mesmo cômodo, SEM PAREDE entre elas (ESSENCIAL pra open-plan: madeira na sala, porcelanato na cozinha integrada). É só material visual + linha tracejada de divisão. **Se o usuário quer uma parede divisória de verdade, use \`split_room\` ou \`add_partition\`** — esses criam dois cômodos separados com parede compartilhada entre eles.
 
 ## Layout
 - **add_balcony** — varanda colada num cômodo (attached_to + wall) ou avulsa.
