@@ -13,6 +13,7 @@ import { OrbitControls, Line } from "@react-three/drei";
 import * as THREE from "three";
 
 import { useSceneStore, effectiveNode } from "@/lib/scene/store";
+import { liveRoomPolygon, liveSlabPolygon } from "@/lib/scene/live-derive";
 import {
   type DoorNode,
   type FurnitureNode,
@@ -161,14 +162,35 @@ function SceneContents() {
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
 
-  const slabs = useMemo(
+  const rawSlabs = useMemo(
     () => Object.values(nodes).filter((n): n is SlabNode => n.type === "slab"),
     [nodes]
   );
-  const rooms = useMemo(
+  const rawRooms = useMemo(
     () => Object.values(nodes).filter((n): n is RoomNode => n.type === "room"),
     [nodes]
   );
+  // Mirror Floorplan2D's live derivation pass so slabs / rooms / floor zones
+  // follow walls during drag in 3D too (otherwise the wall fills move but the
+  // slab below stays at the committed polygon — visible as a sliver of bare
+  // ground when the user shrinks a room live).
+  const rooms = useMemo(() => {
+    if (rawRooms.length === 0) return rawRooms;
+    const liveState = { nodes, liveTransforms };
+    return rawRooms.map((r) => {
+      if (!r.boundaryAnchors) return r;
+      const polygon = liveRoomPolygon(r, liveState);
+      return { ...r, polygon };
+    });
+  }, [rawRooms, nodes, liveTransforms]);
+  const slabs = useMemo(() => {
+    if (rawSlabs.length === 0) return rawSlabs;
+    return rawSlabs.map((s) => {
+      const room = rooms.find((r) => r.id === s.roomId);
+      if (!room || !room.boundaryAnchors) return s;
+      return { ...s, polygon: liveSlabPolygon(room.polygon) };
+    });
+  }, [rawSlabs, rooms]);
   const doors = useMemo(
     () => Object.values(nodes).filter((n): n is DoorNode => n.type === "door"),
     [nodes]

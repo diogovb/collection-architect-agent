@@ -10,7 +10,7 @@
 //   extrudes downward from elevation 0 (so the floor surface is at y=0 and
 //   the slab does NOT poke above the floor — this fixes BUG A).
 
-import { polygonAbsArea, polygonCentroid, type AnyNode, type FloorMaterial, type NodeId, type RoomCategory, type RoomNode, type SlabNode, type Vec2, type WallNode } from "./types";
+import { polygonAbsArea, polygonCentroid, type AnyNode, type BoundaryAnchor, type FloorMaterial, type NodeId, type RoomCategory, type RoomNode, type SlabNode, type Vec2, type WallNode } from "./types";
 import { polygonSignature } from "./signature";
 import { detectSpaces } from "./space-detection";
 
@@ -80,6 +80,32 @@ function genId(prefix: string, seq?: number): NodeId {
   return `${prefix}:auto-${_idCounter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** For each polygon vertex, find a wall endpoint within 1 mm and return an
+ *  anchor record. Returns `undefined` if any vertex couldn't be matched
+ *  (so the renderer falls back to the stored polygon rather than collapsing
+ *  it). Mirrors the legacy-migration helper in `migrate.ts`. */
+function buildBoundaryAnchors(polygon: Vec2[], walls: WallNode[]): BoundaryAnchor[] | undefined {
+  const TOL = 0.001;
+  const anchors: BoundaryAnchor[] = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const v = polygon[i];
+    let found: { wallId: NodeId; endpoint: "start" | "end" } | null = null;
+    for (const w of walls) {
+      if (Math.abs(w.start.x - v.x) <= TOL && Math.abs(w.start.z - v.z) <= TOL) {
+        found = { wallId: w.id, endpoint: "start" };
+        break;
+      }
+      if (Math.abs(w.end.x - v.x) <= TOL && Math.abs(w.end.z - v.z) <= TOL) {
+        found = { wallId: w.id, endpoint: "end" };
+        break;
+      }
+    }
+    if (!found) return undefined;
+    anchors.push({ vertexIndex: i, ...found });
+  }
+  return anchors;
+}
+
 export function syncSlabsAndRooms(ctx: SyncContext): SyncResult {
   const detected = detectSpaces(ctx.walls);
   const sigToDetected = new Map<string, { polygon: Vec2[]; signature: string }>();
@@ -106,14 +132,17 @@ export function syncSlabsAndRooms(ctx: SyncContext): SyncResult {
   sigToDetected.forEach(({ polygon, signature }) => {
     const area = polygonAbsArea(polygon);
     const existing = sigToExistingRoom.get(signature);
+    const boundaryAnchors = buildBoundaryAnchors(polygon, ctx.walls);
     if (existing) {
       matchedRoomIds.add(existing.id);
       matchedSlabIds.add(existing.slabId);
       // Polygon may differ slightly (e.g. wall thickness change without affecting signature);
-      // only update if vertices changed beyond rounding.
+      // only update if vertices changed beyond rounding. Re-anchoring the
+      // boundary keeps the live-derivation pass in Floorplan2D in sync with
+      // any new wall endpoints that sweep-line produced.
       roomsToUpdate.push({
         id: existing.id,
-        patch: { polygon, area },
+        patch: { polygon, area, boundaryAnchors },
       });
       slabsToUpdate.push({
         id: existing.slabId,
@@ -137,6 +166,7 @@ export function syncSlabsAndRooms(ctx: SyncContext): SyncResult {
       polygon,
       area,
       floorMaterial: floor,
+      boundaryAnchors,
       slabId,
       signature,
     };

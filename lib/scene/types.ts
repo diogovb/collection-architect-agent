@@ -114,6 +114,22 @@ export interface FloorZone {
   /** Polygon defining the zone, in absolute meters (XZ). */
   polygon: Vec2[];
   material: FloorMaterial;
+  /** Relative bounds (0..1) inside the room's bbox, preserved across wall
+   *  moves. When the room is resized live, `polygon` is re-derived from
+   *  these bounds so the zone stretches proportionally with the room.
+   *  Optional for back-compat with zones created before this field
+   *  existed. */
+  bounds?: { rx: number; ry: number; rw: number; rh: number };
+}
+
+/** A polygon vertex anchored to a wall endpoint. During wall drag the
+ *  vertex follows the wall's live (effectiveNode) position, so the room
+ *  polygon, slab, area and floor zones all update in real time. */
+export interface BoundaryAnchor {
+  /** Index of this anchor's vertex in `RoomNode.polygon`. */
+  vertexIndex: number;
+  wallId: NodeId;
+  endpoint: "start" | "end";
 }
 
 export interface RoomNode extends BaseNode {
@@ -126,6 +142,10 @@ export interface RoomNode extends BaseNode {
   area: number;
   floorMaterial: FloorMaterial;
   floorZones?: FloorZone[];
+  /** Per-vertex wall-endpoint anchors so the polygon (and everything
+   *  derived from it: slab, area, zones) follows walls live during drag.
+   *  Optional for back-compat. Populated at migration / runDerivation. */
+  boundaryAnchors?: BoundaryAnchor[];
   /** Reference to the auto-generated SlabNode. */
   slabId: NodeId;
   /** Stable hash of polygon used to preserve identity across edits. */

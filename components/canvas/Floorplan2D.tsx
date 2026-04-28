@@ -31,6 +31,12 @@ import { ContextMenu } from "./ContextMenu";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
 import { buildWallOutlinePath } from "@/lib/scene/wall-outline";
 import { MeasurementChip } from "./MeasurementChip";
+import {
+  liveRoomPolygon,
+  liveRoomArea,
+  liveSlabPolygon,
+  liveZonePolygon,
+} from "@/lib/scene/live-derive";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -66,6 +72,13 @@ interface Props {
 const ROOM_LABEL_SUPPRESS_AREA_BELOW = 4;
 const ROOM_LABEL_NARROW_DIM_THRESHOLD = 2;
 
+// Stable singleton so the live-derivation memo doesn't allocate a new Map
+// per render (which would invalidate the dep set every frame). The merged
+// `nodes` map already has live transforms baked in, so `effectiveNode`
+// inside `liveRoomPolygon` only needs an empty live map to read straight
+// from `nodes`.
+const emptyLiveMap: import("@/lib/scene/types").SceneState["liveTransforms"] = new Map();
+
 export function Floorplan2D({ onLoadExample }: Props) {
   const rawNodes = useSceneStore((s) => s.nodes);
   const liveTransforms = useSceneStore((s) => s.liveTransforms);
@@ -97,14 +110,38 @@ export function Floorplan2D({ onLoadExample }: Props) {
     () => Object.values(nodes).filter((n): n is WallNode => n.type === "wall"),
     [nodes]
   );
-  const slabs = useMemo(
+  const rawSlabs = useMemo(
     () => Object.values(nodes).filter((n): n is SlabNode => n.type === "slab"),
     [nodes]
   );
-  const rooms = useMemo(
+  const rawRooms = useMemo(
     () => Object.values(nodes).filter((n): n is RoomNode => n.type === "room"),
     [nodes]
   );
+  // Live derivation pass — re-derives room polygon/area, slab polygon, and
+  // floor zones from the LIVE wall positions (already merged into `nodes`
+  // above). Without this, dragging a wall in 2D leaves the slab + label area
+  // + zone strip frozen at their committed values until commit + runDerivation
+  // fires, which feels broken next to the 3D path that updates per-frame.
+  const rooms = useMemo(() => {
+    if (rawRooms.length === 0) return rawRooms;
+    const liveState = { nodes, liveTransforms: emptyLiveMap };
+    return rawRooms.map((r) => {
+      if (!r.boundaryAnchors) return r;
+      const polygon = liveRoomPolygon(r, liveState);
+      const area = liveRoomArea(polygon);
+      const zones = r.floorZones?.map((z) => ({ ...z, polygon: liveZonePolygon(z, polygon) }));
+      return { ...r, polygon, area, floorZones: zones };
+    });
+  }, [rawRooms, nodes]);
+  const slabs = useMemo(() => {
+    if (rawSlabs.length === 0) return rawSlabs;
+    return rawSlabs.map((s) => {
+      const room = rooms.find((r) => r.id === s.roomId);
+      if (!room || !room.boundaryAnchors) return s;
+      return { ...s, polygon: liveSlabPolygon(room.polygon) };
+    });
+  }, [rawSlabs, rooms]);
   const doors = useMemo(
     () => Object.values(nodes).filter((n): n is DoorNode => n.type === "door"),
     [nodes]

@@ -413,7 +413,8 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
     // Carry over floor zones (split_floor tool) so the canvas can render
     // the secondary material strip + a dashed divider line. Legacy
     // zones use relative {rx,ry,rw,rh} 0..1 within the room; scene
-    // zones store absolute polygons, so we convert here.
+    // zones store absolute polygons + the original relative bounds so
+    // the polygon can be re-derived live when walls move.
     const sceneZones = r.floorZones?.map((z, idx) => {
       const ax = r.x + z.rx * r.width;
       const ay = r.y + z.ry * r.height;
@@ -428,8 +429,29 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
           { x: ax, z: ay + ah },
         ],
         material: z.material,
+        bounds: { rx: z.rx, ry: z.ry, rw: z.rw, rh: z.rh },
       };
     });
+    // Anchor each polygon vertex to a wall endpoint so the polygon (and
+    // therefore the slab, area and zones) follows wall drags live. We
+    // use 1 mm precision — same quantization the wall mitering uses.
+    const ANCHOR_TOL = 0.001;
+    const boundaryAnchors: { vertexIndex: number; wallId: NodeId; endpoint: "start" | "end" }[] = [];
+    for (let i = 0; i < roomPolygon.length; i++) {
+      const v = roomPolygon[i];
+      let found: { wallId: NodeId; endpoint: "start" | "end" } | null = null;
+      for (const wn of wallById.values()) {
+        if (Math.abs(wn.start.x - v.x) <= ANCHOR_TOL && Math.abs(wn.start.z - v.z) <= ANCHOR_TOL) {
+          found = { wallId: wn.id, endpoint: "start" };
+          break;
+        }
+        if (Math.abs(wn.end.x - v.x) <= ANCHOR_TOL && Math.abs(wn.end.z - v.z) <= ANCHOR_TOL) {
+          found = { wallId: wn.id, endpoint: "end" };
+          break;
+        }
+      }
+      if (found) boundaryAnchors.push({ vertexIndex: i, ...found });
+    }
     const room: RoomNode = {
       id: roomId,
       type: "room",
@@ -440,6 +462,7 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       area,
       floorMaterial: floor,
       floorZones: sceneZones,
+      boundaryAnchors: boundaryAnchors.length === roomPolygon.length ? boundaryAnchors : undefined,
       slabId,
       signature: polygonSignature(roomPolygon),
     };
