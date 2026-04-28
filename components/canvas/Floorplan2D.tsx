@@ -29,7 +29,7 @@ import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { ContextMenu } from "./ContextMenu";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
-import { buildWallEnvelope, envelopeToPath } from "@/lib/scene/envelope";
+import { buildWallOutlinePath } from "@/lib/scene/wall-outline";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -136,17 +136,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
 
-  // Outline-only envelope (Fase F). The wall body is painted by each
-  // individual <polygon> below, but adjacent walls share a mitered edge
-  // and the strokes of each polygon would draw a transversal line right
-  // across the corner ("quina"). Solution: render a single <path> on top
-  // tracing only the OUTER apartment perimeter + the inner room rings,
-  // with fill=none. Junctions vanish — the line is continuous across
-  // every corner including 3-way Y-junctions.
-  const envelopeOutlinePath = useMemo(() => {
-    const env = buildWallEnvelope(walls);
-    return env ? envelopeToPath(env) : null;
-  }, [walls]);
+  // Pixel-perfect wall outline (Fase L). Earlier we used buildWallEnvelope
+  // which offset each room polygon by HALF THE AVERAGE wall thickness; with
+  // mixed thicknesses (exterior 0.20 + interior 0.10) the resulting line
+  // visibly drifted *inside* the polygon fills. The new helper traces the
+  // exact mitered edges from `getWallCorners` so the outline coincides with
+  // the wall fills to the pixel.
+  const envelopeOutlinePath = useMemo(() => buildWallOutlinePath(walls), [walls]);
   const isEmpty = walls.length === 0;
 
   // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
