@@ -24,7 +24,7 @@ import {
   type DimensionNode,
   type NodeId,
 } from "@/lib/scene/types";
-import { computeWallCorners } from "@/lib/scene/wall-mitering";
+import { getWallCorners } from "@/lib/scene/wall-corners-cache";
 
 import { WallView } from "./nodes/WallView";
 import { SlabView } from "./nodes/SlabView";
@@ -201,7 +201,7 @@ function SceneContents({ viewMode }: { viewMode: ViewMode }) {
     [nodes, liveTransforms]
   );
 
-  const corners = useMemo(() => computeWallCorners(walls), [walls]);
+  const corners = useMemo(() => getWallCorners(walls), [walls]);
 
   const slabs = useMemo(() =>
     Object.values(nodes).filter((n): n is SlabNode => n.type === "slab"),

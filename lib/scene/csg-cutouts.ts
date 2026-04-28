@@ -19,6 +19,7 @@ import {
 } from "three-mesh-bvh";
 import type { DoorNode, WallNode, WindowNode } from "./types";
 import { v2Norm, v2Sub } from "./types";
+import { WALL_GROUP_SIDE, WALL_GROUP_COUNT } from "./wall-geometry";
 
 // One-time install: extend BufferGeometry/Mesh prototypes with BVH helpers.
 // three-bvh-csg uses these under the hood; without them every Brush rebuilds
@@ -34,9 +35,12 @@ function ensureBvhInstalled(): void {
   _bvhInstalled = true;
 }
 
-/** Shared Evaluator. Pascal does the same — instantiating per-wall blows up cost. */
+/** Shared Evaluator. Pascal does the same — instantiating per-wall blows up cost.
+ *  `useGroups = true` preserves materialIndex per triangle through subtraction:
+ *  cut faces inherit the wall side group, so door reveals render with the side
+ *  material. Without this, CSG output is a single ungrouped triangle list. */
 const SHARED_EVALUATOR = new Evaluator();
-SHARED_EVALUATOR.useGroups = false;
+SHARED_EVALUATOR.useGroups = true;
 
 export interface CsgWarning {
   wallId: string;
@@ -120,6 +124,14 @@ export function applyWallCutouts(
       .makeTranslation(centerWorld.x, centerY, centerWorld.z)
       .multiply(new THREE.Matrix4().makeRotationY(-angle));
     cutGeom.applyMatrix4(m);
+    // Tag the cut brush as "side" so SUBTRACTION boundary triangles inherit
+    // WALL_GROUP_SIDE. Without this, the door/window reveal would render with
+    // top/bottom material (visually wrong). BoxGeometry is non-indexed in
+    // modern three.js, so total = position.count.
+    cutGeom.clearGroups();
+    const totalCount =
+      cutGeom.getIndex()?.count ?? cutGeom.attributes.position.count;
+    cutGeom.addGroup(0, totalCount, WALL_GROUP_SIDE);
     const cutBrush = makeBrush(cutGeom);
 
     // Wrap in try/catch: three-bvh-csg can throw on degenerate geometry. We

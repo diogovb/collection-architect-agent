@@ -6,7 +6,14 @@ import { type ThreeEvent } from "@react-three/fiber";
 
 import type { DoorNode, ViewMode, WallNode, WindowNode } from "@/lib/scene/types";
 import type { WallCorners } from "@/lib/scene/wall-mitering";
-import { wallExtrudedGeometry, wallShapeGeometry2D } from "@/lib/scene/wall-geometry";
+import {
+  WALL_GROUP_BOTTOM,
+  WALL_GROUP_COUNT,
+  WALL_GROUP_SIDE,
+  WALL_GROUP_TOP,
+  wallExtrudedGeometry,
+  wallShapeGeometry2D,
+} from "@/lib/scene/wall-geometry";
 import { applyWallCutouts } from "@/lib/scene/csg-cutouts";
 import { PALETTE } from "../materials";
 
@@ -90,7 +97,27 @@ export function WallView({
             castShadow
             receiveShadow
           >
-            <meshStandardMaterial color={fillColor} roughness={0.95} metalness={0} />
+            {/* Multi-material per boundary tag (Pascal pattern). Order matches
+                the materialIndex in wall-geometry.ts groups (TOP/BOTTOM/SIDE).
+                Mesh's material array is consumed by group.materialIndex. */}
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_TOP}`}
+              color={PALETTE.wallTop ?? fillColor}
+              roughness={0.92}
+              metalness={0}
+            />
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_BOTTOM}`}
+              color={PALETTE.wallBottom ?? fillColor}
+              roughness={0.95}
+              metalness={0}
+            />
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_SIDE}`}
+              color={fillColor}
+              roughness={0.95}
+              metalness={0}
+            />
           </mesh>
         )
       )}

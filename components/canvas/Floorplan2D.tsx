@@ -10,9 +10,12 @@
 // Tools (wall-draw, drag, snap) are not yet wired into the SVG path — they
 // continue to work in 3D mode. We'll port them in a follow-up.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { useSceneStore } from "@/lib/scene/store";
-import { computeWallCorners, type WallCorners } from "@/lib/scene/wall-mitering";
+import { type WallCorners } from "@/lib/scene/wall-mitering";
+import { getWallCorners } from "@/lib/scene/wall-corners-cache";
+import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/label-placement";
+import { useSvgTools } from "./floorplan/use-svg-tools";
 import {
   polygonBounds,
   polygonCentroid,
@@ -37,12 +40,27 @@ const ROOM_LABEL_SUPPRESS_AREA_BELOW = 4;
 const ROOM_LABEL_NARROW_DIM_THRESHOLD = 2;
 
 export function Floorplan2D({ onLoadExample }: Props) {
-  const nodes = useSceneStore((s) => s.nodes);
+  const rawNodes = useSceneStore((s) => s.nodes);
+  const liveTransforms = useSceneStore((s) => s.liveTransforms);
   const setSelection = useSceneStore((s) => s.setSelection);
   const selected = useSceneStore((s) => s.selected);
   const hovered = useSceneStore((s) => s.hovered);
   const setHover = useSceneStore((s) => s.setHover);
   const toggleSelection = useSceneStore((s) => s.toggleSelection);
+
+  // Merge live drag transforms into the node graph so the SVG re-renders
+  // immediately on every pointermove. Without this, drag previews are silent
+  // and the user only sees the new position when they release.
+  const nodes = useMemo(() => {
+    if (liveTransforms.size === 0) return rawNodes;
+    const merged = { ...rawNodes };
+    for (const [id, live] of liveTransforms) {
+      const base = merged[id];
+      if (!base) continue;
+      merged[id] = { ...base, ...live };
+    }
+    return merged;
+  }, [rawNodes, liveTransforms]);
 
   const walls = useMemo(
     () => Object.values(nodes).filter((n): n is WallNode => n.type === "wall"),
@@ -73,8 +91,89 @@ export function Floorplan2D({ onLoadExample }: Props) {
     [nodes]
   );
 
-  const corners = useMemo(() => computeWallCorners(walls), [walls]);
+  const corners = useMemo(() => getWallCorners(walls), [walls]);
   const isEmpty = walls.length === 0;
+
+  // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
+  // Text is sized in CSS px but positioned in world units, so we estimate
+  // world-space bbox using a typical render scale (~60 px/m) and let
+  // placeLabels run greedy collision avoidance.
+  const labelLayout = useMemo(() => {
+    const PX_PER_M = 60;
+    const inputs: LabelInput[] = [];
+    // Room name + area (priority 2 — keep them anchored to centroid first).
+    for (const r of rooms) {
+      const c = polygonCentroid(r.polygon);
+      const b = polygonBounds(r.polygon);
+      const shortSide = Math.min(b.maxX - b.minX, b.maxZ - b.minZ);
+      const showArea =
+        r.area >= ROOM_LABEL_SUPPRESS_AREA_BELOW &&
+        shortSide >= ROOM_LABEL_NARROW_DIM_THRESHOLD;
+      const nameH = 14 / PX_PER_M;
+      inputs.push({
+        id: `name:${r.id}`,
+        x: c.x,
+        z: c.z + (showArea ? -0.18 : 0.05),
+        width: estimateLabelWidth(r.name, nameH),
+        height: nameH,
+        priority: 2,
+        searchDirs: [
+          { x: 0, z: -1 },
+          { x: 0, z: 1 },
+          { x: 1, z: 0 },
+          { x: -1, z: 0 },
+        ],
+        maxOffset: 0.4,
+      });
+      if (showArea) {
+        const areaTxt = `${r.area.toFixed(2).replace(".", ",")} M²`;
+        const areaH = 10 / PX_PER_M;
+        inputs.push({
+          id: `area:${r.id}`,
+          x: c.x,
+          z: c.z + 0.22,
+          width: estimateLabelWidth(areaTxt, areaH),
+          height: areaH,
+          priority: 1,
+          searchDirs: [
+            { x: 0, z: 1 },
+            { x: 0, z: -1 },
+            { x: 1, z: 0 },
+            { x: -1, z: 0 },
+          ],
+          maxOffset: 0.4,
+        });
+      }
+    }
+    // Dimension labels — perpendicular search around their natural position.
+    for (const d of dimensions) {
+      const dir = v2Norm(v2Sub(d.end, d.start));
+      const perp = v2Perp(dir);
+      const cx = (d.start.x + d.end.x) / 2 + perp.x * d.offset;
+      const cz = (d.start.z + d.end.z) / 2 + perp.z * d.offset;
+      const labelSide = d.offset >= 0 ? 1 : -1;
+      const baseX = cx + perp.x * 0.25 * labelSide;
+      const baseZ = cz + perp.z * 0.25 * labelSide;
+      const text = d.text ?? `${Math.hypot(d.end.x - d.start.x, d.end.z - d.start.z).toFixed(2).replace(".", ",")} m`;
+      const dimH = 11 / PX_PER_M;
+      inputs.push({
+        id: `dim:${d.id}`,
+        x: baseX,
+        z: baseZ,
+        width: estimateLabelWidth(text, dimH),
+        height: dimH,
+        priority: 0,
+        searchDirs: [
+          { x: perp.x * labelSide, z: perp.z * labelSide },
+          { x: -perp.x * labelSide, z: -perp.z * labelSide },
+          { x: dir.x, z: dir.z },
+          { x: -dir.x, z: -dir.z },
+        ],
+        maxOffset: 0.5,
+      });
+    }
+    return placeLabels(inputs);
+  }, [rooms, dimensions]);
 
   // ---- Auto-fit viewBox ----
   const fitBounds = useMemo(() => {
@@ -152,6 +251,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
     [v]
   );
 
+  // Tool layer (drag, slide, wall-draw). Lives on window listeners so fast
+  // movements don't drop drags when the pointer leaves the SVG.
+  const tools = useSvgTools(screenToWorld);
+  const tool = useSceneStore((s) => s.tool);
+
   const onPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
     // Right-click or middle-click to pan; also shift+left-click.
     const isPan = e.button === 2 || e.button === 1 || (e.button === 0 && e.shiftKey);
@@ -161,6 +265,8 @@ export function Floorplan2D({ onLoadExample }: Props) {
     panRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: v.x, vy: v.y };
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    // Wall-draw preview tracking — runs every move when the tool is active.
+    if (tool === "wall") tools.onSvgBackgroundMove(e.clientX, e.clientY);
     const p = panRef.current;
     if (!p || p.pointerId !== e.pointerId) return;
     const svg = svgRef.current;
@@ -194,7 +300,14 @@ export function Floorplan2D({ onLoadExample }: Props) {
     });
   };
 
-  const onBackgroundClick = () => setSelection([]);
+  const onBackgroundClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+    // When the wall-draw tool is active, route clicks to the tool layer.
+    if (tool === "wall") {
+      tools.onSvgBackgroundClick(e.clientX, e.clientY);
+      return;
+    }
+    setSelection([]);
+  };
 
   // ---- Render ----
   return (
@@ -322,6 +435,9 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 stroke={isSel ? PALETTE.accent : isHov ? PALETTE.hoverStroke : PALETTE.ink}
                 onHover={(over) => setHover(over ? d.id : null)}
                 onClick={(shift) => toggleSelection(d.id, shift)}
+                onPointerDown={(clientX, clientY) =>
+                  tools.beginOpeningSlide(d.id, clientX, clientY)
+                }
               />
             );
           })}
@@ -342,21 +458,25 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 stroke={isSel ? PALETTE.accent : isHov ? PALETTE.hoverStroke : PALETTE.ink}
                 onHover={(over) => setHover(over ? w.id : null)}
                 onClick={(shift) => toggleSelection(w.id, shift)}
+                onPointerDown={(clientX, clientY) =>
+                  tools.beginOpeningSlide(w.id, clientX, clientY)
+                }
               />
             );
           })}
         </g>
 
-        {/* Furniture */}
+        {/* Furniture (draggable when selected via the move tool) */}
         <g className="furniture">
           {furniture.map((f) => {
             const isSel = selected.includes(f.id);
             const isHov = hovered === f.id;
             const stroke = isSel ? PALETTE.accent : isHov ? PALETTE.hoverStroke : PALETTE.inkSoft;
+            // Furniture position is corner-anchored (x,z = top-left in world XZ).
             const w = f.dimensions.x;
             const d = f.dimensions.z;
-            const cx = f.position.x;
-            const cz = f.position.z;
+            const cx = f.position.x + w / 2;
+            const cz = f.position.z + d / 2;
             const rot = -(f.rotation ?? 0) * (180 / Math.PI);
             return (
               <g
@@ -364,8 +484,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 transform={`translate(${cx} ${cz}) rotate(${rot})`}
                 onPointerOver={(e) => { e.stopPropagation(); setHover(f.id); }}
                 onPointerOut={(e) => { e.stopPropagation(); setHover(null); }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || e.shiftKey) return;
+                  e.stopPropagation();
+                  tools.beginFurnitureDrag(f.id, e.clientX, e.clientY);
+                }}
                 onClick={(e) => { e.stopPropagation(); toggleSelection(f.id, e.shiftKey); }}
-                style={{ cursor: "pointer" }}
+                style={{ cursor: tool === "select" ? "grab" : "pointer" }}
               >
                 <rect
                   x={-w / 2}
@@ -382,27 +507,36 @@ export function Floorplan2D({ onLoadExample }: Props) {
           })}
         </g>
 
-        {/* Dimensions */}
+        {/* Dimensions (positions resolved through auto-layout) */}
         <g className="dimensions">
-          {dimensions.map((d) => (
-            <DimensionSvg key={d.id} dim={d} fontSize={0.18 * Math.max(v.w, v.h) / 20} />
-          ))}
+          {dimensions.map((d) => {
+            const layout = labelLayout.get(`dim:${d.id}`);
+            return (
+              <DimensionSvg
+                key={d.id}
+                dim={d}
+                labelOverride={layout ? { x: layout.x, z: layout.z } : null}
+              />
+            );
+          })}
         </g>
 
-        {/* Room labels */}
+        {/* Room labels (positions resolved through auto-layout) */}
         <g className="labels">
           {rooms.map((r) => {
-            const c = polygonCentroid(r.polygon);
             const b = polygonBounds(r.polygon);
             const shortSide = Math.min(b.maxX - b.minX, b.maxZ - b.minZ);
             const showArea =
               r.area >= ROOM_LABEL_SUPPRESS_AREA_BELOW &&
               shortSide >= ROOM_LABEL_NARROW_DIM_THRESHOLD;
+            const namePos = labelLayout.get(`name:${r.id}`);
+            const areaPos = labelLayout.get(`area:${r.id}`);
+            if (!namePos) return null;
             return (
               <g key={r.id} pointerEvents="none">
                 <text
-                  x={c.x}
-                  y={showArea ? c.z - 0.18 : c.z + 0.05}
+                  x={namePos.x}
+                  y={namePos.z}
                   textAnchor="middle"
                   dominantBaseline="middle"
                   style={{
@@ -415,10 +549,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 >
                   {r.name}
                 </text>
-                {showArea && (
+                {showArea && areaPos && (
                   <text
-                    x={c.x}
-                    y={c.z + 0.22}
+                    x={areaPos.x}
+                    y={areaPos.z}
                     textAnchor="middle"
                     dominantBaseline="middle"
                     style={{
@@ -436,6 +570,45 @@ export function Floorplan2D({ onLoadExample }: Props) {
             );
           })}
         </g>
+
+        {/* Wall-draw tool overlay: anchor + ghost line + cursor crosshair */}
+        {tool === "wall" && (
+          <g className="wall-draw-overlay" pointerEvents="none">
+            {tools.wallDraw.state.phase === "anchored" && tools.wallDraw.state.anchor && (
+              <circle
+                cx={tools.wallDraw.state.anchor.x}
+                cy={tools.wallDraw.state.anchor.z}
+                r={0.08}
+                fill={PALETTE.accent}
+              />
+            )}
+            {tools.wallDraw.state.phase === "anchored" &&
+              tools.wallDraw.state.anchor &&
+              tools.wallDraw.pointerWorld && (
+                <line
+                  x1={tools.wallDraw.state.anchor.x}
+                  y1={tools.wallDraw.state.anchor.z}
+                  x2={tools.wallDraw.pointerWorld.x}
+                  y2={tools.wallDraw.pointerWorld.z}
+                  stroke={PALETTE.accent}
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+            {tools.wallDraw.pointerWorld && (
+              <circle
+                cx={tools.wallDraw.pointerWorld.x}
+                cy={tools.wallDraw.pointerWorld.z}
+                r={0.05}
+                fill="none"
+                stroke={PALETTE.accent}
+                strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </g>
+        )}
       </svg>
 
       {/* Empty state overlay */}
@@ -475,9 +648,11 @@ interface DoorSvgProps {
   stroke: string;
   onHover: (over: boolean) => void;
   onClick: (shift: boolean) => void;
+  /** Begin sliding the door along its wall on left mouse down. */
+  onPointerDown?: (clientX: number, clientY: number) => void;
 }
 
-function DoorSvg({ door, wall, stroke, onHover, onClick }: DoorSvgProps) {
+function DoorSvg({ door, wall, stroke, onHover, onClick, onPointerDown }: DoorSvgProps) {
   const dir = v2Norm(v2Sub(wall.end, wall.start));
   const perp = v2Perp(dir);
   const center = {
@@ -507,8 +682,13 @@ function DoorSvg({ door, wall, stroke, onHover, onClick }: DoorSvgProps) {
     <g
       onPointerOver={(e) => { e.stopPropagation(); onHover(true); }}
       onPointerOut={(e) => { e.stopPropagation(); onHover(false); }}
+      onPointerDown={(e) => {
+        if (e.button !== 0 || e.shiftKey || !onPointerDown) return;
+        e.stopPropagation();
+        onPointerDown(e.clientX, e.clientY);
+      }}
       onClick={(e) => { e.stopPropagation(); onClick(e.shiftKey); }}
-      style={{ cursor: "pointer" }}
+      style={{ cursor: onPointerDown ? "grab" : "pointer" }}
     >
       <polygon points={bone} fill={PALETTE.bg} />
       <line
@@ -538,9 +718,11 @@ interface WindowSvgProps {
   stroke: string;
   onHover: (over: boolean) => void;
   onClick: (shift: boolean) => void;
+  /** Begin sliding the window along its wall on left mouse down. */
+  onPointerDown?: (clientX: number, clientY: number) => void;
 }
 
-function WindowSvg({ window: win, wall, stroke, onHover, onClick }: WindowSvgProps) {
+function WindowSvg({ window: win, wall, stroke, onHover, onClick, onPointerDown }: WindowSvgProps) {
   const dir = v2Norm(v2Sub(wall.end, wall.start));
   const perp = v2Perp(dir);
   const cx = wall.start.x + dir.x * win.offset;
@@ -558,8 +740,13 @@ function WindowSvg({ window: win, wall, stroke, onHover, onClick }: WindowSvgPro
     <g
       onPointerOver={(e) => { e.stopPropagation(); onHover(true); }}
       onPointerOut={(e) => { e.stopPropagation(); onHover(false); }}
+      onPointerDown={(e) => {
+        if (e.button !== 0 || e.shiftKey || !onPointerDown) return;
+        e.stopPropagation();
+        onPointerDown(e.clientX, e.clientY);
+      }}
       onClick={(e) => { e.stopPropagation(); onClick(e.shiftKey); }}
-      style={{ cursor: "pointer" }}
+      style={{ cursor: onPointerDown ? "grab" : "pointer" }}
     >
       <polygon points={bone} fill={PALETTE.bg} />
       <line
@@ -586,10 +773,12 @@ function WindowSvg({ window: win, wall, stroke, onHover, onClick }: WindowSvgPro
 
 interface DimensionSvgProps {
   dim: DimensionNode;
-  fontSize: number;
+  /** Override label position from auto-layout. Falls back to natural position
+   *  if null. */
+  labelOverride?: { x: number; z: number } | null;
 }
 
-function DimensionSvg({ dim, fontSize }: DimensionSvgProps) {
+function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
   const dir = v2Norm(v2Sub(dim.end, dim.start));
   const perp = v2Perp(dir);
   const a = { x: dim.start.x + perp.x * dim.offset, z: dim.start.z + perp.z * dim.offset };
@@ -600,8 +789,8 @@ function DimensionSvg({ dim, fontSize }: DimensionSvgProps) {
   const cz = (a.z + b.z) / 2;
   // label offset away from line, on the same side as the dim is offset.
   const labelSide = dim.offset >= 0 ? 1 : -1;
-  const labelX = cx + perp.x * 0.25 * labelSide;
-  const labelZ = cz + perp.z * 0.25 * labelSide;
+  const labelX = labelOverride?.x ?? cx + perp.x * 0.25 * labelSide;
+  const labelZ = labelOverride?.z ?? cz + perp.z * 0.25 * labelSide;
   // tick (perpendicular, both sides of line)
   const tick = 0.12;
   return (

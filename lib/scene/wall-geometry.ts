@@ -47,8 +47,23 @@ export function wallShapeGeometry2D(corners: WallCorners): THREE.BufferGeometry 
   return g;
 }
 
+/** Wall material group indices. Boundary edge tagging (Pascal pattern) —
+ *  every triangle is assigned a `materialIndex` so the multi-material mesh
+ *  can show different finishes on caps vs sides, AND so CSG output preserves
+ *  the side material on cut boundaries (door jambs, window reveals).
+ *
+ *  three-bvh-csg + Evaluator.useGroups=true preserves these per-triangle. */
+export const WALL_GROUP_TOP = 0;
+export const WALL_GROUP_BOTTOM = 1;
+export const WALL_GROUP_SIDE = 2;
+export const WALL_GROUP_COUNT = 3;
+
 /** 3D box from the four wall corners extruded upward by `height`. World XYZ.
- *  Bottom is at y=0, top at y=height. */
+ *  Bottom is at y=0, top at y=height.
+ *
+ *  Geometry has 3 groups (top / bottom / side). Side group covers all 4 lateral
+ *  faces — that way when CSG cuts a door, the new boundary triangles inherit
+ *  materialIndex 2, so the door reveal renders with the side material. */
 export function wallExtrudedGeometry(corners: WallCorners, height: number): THREE.BufferGeometry {
   const sl = corners.startLeft;
   const el = corners.endLeft;
@@ -70,13 +85,19 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
     sr.x, height, sr.z,  // 7
   ]);
 
-  const indices = new Uint16Array([
+  // Indices grouped by face — the `addGroup` calls below tag each chunk
+  // with a materialIndex so CSG preserves it.
+  const topIndices = [
     // Top face (looking down: CCW = SL, EL, ER, SR → 4,5,6,7)
     4, 5, 6,
     4, 6, 7,
+  ];
+  const bottomIndices = [
     // Bottom face (looking up: reverse order)
     0, 2, 1,
     0, 3, 2,
+  ];
+  const sideIndices = [
     // Side: SL-EL (left of wall, from start to end)
     0, 1, 5,
     0, 5, 4,
@@ -89,7 +110,9 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
     // Side: SR-SL (start cap)
     3, 0, 4,
     3, 4, 7,
-  ]);
+  ];
+
+  const indices = new Uint16Array([...topIndices, ...bottomIndices, ...sideIndices]);
 
   // Dummy UVs (three-bvh-csg requires the attribute to exist).
   const uvs = new Float32Array(positions.length / 3 * 2);
@@ -98,6 +121,15 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
   g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   g.setIndex(new THREE.BufferAttribute(indices, 1));
+
+  // Boundary edge tagging — material groups by face role.
+  let cursor = 0;
+  g.addGroup(cursor, topIndices.length, WALL_GROUP_TOP);
+  cursor += topIndices.length;
+  g.addGroup(cursor, bottomIndices.length, WALL_GROUP_BOTTOM);
+  cursor += bottomIndices.length;
+  g.addGroup(cursor, sideIndices.length, WALL_GROUP_SIDE);
+
   g.computeVertexNormals();
   return g;
 }
