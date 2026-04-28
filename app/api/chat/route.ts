@@ -215,10 +215,13 @@ export async function POST(req: Request) {
             break;
           }
 
-          // Append the assistant message and the synthesized tool_results
+          // Append the assistant message AND the synthesized tool_results
           // user message so the next iteration of the agent sees the full
-          // conversation context.
+          // conversation context. Missing this pair was the cause of the
+          // "tool_use ids were found without tool_result blocks" 400 from
+          // the Anthropic API after the Fase T2 refactor.
           conversation.push({ role: "assistant", content: accumulatedContent });
+          conversation.push({ role: "user", content: toolResults });
 
           // After mutations, run validators and surface issues to the agent.
           // Cap at MAX_VALIDATOR_ROUNDS to avoid infinite self-correction loops.
