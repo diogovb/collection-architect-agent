@@ -504,9 +504,17 @@ function furnitureMenu(f: FurnitureNode): MenuConfig {
 }
 
 function roomMenu(r: RoomNode): MenuConfig {
+  const slab = findSlabForRoom(r);
+  const setMaterial = (m: "madeira" | "porcelanato" | "carpete" | "pedra") => () => {
+    if (!slab) return;
+    useSceneStore.getState().updateNode<SlabNode>(slab.id, { material: m });
+    logMaterial("piso", m);
+  };
   return {
     kindLabel: "Ambiente",
-    description: `${(r.area ?? 0).toFixed(2).replace(".", ",")} m²`,
+    description: `${(r.area ?? 0).toFixed(2).replace(".", ",")} m²${
+      slab?.material ? ` · ${slab.material}` : ""
+    }`,
     actions: [
       {
         label: "Renomear",
@@ -531,8 +539,36 @@ function roomMenu(r: RoomNode): MenuConfig {
           );
         },
       },
+      // Floor swatches — same set as the slab menu but applied via the
+      // room's underlying slab. Lets the user change material straight
+      // from the room label without having to dig into the floor pattern.
+      ...(slab
+        ? [
+            { label: "Madeira", run: setMaterial("madeira") },
+            { label: "Porcelanato", run: setMaterial("porcelanato") },
+            { label: "Carpete", run: setMaterial("carpete") },
+            { label: "Pedra", run: setMaterial("pedra") },
+          ]
+        : []),
     ],
   };
+}
+
+/** Find the slab whose polygon matches a room. We don't keep an explicit
+ *  link between the two — both are derived from the same wall graph by
+ *  `space-detection` and share an identical polygon — so we match on the
+ *  first vertex (with a small tolerance for floating-point noise). */
+function findSlabForRoom(r: RoomNode): SlabNode | null {
+  const nodes = useSceneStore.getState().nodes;
+  if (!r.polygon || r.polygon.length === 0) return null;
+  const a = r.polygon[0];
+  for (const n of Object.values(nodes)) {
+    if (n.type !== "slab") continue;
+    if (n.polygon.length !== r.polygon.length) continue;
+    const b = n.polygon[0];
+    if (Math.abs(a.x - b.x) < 0.01 && Math.abs(a.z - b.z) < 0.01) return n;
+  }
+  return null;
 }
 
 function slabMenu(s: SlabNode): MenuConfig {

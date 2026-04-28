@@ -69,7 +69,7 @@ export function MeasurementChip({ screen, meters, onCommit, onCancel, hidden }: 
   return (
     <div
       className="absolute pointer-events-auto z-30 select-none"
-      style={{ left: screen.x + 14, top: screen.y - 28 }}
+      style={{ left: screen.x + 6, top: screen.y - 22 }}
     >
       {editing ? (
         <div className="flex items-center gap-1 rounded-md bg-paper border border-accent shadow-md px-1.5 py-1">

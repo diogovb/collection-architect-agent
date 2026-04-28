@@ -48,8 +48,17 @@ export interface SvgToolHandlers {
    *  Uses the current pointer direction from the anchor and projects to
    *  the requested metres. */
   commitDrawWallWithLength: (meters: number) => void;
+  /** Override the length of a wall created earlier in the chain. Lets the
+   *  measurement chip stay around after the commit so the user can still
+   *  type an exact value retroactively. */
+  setWallLength: (wallId: NodeId, meters: number) => void;
   wallDraw: { state: WallDrawState; pointerWorld: Vec2 | null };
   dimensionDraw: { state: DimensionDrawState; pointerWorld: Vec2 | null };
+  /** Most recently committed wall in the current draw chain (id + start +
+   *  end), or null if none. Used by the chip overlay to remain visible
+   *  after a click and offer retroactive length editing. Cleared when the
+   *  chain ends (Esc, auto-close, or tool change). */
+  recentlyDrawnWall: { id: NodeId; start: Vec2; end: Vec2 } | null;
 }
 
 /** Distance below which a draw click that lands near the first anchor of
@@ -67,6 +76,11 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   // Reset whenever the user changes tool, presses ESC, or completes a
   // closed polygon.
   const drawSessionStartRef = useRef<Vec2 | null>(null);
+  // Most recent wall committed during the chain. Surfaced so the chip
+  // overlay can remain visible (and editable) right after a click.
+  const [recentlyDrawnWall, setRecentlyDrawnWall] = useState<
+    { id: NodeId; start: Vec2; end: Vec2 } | null
+  >(null);
   const [dimDrawState, setDimDrawState] = useState<DimensionDrawState>({ phase: "idle" });
   const [pointerWorld, setPointerWorld] = useState<Vec2 | null>(null);
 
@@ -77,6 +91,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     if (tool !== "wall") {
       setWallDrawState({ phase: "idle" });
       drawSessionStartRef.current = null;
+      setRecentlyDrawnWall(null);
     }
     if (tool !== "dimension") setDimDrawState({ phase: "idle" });
     if (tool !== "wall" && tool !== "dimension") setPointerWorld(null);
@@ -89,6 +104,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
       if (tool === "wall") {
         setWallDrawState({ phase: "idle" });
         drawSessionStartRef.current = null;
+        setRecentlyDrawnWall(null);
       }
       if (tool === "dimension") setDimDrawState({ phase: "idle" });
     };
@@ -223,30 +239,60 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
 
   const commitDrawWallWithLength = useCallback(
     (meters: number) => {
+      // Two modes:
+      //   (a) An active anchor + pointer → create a NEW wall of that
+      //       length in the cursor direction.
+      //   (b) Just-committed wall is sitting under the cursor (length 0)
+      //       → resize that wall instead, keeping its direction.
       const a = wallDrawState.anchor;
       const p = pointerWorld;
-      if (!a || !p || meters <= 0) return;
-      const dx = p.x - a.x;
-      const dz = p.z - a.z;
-      const cur = Math.hypot(dx, dz);
-      if (cur < 1e-6) return;
-      const k = meters / cur;
-      const newEnd = { x: a.x + dx * k, z: a.z + dz * k };
-      commitDrawWall(a, newEnd);
-      // Re-anchor so the chain can continue from the committed end.
-      setWallDrawState({ phase: "anchored", anchor: newEnd });
+      if (a && p && meters > 0) {
+        const dx = p.x - a.x;
+        const dz = p.z - a.z;
+        const cur = Math.hypot(dx, dz);
+        if (cur >= 0.05) {
+          const k = meters / cur;
+          const newEnd = { x: a.x + dx * k, z: a.z + dz * k };
+          const id = commitDrawWall(a, newEnd);
+          setRecentlyDrawnWall({ id, start: a, end: newEnd });
+          setWallDrawState({ phase: "anchored", anchor: newEnd });
+          return;
+        }
+      }
+      // Fallback: edit the most recently committed wall.
+      if (recentlyDrawnWall && meters > 0) {
+        setWallLength(recentlyDrawnWall.id, meters);
+      }
     },
-    [wallDrawState.anchor, pointerWorld],
+    [wallDrawState.anchor, pointerWorld, recentlyDrawnWall],
   );
+
+  const setWallLength = useCallback((wallId: NodeId, meters: number) => {
+    const node = useSceneStore.getState().nodes[wallId];
+    if (!node || node.type !== "wall" || meters <= 0) return;
+    const dx = node.end.x - node.start.x;
+    const dz = node.end.z - node.start.z;
+    const cur = Math.hypot(dx, dz);
+    if (cur < 1e-6) return;
+    const k = meters / cur;
+    const newEnd = { x: node.start.x + dx * k, z: node.start.z + dz * k };
+    useSceneStore.getState().updateNode(wallId, { end: newEnd });
+    if (recentlyDrawnWall && recentlyDrawnWall.id === wallId) {
+      setRecentlyDrawnWall({ ...recentlyDrawnWall, end: newEnd });
+      // Also re-anchor the draw chain to the new end so subsequent
+      // segments continue from the corrected position.
+      setWallDrawState({ phase: "anchored", anchor: newEnd });
+    }
+  }, [recentlyDrawnWall]);
 
   const onSvgBackgroundMove = useCallback(
     (clientX: number, clientY: number) => {
       if (tool !== "wall" && tool !== "dimension") return;
       let snapped = snapDrawPoint(screenToWorld(clientX, clientY));
-      // Angular snap during the draw preview (Fase V). When the user has
-      // already anchored the first click, lock the live segment to the
-      // nearest 0°/45°/90° axis within ±5° unless Shift is held — same
-      // behaviour as the eventual commit (snapAngle in commitDrawWall).
+      // Angular snap during the draw preview. When the user has already
+      // anchored the first click, lock the live segment to the nearest
+      // 0°/45°/90° axis within ±12° (wider band so it feels "clicky"
+      // even with quick mouse movement). Shift held releases.
       const snapEnabled = useSceneStore.getState().snapEnabled;
       if (
         tool === "wall" &&
@@ -255,7 +301,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
         snapEnabled &&
         !shiftHeldRef.current
       ) {
-        snapped = snapAngle(wallDrawState.anchor, snapped, 5);
+        snapped = snapAngle(wallDrawState.anchor, snapped, 12);
       }
       setPointerWorld(snapped);
     },
@@ -289,14 +335,15 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
             }
           }
           // Mirror the preview's angular snap so the committed wall ends
-          // exactly where the ghost line was showing (Fase V). When auto-
-          // closing we DON'T re-apply angular snap (it would move the
-          // end-point off the start vertex).
+          // exactly where the ghost line was showing. When auto-closing
+          // we DON'T re-apply angular snap (it would move the end-point
+          // off the start vertex).
           const snapEnabled = useSceneStore.getState().snapEnabled;
           if (snapEnabled && !shiftHeldRef.current && !closing) {
-            snapped = snapAngle(wallDrawState.anchor, snapped, 5);
+            snapped = snapAngle(wallDrawState.anchor, snapped, 12);
           }
-          commitDrawWall(wallDrawState.anchor, snapped);
+          const id = commitDrawWall(wallDrawState.anchor, snapped);
+          setRecentlyDrawnWall({ id, start: wallDrawState.anchor, end: snapped });
           if (closing) {
             // Polygon completed — runDerivation inside commitDrawWall
             // already detected the new room. End the chain.
@@ -334,6 +381,8 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     onSvgBackgroundClick,
     onSvgBackgroundMove,
     commitDrawWallWithLength,
+    setWallLength,
+    recentlyDrawnWall,
     wallDraw: { state: wallDrawState, pointerWorld: tool === "wall" ? pointerWorld : null },
     dimensionDraw: {
       state: dimDrawState,

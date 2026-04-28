@@ -60,17 +60,10 @@ export function TopBar({ mode, setMode, lang, setLang, onCommandPalette, plan, v
         ))}
       </div>
 
-      {/* Right side actions */}
+      {/* Right side actions. Undo/Redo and Command palette buttons were
+          removed — the keyboard shortcuts (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z,
+          Ctrl/Cmd+K) cover the same ground without the toolbar clutter. */}
       <div className="flex items-center gap-1">
-        <IconBtn label="Desfazer">↶</IconBtn>
-        <IconBtn label="Refazer">↷</IconBtn>
-        <button
-          onClick={onCommandPalette}
-          className="ml-2 flex items-center gap-2 px-2.5 py-1.5 text-[12px] text-muted hover:text-ink rounded-md border border-line bg-panel hover:bg-panel-alt transition-colors"
-        >
-          <span className="font-mono text-[11px]">⌘K</span>
-          <span className="hidden md:inline">{t(lang, "top.command")}</span>
-        </button>
         <button
           onClick={() => setLang(lang === "pt" ? "en" : "pt")}
           className="ml-1 px-2.5 py-1.5 text-[11px] font-mono uppercase tracking-wider text-muted hover:text-ink rounded-md hover:bg-panel-alt transition-colors"
@@ -83,16 +76,5 @@ export function TopBar({ mode, setMode, lang, setLang, onCommandPalette, plan, v
         </button>
       </div>
     </header>
-  );
-}
-
-function IconBtn({ children, label }: { children: React.ReactNode; label: string }) {
-  return (
-    <button
-      title={label}
-      className="w-8 h-8 rounded-md text-muted hover:text-ink hover:bg-panel-alt transition-colors flex items-center justify-center text-[15px]"
-    >
-      {children}
-    </button>
   );
 }

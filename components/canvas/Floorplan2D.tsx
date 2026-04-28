@@ -713,6 +713,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
               : isHov
                 ? PALETTE.hoverStroke
                 : PALETTE.wallFill;
+            // While the wall tool is active we MUST NOT capture clicks
+            // here — the user is mid-draw and clicking near the start
+            // anchor must reach the SVG background so the auto-close
+            // logic can snap the polygon shut. Same goes for hover so
+            // the cursor stays "crosshair", not "pointer".
+            const drawing = tool === "wall" || tool === "dimension";
             return (
               <polygon
                 key={w.id}
@@ -720,10 +726,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 points={cornersToSvg(c)}
                 fill={fill}
                 stroke="none"
-                onPointerOver={(e) => { e.stopPropagation(); setHover(w.id); }}
-                onPointerOut={(e) => { e.stopPropagation(); setHover(null); }}
-                onClick={(e) => { e.stopPropagation(); toggleSelection(w.id, e.shiftKey); }}
-                style={{ cursor: "pointer" }}
+                pointerEvents={drawing ? "none" : "auto"}
+                onPointerOver={drawing ? undefined : (e) => { e.stopPropagation(); setHover(w.id); }}
+                onPointerOut={drawing ? undefined : (e) => { e.stopPropagation(); setHover(null); }}
+                onClick={drawing ? undefined : (e) => { e.stopPropagation(); toggleSelection(w.id, e.shiftKey); }}
+                style={{ cursor: drawing ? "crosshair" : "pointer" }}
               />
             );
           })}
@@ -1055,9 +1062,46 @@ export function Floorplan2D({ onLoadExample }: Props) {
             de barra com ticks 0 / 1 / 2. Confirma a escala 1:50 visualmente. */}
         <ScaleBarSymbol viewX={v.x} viewY={v.y} viewH={v.h} />
 
-        {/* Wall-draw tool overlay: anchor + ghost line + cursor crosshair */}
+        {/* Wall-draw tool overlay: anchor + ghost wall (semi-transparent
+            quad showing the actual thickness) + dashed centerline + cursor
+            crosshair. The ghost gives a real preview of the wall the user
+            is about to commit instead of just a single line. */}
         {tool === "wall" && (
           <g className="wall-draw-overlay" pointerEvents="none">
+            {tools.wallDraw.state.phase === "anchored" &&
+              tools.wallDraw.state.anchor &&
+              tools.wallDraw.pointerWorld &&
+              (() => {
+                const a = tools.wallDraw.state.anchor;
+                const e = tools.wallDraw.pointerWorld;
+                const dx = e.x - a.x;
+                const dz = e.z - a.z;
+                const len = Math.hypot(dx, dz);
+                if (len < 1e-4) return null;
+                // Default new-wall thickness — matches INTERNAL_THICKNESS
+                // from drag-engine. Hard-coded here so we don't need to
+                // import the constant just for the preview.
+                const t = 0.10;
+                const half = t / 2;
+                const px = -dz / len; // perpendicular x
+                const pz = dx / len;
+                const corners = [
+                  [a.x + px * half, a.z + pz * half],
+                  [e.x + px * half, e.z + pz * half],
+                  [e.x - px * half, e.z - pz * half],
+                  [a.x - px * half, a.z - pz * half],
+                ]
+                  .map((p) => `${p[0]},${p[1]}`)
+                  .join(" ");
+                return (
+                  <polygon
+                    points={corners}
+                    fill={PALETTE.accent}
+                    fillOpacity={0.18}
+                    stroke="none"
+                  />
+                );
+              })()}
             {tools.wallDraw.state.phase === "anchored" && tools.wallDraw.state.anchor && (
               <circle
                 cx={tools.wallDraw.state.anchor.x}
@@ -1238,27 +1282,44 @@ export function Floorplan2D({ onLoadExample }: Props) {
           transform change so it tracks panning and dragging. */}
       <FloorplanContextMenu svgRef={svgRef} selected={selected} liveSig={liveTransforms.size} />
 
-      {/* Floating measurement chip — Fase R. Shows the live length of the
-          wall being drawn next to the cursor. TAB or click swaps the chip
-          for a numeric input; Enter commits a wall of that exact length. */}
-      {tool === "wall" &&
-        tools.wallDraw.state.phase === "anchored" &&
-        tools.wallDraw.state.anchor &&
-        tools.wallDraw.pointerWorld &&
-        pointerScreen && (
-          (() => {
-            const a = tools.wallDraw.state.anchor;
-            const e = tools.wallDraw.pointerWorld;
-            const len = Math.hypot(e.x - a.x, e.z - a.z);
-            return (
-              <MeasurementChip
-                screen={pointerScreen}
-                meters={len}
-                onCommit={(m) => tools.commitDrawWallWithLength(m)}
-              />
-            );
-          })()
-        )}
+      {/* Floating measurement chip. Two modes:
+          (a) Live preview: cursor + anchor define a non-trivial segment
+              → chip shows that length. TAB or click swaps for an input
+              that commits a wall of the exact value.
+          (b) Just-committed: the previous click landed less than 5 cm
+              ago, so the cursor is still sitting on the new anchor and
+              the live length would be ~0. We show the length of the
+              just-committed wall instead, and a click on the chip lets
+              the user adjust IT (not create a new wall of length 0). */}
+      {tool === "wall" && pointerScreen && (() => {
+        const a = tools.wallDraw.state.anchor;
+        const e = tools.wallDraw.pointerWorld;
+        const liveLen = a && e ? Math.hypot(e.x - a.x, e.z - a.z) : 0;
+        if (a && e && liveLen >= 0.05) {
+          return (
+            <MeasurementChip
+              screen={pointerScreen}
+              meters={liveLen}
+              onCommit={(m) => tools.commitDrawWallWithLength(m)}
+            />
+          );
+        }
+        const recent = tools.recentlyDrawnWall;
+        if (recent) {
+          const recentLen = Math.hypot(
+            recent.end.x - recent.start.x,
+            recent.end.z - recent.start.z,
+          );
+          return (
+            <MeasurementChip
+              screen={pointerScreen}
+              meters={recentLen}
+              onCommit={(m) => tools.setWallLength(recent.id, m)}
+            />
+          );
+        }
+        return null;
+      })()}
 
       {/* Empty state overlay */}
       {showEmptyState && (
