@@ -1,15 +1,18 @@
 "use client";
 
-// Unified R3F canvas: serves both 2D top-down (orthographic) and 3D
-// perspective views from the same scene graph. Switching is just a camera
-// swap + per-view material toggles in node views.
+// Two-track canvas:
+//   2D → native SVG renderer (Floorplan2D), Pascal-editor style. Crisp lines,
+//        fast pan/zoom, full CSS control.
+//   3D → R3F + Three.js, with CSG cut openings on walls and a top-light scene.
+//
+// Both read from the same SceneStore.
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { Canvas as R3FCanvas, useThree, type ThreeEvent } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, Line } from "@react-three/drei";
 import * as THREE from "three";
 
-import { useSceneStore, effectiveNode, selectWalls } from "@/lib/scene/store";
+import { useSceneStore, effectiveNode } from "@/lib/scene/store";
 import {
   type DoorNode,
   type FurnitureNode,
@@ -20,7 +23,6 @@ import {
   type WindowNode,
   type DimensionNode,
   type NodeId,
-  polygonBounds,
 } from "@/lib/scene/types";
 import { computeWallCorners } from "@/lib/scene/wall-mitering";
 
@@ -31,15 +33,13 @@ import { WindowView } from "./nodes/WindowView";
 import { FurnitureView } from "./nodes/FurnitureView";
 import { RoomLabel } from "./nodes/RoomLabel";
 import { DimensionView } from "./nodes/DimensionView";
-import { NorthArrow } from "./nodes/NorthArrow";
-import { ScaleBar } from "./nodes/ScaleBar";
 import { DragHandles } from "./nodes/DragHandles";
 import { useFurnitureDrag } from "./hooks/useFurnitureDrag";
 import { useOpeningSlide } from "./hooks/useOpeningSlide";
 import { useWallDrawTool } from "./hooks/useWallDrawTool";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { Toolbar } from "./Toolbar";
-import { Line } from "@react-three/drei";
+import { Floorplan2D } from "./Floorplan2D";
 
 interface Props {
   onLoadExample?: () => void;
@@ -82,60 +82,50 @@ export function Canvas({ onLoadExample }: Props) {
 
   return (
     <div className="w-full h-full bg-bg relative">
-      <R3FCanvas
-        key={viewMode}
-        orthographic={viewMode === "2d"}
-        camera={
-          viewMode === "2d"
-            ? { position: [center.x, 50, center.z], zoom: 40, near: 0.1, far: 200, up: [0, 0, -1] }
-            : { fov: 45, position: [center.x + span * 0.6, span * 0.7, center.z + span * 0.6], near: 0.1, far: 200 }
-        }
-        style={{ background: "#FAF7F0", display: "block" }}
-        gl={{ antialias: true, preserveDrawingBuffer: false, alpha: false, premultipliedAlpha: false }}
-        dpr={[1, 2]}
-        onCreated={(state) => {
-          state.gl.setClearColor("#FAF7F0", 1);
-          state.gl.clear();
-        }}
-        onPointerMissed={() => useSceneStore.getState().setSelection([])}
-      >
-        {/* Scene background ensures even the first frame is paper-colored. */}
-        <color attach="background" args={["#FAF7F0"]} />
-        <CameraSync center={center} span={span} viewMode={viewMode} />
-        <ambientLight intensity={viewMode === "2d" ? 0.95 : 0.65} />
-        <hemisphereLight args={["#FFFFFF", "#E6DFD2", viewMode === "2d" ? 0.3 : 0.55]} />
-        <directionalLight
-          position={[10, 20, 10]}
-          intensity={viewMode === "2d" ? 0.0 : 0.85}
-          castShadow={false}
-        />
-        {/* No paper background — the canvas background color (#FAF7F0) is the
-            paper. The PaperBackground mesh used to add a 4 m margin around the
-            envelope which appeared as a stray "gray square" beyond the rooms.
-            Slabs (SlabView) provide the floor surface inside rooms. */}
-        {viewMode === "3d" && (
-          <gridHelper args={[60, 60, "#D6CCB8", "#ECE4D2"]} position={[center.x, -0.06, center.z]} />
-        )}
-
-        <Suspense fallback={null}>
-          <SceneContents viewMode={viewMode} />
-        </Suspense>
-
-        <OrbitControls
-          enableRotate={viewMode === "3d"}
-          enablePan
-          enableZoom
-          mouseButtons={{
-            LEFT: viewMode === "2d" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE,
-            MIDDLE: THREE.MOUSE.DOLLY,
-            RIGHT: THREE.MOUSE.PAN,
+      {viewMode === "2d" ? (
+        <Floorplan2D onLoadExample={onLoadExample} />
+      ) : (
+        <R3FCanvas
+          key={viewMode}
+          camera={{
+            fov: 45,
+            position: [center.x + span * 0.6, span * 0.7, center.z + span * 0.6],
+            near: 0.1,
+            far: 200,
           }}
-          target={[center.x, 0, center.z]}
-        />
+          style={{ background: "#FAF7F0", display: "block" }}
+          gl={{ antialias: true, preserveDrawingBuffer: false, alpha: false, premultipliedAlpha: false }}
+          dpr={[1, 2]}
+          onCreated={(state) => {
+            state.gl.setClearColor("#FAF7F0", 1);
+            state.gl.clear();
+          }}
+          onPointerMissed={() => useSceneStore.getState().setSelection([])}
+        >
+          <color attach="background" args={["#FAF7F0"]} />
+          <CameraSync center={center} span={span} viewMode={viewMode} />
+          <ambientLight intensity={0.65} />
+          <hemisphereLight args={["#FFFFFF", "#E6DFD2", 0.55]} />
+          <directionalLight position={[10, 20, 10]} intensity={0.85} castShadow={false} />
+          <gridHelper args={[60, 60, "#D6CCB8", "#ECE4D2"]} position={[center.x, -0.06, center.z]} />
 
-        {viewMode === "2d" && <NorthArrow rotationDeg={0} />}
-        {viewMode === "2d" && <ScaleBarPx />}
-      </R3FCanvas>
+          <Suspense fallback={null}>
+            <SceneContents viewMode={viewMode} />
+          </Suspense>
+
+          <OrbitControls
+            enableRotate
+            enablePan
+            enableZoom
+            mouseButtons={{
+              LEFT: THREE.MOUSE.ROTATE,
+              MIDDLE: THREE.MOUSE.DOLLY,
+              RIGHT: THREE.MOUSE.PAN,
+            }}
+            target={[center.x, 0, center.z]}
+          />
+        </R3FCanvas>
+      )}
 
       {/* 2D ⇄ 3D toggle */}
       <ModeToggle viewMode={viewMode} onChange={setViewMode} />
@@ -146,13 +136,15 @@ export function Canvas({ onLoadExample }: Props) {
       {/* Validators panel (NBR/Neufert) */}
       <DiagnosticsPanel />
 
-      {isEmpty && (
+      {/* Empty-state card. Floorplan2D shows its own; here we only render
+          the 3D-mode card so the placeholder doesn't double up. */}
+      {viewMode === "3d" && isEmpty && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="card p-6 max-w-sm text-center pointer-events-auto fade-up">
             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-accent">PROJETO VAZIO</div>
             <h3 className="editorial text-[22px] mt-2">Comece pedindo ao agente</h3>
             <p className="text-[12.5px] text-muted mt-2">
-              Descreva o ambiente que você quer criar. Ex.: "Faça um apartamento de 65m² com 2 quartos."
+              Descreva o ambiente que você quer criar. Ex.: &quot;Faça um apartamento de 65m² com 2 quartos.&quot;
             </p>
             {onLoadExample && (
               <button onClick={onLoadExample} className="btn-primary mt-4 text-[12px]">
@@ -175,32 +167,15 @@ function CameraSync({
   span: number;
   viewMode: ViewMode;
 }) {
-  const { camera, size } = useThree();
+  const { camera } = useThree();
   useEffect(() => {
-    if (viewMode === "2d") {
-      if (camera instanceof THREE.OrthographicCamera) {
-        const minDim = Math.min(size.width, size.height);
-        const padding = 1.4;
-        const newZoom = (minDim / (span * padding)) || 40;
-        camera.zoom = newZoom;
-        camera.position.set(center.x, 50, center.z);
-        camera.up.set(0, 0, -1);
-        camera.lookAt(center.x, 0, center.z);
-        camera.updateProjectionMatrix();
-      }
-    } else if (camera instanceof THREE.PerspectiveCamera) {
+    if (viewMode === "3d" && camera instanceof THREE.PerspectiveCamera) {
       camera.position.set(center.x + span * 0.6, span * 0.7, center.z + span * 0.6);
       camera.lookAt(center.x, 0, center.z);
       camera.updateProjectionMatrix();
     }
-  }, [camera, center.x, center.z, span, size.width, size.height, viewMode]);
+  }, [camera, center.x, center.z, span, viewMode]);
   return null;
-}
-
-function ScaleBarPx() {
-  const { camera, size } = useThree();
-  const meterPx = camera instanceof THREE.OrthographicCamera ? camera.zoom : 40;
-  return <ScaleBar meterPx={meterPx} />;
 }
 
 function SceneContents({ viewMode }: { viewMode: ViewMode }) {
