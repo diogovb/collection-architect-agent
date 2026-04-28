@@ -18,6 +18,13 @@ import {
 } from "@/lib/scene/wall-geometry";
 import { applyWallCutouts } from "@/lib/scene/csg-cutouts";
 import { PALETTE } from "../materials";
+import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+
+// Shared toon ramp for the whole 3D scene — lives at module scope so the
+// gradient texture isn't rebuilt on every render. Three editorial bands
+// (shadow → mid → highlight) give the cel-shaded look without losing the
+// volumetric read of the apartment.
+const WALL_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
 interface Props {
   wall: WallNode;
@@ -100,43 +107,39 @@ export function WallView({
             receiveShadow
           >
             {/* Multi-material per boundary tag (Pascal pattern, 6-face split).
-                Order matches WALL_GROUP_* indices in wall-geometry.ts. The
-                mesh's material array is keyed by group.materialIndex. */}
-            <meshStandardMaterial
+                Style Guide §13 + Fase 5: meshToonMaterial with a 3-stop
+                gradient ramp gives the cel-shaded "ilustração técnica" look
+                that mirrors the 2D editorial style. Per-face colours from
+                the palette modulate the ramp. */}
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_TOP}`}
               color={PALETTE.wallTop}
-              roughness={0.9}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
-            <meshStandardMaterial
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_BOTTOM}`}
               color={PALETTE.wallBottom}
-              roughness={0.95}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
-            <meshStandardMaterial
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_LEFT}`}
               color={PALETTE.wallLeft}
-              roughness={0.94}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
-            <meshStandardMaterial
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_RIGHT}`}
               color={PALETTE.wallRight}
-              roughness={0.94}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
-            <meshStandardMaterial
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_START}`}
               color={PALETTE.wallStart}
-              roughness={0.96}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
-            <meshStandardMaterial
+            <meshToonMaterial
               attach={`material-${WALL_GROUP_END}`}
               color={PALETTE.wallEnd}
-              roughness={0.96}
-              metalness={0}
+              gradientMap={WALL_TOON_GRADIENT}
             />
           </mesh>
         )

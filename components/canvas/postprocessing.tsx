@@ -32,23 +32,26 @@ export function CanvasPostprocessing() {
 
   return (
     <EffectComposer multisampling={4} autoClear={false}>
+      {/* Light SSAO — toon material is flat by design, so heavy occlusion
+          competes with the cel-shaded look. We keep just enough to anchor
+          edges where surfaces meet. */}
       <SSAO
         blendFunction={BlendFunction.MULTIPLY}
-        samples={24}
-        radius={0.18}
-        intensity={18}
-        luminanceInfluence={0.55}
-        worldDistanceThreshold={1.0}
-        worldDistanceFalloff={0.4}
-        worldProximityThreshold={0.6}
-        worldProximityFalloff={0.2}
+        samples={16}
+        radius={0.12}
+        intensity={5}
+        luminanceInfluence={0.35}
+        worldDistanceThreshold={0.8}
+        worldDistanceFalloff={0.3}
+        worldProximityThreshold={0.4}
+        worldProximityFalloff={0.15}
       />
       {hasOutline ? (
         <Outline
-          edgeStrength={4}
+          edgeStrength={7}
           visibleEdgeColor={ACCENT}
           hiddenEdgeColor={HIDDEN_INK}
-          blur
+          blur={false}
           xRay={false}
         />
       ) : (

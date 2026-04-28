@@ -6,6 +6,9 @@ import { type ThreeEvent } from "@react-three/fiber";
 
 import type { FurnitureNode, ViewMode } from "@/lib/scene/types";
 import { PALETTE } from "../materials";
+import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+
+const FURN_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
 interface Props {
   furniture: FurnitureNode;
@@ -124,12 +127,10 @@ export function FurnitureView({
     >
       <mesh castShadow>
         <boxGeometry args={[furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z]} />
-        <meshStandardMaterial
+        {/* Toon material to match the editorial 3D look (Fase 5). */}
+        <meshToonMaterial
           color={selected ? PALETTE.accent : baseColor}
-          emissive={selected ? PALETTE.accent : "#000"}
-          emissiveIntensity={selected ? 0.18 : 0}
-          roughness={0.7}
-          metalness={0}
+          gradientMap={FURN_TOON_GRADIENT}
         />
       </mesh>
     </group>

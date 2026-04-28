@@ -6,6 +6,9 @@ import * as THREE from "three";
 import type { SlabNode, ViewMode } from "@/lib/scene/types";
 import { createSlabGeometry2D, createSlabGeometry3D } from "@/lib/scene/slab-geometry";
 import { floorTextureFor, PALETTE } from "../materials";
+import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+
+const SLAB_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
 interface Props {
   slab: SlabNode;
@@ -48,10 +51,12 @@ export function SlabView({ slab, viewMode }: Props) {
           <meshBasicMaterial color={color} side={THREE.DoubleSide} />
         )
       ) : (
+        // Toon material in 3D so the slabs read as the same illustrated
+        // editorial language as the walls (Fase 5).
         texConfig ? (
-          <meshStandardMaterial color={"#FFFFFF"} map={texConfig} roughness={0.85} metalness={0} />
+          <meshToonMaterial color={"#FFFFFF"} map={texConfig} gradientMap={SLAB_TOON_GRADIENT} />
         ) : (
-          <meshStandardMaterial color={color} roughness={0.85} metalness={0} />
+          <meshToonMaterial color={color} gradientMap={SLAB_TOON_GRADIENT} />
         )
       )}
     </mesh>
