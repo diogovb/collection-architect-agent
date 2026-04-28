@@ -346,31 +346,99 @@ export function beginWallTranslate(
   const offsetX = pointerWorld.x - startCx;
   const offsetZ = pointerWorld.z - startCz;
 
+  // Junction-aware translate (Fase P). Snapshot every neighbouring wall
+  // endpoint that shares this wall's start or end so they translate by
+  // the same Δ — without that the dragged wall "detaches" from its
+  // junctions. Holding Alt isolates the translate to just this wall.
+  const allWalls = Object.values(useSceneStore.getState().nodes).filter(
+    (n) => n.type === "wall",
+  ) as WallNode[];
+  type Member = { wallId: NodeId; endpoint: "start" | "end"; origin: Vec2 };
+  const collect = (point: Vec2): Member[] => {
+    const j = findJunction(allWalls, point, JUNCTION_TOLERANCE);
+    if (!j) return [];
+    const out: Member[] = [];
+    for (const m of j.members) {
+      if (m.wallId === wallId) continue; // dragged wall handled separately
+      const w = allWalls.find((x) => x.id === m.wallId);
+      if (!w) continue;
+      const origin = m.endpoint === "start" ? { ...w.start } : { ...w.end };
+      out.push({ wallId: m.wallId, endpoint: m.endpoint, origin });
+    }
+    return out;
+  };
+  const startMembers = collect(startStart);
+  const endMembers = collect(startEnd);
+
+  let altHeld = false;
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Alt") altHeld = true;
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key === "Alt") altHeld = false;
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+  }
+  const cleanupKeys = () => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    }
+  };
+
   const update = (world: Vec2) => {
     const targetCx = world.x - offsetX;
     const targetCz = world.z - offsetZ;
     const dx = targetCx - startCx;
     const dz = targetCz - startCz;
-    const snap = useSceneStore.getState().snapEnabled;
+    const store = useSceneStore.getState();
+    const snap = store.snapEnabled;
     const sdx = snap ? snapToGrid(dx) : dx;
     const sdz = snap ? snapToGrid(dz) : dz;
-    useSceneStore
-      .getState()
-      .setLive(wallId, {
-        start: { x: startStart.x + sdx, z: startStart.z + sdz },
-        end: { x: startEnd.x + sdx, z: startEnd.z + sdz },
-      });
+    store.setLive(wallId, {
+      start: { x: startStart.x + sdx, z: startStart.z + sdz },
+      end: { x: startEnd.x + sdx, z: startEnd.z + sdz },
+    });
+    // Move junction siblings by the same Δ so connected walls stay
+    // connected. Alt held → skip and let the wall detach.
+    if (!altHeld) {
+      for (const m of [...startMembers, ...endMembers]) {
+        store.setLive(m.wallId, {
+          [m.endpoint]: { x: m.origin.x + sdx, z: m.origin.z + sdz },
+        });
+      }
+    }
   };
 
   const commit = () => {
-    useSceneStore.getState().commitLive(wallId);
+    cleanupKeys();
+    const store = useSceneStore.getState();
+    store.commitLive(wallId);
+    if (!altHeld) {
+      for (const m of [...startMembers, ...endMembers]) {
+        store.commitLive(m.wallId);
+      }
+    }
     rederiveAfterWallChange();
     import("./user-action-log").then(({ logEditWall }) => {
-      logEditWall("translade da parede");
+      const groupSize = altHeld
+        ? 1
+        : 1 + startMembers.length + endMembers.length;
+      const suffix = groupSize > 1 ? ` (${groupSize} paredes em junção)` : "";
+      logEditWall(`translade da parede${suffix}`);
     });
   };
 
-  const cancel = () => useSceneStore.getState().clearLive(wallId);
+  const cancel = () => {
+    cleanupKeys();
+    const store = useSceneStore.getState();
+    store.clearLive(wallId);
+    for (const m of [...startMembers, ...endMembers]) {
+      store.clearLive(m.wallId);
+    }
+  };
   return { update, commit, cancel };
 }
 
