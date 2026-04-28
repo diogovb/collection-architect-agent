@@ -52,12 +52,21 @@ export interface SvgToolHandlers {
   dimensionDraw: { state: DimensionDrawState; pointerWorld: Vec2 | null };
 }
 
+/** Distance below which a draw click that lands near the first anchor of
+ *  the current draw session is treated as "auto-close": we snap to that
+ *  exact point and the resulting wall will close the polygon. */
+const AUTO_CLOSE_TOLERANCE = 0.20;
+
 export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   const furnitureRef = useRef<FurnitureDragSession | null>(null);
   const slideRef = useRef<OpeningSlideSession | null>(null);
   const wallEditRef = useRef<WallEditSession | null>(null);
   const dimRef = useRef<DimensionOffsetSession | null>(null);
   const [wallDrawState, setWallDrawState] = useState<WallDrawState>({ phase: "idle" });
+  // First anchor of the current draw chain — used for auto-close (Fase S).
+  // Reset whenever the user changes tool, presses ESC, or completes a
+  // closed polygon.
+  const drawSessionStartRef = useRef<Vec2 | null>(null);
   const [dimDrawState, setDimDrawState] = useState<DimensionDrawState>({ phase: "idle" });
   const [pointerWorld, setPointerWorld] = useState<Vec2 | null>(null);
 
@@ -65,7 +74,10 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
 
   // Reset transient draw state whenever the active tool changes away.
   useEffect(() => {
-    if (tool !== "wall") setWallDrawState({ phase: "idle" });
+    if (tool !== "wall") {
+      setWallDrawState({ phase: "idle" });
+      drawSessionStartRef.current = null;
+    }
     if (tool !== "dimension") setDimDrawState({ phase: "idle" });
     if (tool !== "wall" && tool !== "dimension") setPointerWorld(null);
   }, [tool]);
@@ -74,7 +86,10 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (tool === "wall") setWallDrawState({ phase: "idle" });
+      if (tool === "wall") {
+        setWallDrawState({ phase: "idle" });
+        drawSessionStartRef.current = null;
+      }
       if (tool === "dimension") setDimDrawState({ phase: "idle" });
     };
     window.addEventListener("keydown", onKey);
@@ -253,18 +268,43 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
 
       if (tool === "wall") {
         if (wallDrawState.phase === "idle") {
+          // Open a new draw chain — record the very first anchor so a
+          // future click near it auto-closes the polygon (Fase S).
+          drawSessionStartRef.current = snapped;
           setWallDrawState({ phase: "anchored", anchor: snapped });
           return;
         }
         if (wallDrawState.phase === "anchored" && wallDrawState.anchor) {
+          // Auto-close: if the snapped click lands near the first anchor
+          // of the current draw chain, snap to the exact start so the
+          // last wall closes the polygon perfectly.
+          const sessionStart = drawSessionStartRef.current;
+          let closing = false;
+          if (sessionStart) {
+            const dx = snapped.x - sessionStart.x;
+            const dz = snapped.z - sessionStart.z;
+            if (Math.hypot(dx, dz) <= AUTO_CLOSE_TOLERANCE) {
+              snapped = sessionStart;
+              closing = true;
+            }
+          }
           // Mirror the preview's angular snap so the committed wall ends
-          // exactly where the ghost line was showing (Fase V).
+          // exactly where the ghost line was showing (Fase V). When auto-
+          // closing we DON'T re-apply angular snap (it would move the
+          // end-point off the start vertex).
           const snapEnabled = useSceneStore.getState().snapEnabled;
-          if (snapEnabled && !shiftHeldRef.current) {
+          if (snapEnabled && !shiftHeldRef.current && !closing) {
             snapped = snapAngle(wallDrawState.anchor, snapped, 5);
           }
           commitDrawWall(wallDrawState.anchor, snapped);
-          setWallDrawState({ phase: "anchored", anchor: snapped });
+          if (closing) {
+            // Polygon completed — runDerivation inside commitDrawWall
+            // already detected the new room. End the chain.
+            setWallDrawState({ phase: "idle" });
+            drawSessionStartRef.current = null;
+          } else {
+            setWallDrawState({ phase: "anchored", anchor: snapped });
+          }
         }
         return;
       }

@@ -51,6 +51,7 @@ import {
   type DimensionNode,
   type DoorNode,
   type FurnitureNode,
+  type NodeId,
   type RoomNode,
   type SlabNode,
   type WallNode,
@@ -440,6 +441,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
   // (Fase R) can position itself next to the cursor without re-doing the
   // world→screen conversion.
   const [pointerScreen, setPointerScreen] = useState<{ x: number; y: number } | null>(null);
+
+  // Inline rename state for room labels (Fase S). When set, the label of
+  // the room with this id is replaced by an <input> so the architect can
+  // type a new name; Enter commits, Escape cancels.
+  const [renamingRoomId, setRenamingRoomId] = useState<NodeId | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
     setPointerScreen({ x: e.clientX, y: e.clientY });
     // Wall + dimension draw preview tracking.
@@ -882,10 +889,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
           })}
         </g>
 
-        {/* Room labels — Style Guide §9.3: anchored at top-left corner of the
-            room (text-anchor=start). Auto-layout shifts only if collision is
-            detected. Typography splits Instrument Serif (name) + JetBrains
-            Mono (area in m²). */}
+        {/* Room labels — Style Guide §9.3 + Fase S: anchored at the room
+            centroid, clickable to select / open the context menu, and
+            double-clickable to rename inline. The hit zone wraps both
+            the name and the area glyph so a single click on either
+            picks the room. */}
         <g className="labels">
           {rooms.map((r) => {
             const b = polygonBounds(r.polygon);
@@ -899,23 +907,84 @@ export function Floorplan2D({ onLoadExample }: Props) {
             if (!namePos) return null;
             const namePx = isPrincipal ? 13 : 11;
             const areaPx = isPrincipal ? 8 : 7;
+            const isRenaming = renamingRoomId === r.id;
+            const isSel = selected.includes(r.id);
+            const labelColor = isSel ? PALETTE.accent : PALETTE.ink;
             return (
-              <g key={r.id} pointerEvents="none">
-                <text
-                  x={namePos.x}
-                  y={namePos.z}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  style={{
-                    fontFamily: "var(--font-instrument-serif), serif",
-                    fontSize: pxToWorld(namePx),
-                    fill: PALETTE.ink,
-                  }}
-                  fontSize={pxToWorld(namePx)}
-                >
-                  {r.name}
-                </text>
-                {showArea && areaPos && (
+              <g
+                key={r.id}
+                data-node-id={r.id}
+                onClick={(e) => {
+                  if (isRenaming) return;
+                  e.stopPropagation();
+                  toggleSelection(r.id, e.shiftKey);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setRenamingRoomId(r.id);
+                  setRenameValue(r.name);
+                }}
+                style={{ cursor: isRenaming ? "text" : "pointer" }}
+              >
+                {isRenaming ? (
+                  <foreignObject
+                    x={namePos.x - 1.6}
+                    y={namePos.z - 0.22}
+                    width={3.2}
+                    height={0.6}
+                  >
+                    <input
+                      autoFocus
+                      type="text"
+                      value={renameValue}
+                      onChange={(ev) => setRenameValue(ev.target.value)}
+                      onBlur={() => {
+                        if (renameValue.trim()) {
+                          useSceneStore.getState().updateNode(r.id, { name: renameValue.trim() });
+                        }
+                        setRenamingRoomId(null);
+                      }}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter") {
+                          if (renameValue.trim()) {
+                            useSceneStore.getState().updateNode(r.id, { name: renameValue.trim() });
+                          }
+                          setRenamingRoomId(null);
+                        } else if (ev.key === "Escape") {
+                          setRenamingRoomId(null);
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: "2px 6px",
+                        textAlign: "center",
+                        fontFamily: "var(--font-instrument-serif), serif",
+                        fontSize: 14,
+                        background: PALETTE.paper,
+                        color: PALETTE.ink,
+                        border: `1px solid ${PALETTE.accent}`,
+                        borderRadius: 3,
+                        outline: "none",
+                      }}
+                    />
+                  </foreignObject>
+                ) : (
+                  <text
+                    x={namePos.x}
+                    y={namePos.z}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    style={{
+                      fontFamily: "var(--font-instrument-serif), serif",
+                      fontSize: pxToWorld(namePx),
+                      fill: labelColor,
+                    }}
+                    fontSize={pxToWorld(namePx)}
+                  >
+                    {r.name}
+                  </text>
+                )}
+                {!isRenaming && showArea && areaPos && (
                   <text
                     x={areaPos.x}
                     y={areaPos.z}
