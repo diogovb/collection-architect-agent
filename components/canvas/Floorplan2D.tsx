@@ -28,6 +28,7 @@ import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/la
 import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { ContextMenu } from "./ContextMenu";
+import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -971,7 +972,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
         {/* Wall edit handles — appear when a single wall is selected. Two
             endpoint circles (start / end) and one center handle for parallel
             translate. liveTransforms applied via the merged `nodes` so the
-            handle positions track the drag in real time. */}
+            handle positions track the drag in real time.
+            Junction indicator (Fase B): if the endpoint sits on a junction
+            shared with other walls we draw a dashed accent ring around it
+            telling the user "all these walls move together". Hold Alt to
+            detach. */}
         {selected.length === 1 &&
           (() => {
             const sel = selected[0];
@@ -979,8 +984,25 @@ export function Floorplan2D({ onLoadExample }: Props) {
             if (!w || w.type !== "wall") return null;
             const cx = (w.start.x + w.end.x) / 2;
             const cz = (w.start.z + w.end.z) / 2;
+            const startJ = findJunction(walls, w.start, JUNCTION_TOLERANCE);
+            const endJ = findJunction(walls, w.end, JUNCTION_TOLERANCE);
+            const startConnected = !!startJ && startJ.members.length >= 2;
+            const endConnected = !!endJ && endJ.members.length >= 2;
             return (
               <g className="wall-handles">
+                {startConnected && (
+                  <circle
+                    cx={w.start.x}
+                    cy={w.start.z}
+                    r={0.18}
+                    fill="none"
+                    stroke={PALETTE.accent}
+                    strokeWidth={1.5}
+                    strokeDasharray="0.06 0.06"
+                    vectorEffect="non-scaling-stroke"
+                    pointerEvents="none"
+                  />
+                )}
                 <circle
                   cx={w.start.x}
                   cy={w.start.z}
@@ -996,6 +1018,19 @@ export function Floorplan2D({ onLoadExample }: Props) {
                   }}
                   style={{ cursor: "grab" }}
                 />
+                {endConnected && (
+                  <circle
+                    cx={w.end.x}
+                    cy={w.end.z}
+                    r={0.18}
+                    fill="none"
+                    stroke={PALETTE.accent}
+                    strokeWidth={1.5}
+                    strokeDasharray="0.06 0.06"
+                    vectorEffect="non-scaling-stroke"
+                    pointerEvents="none"
+                  />
+                )}
                 <circle
                   cx={w.end.x}
                   cy={w.end.z}

@@ -28,6 +28,7 @@ import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
 import { logEditOpening, logMove } from "./user-action-log";
 import { resolveCorner } from "./collision";
+import { findJunction, JUNCTION_TOLERANCE } from "./junctions";
 
 // ---- Furniture drag --------------------------------------------------------
 
@@ -204,8 +205,14 @@ export interface WallEditSession {
   cancel: () => void;
 }
 
-/** Drag a single endpoint (start or end) of a wall. Adjacent walls remitre
- *  automatically because computeWallCorners reads from the live state. */
+/** Drag a single endpoint (start or end) of a wall.
+ *
+ *  Connected walls move together (Fase B): we snapshot every wall endpoint
+ *  that shares this corner (within JUNCTION_TOLERANCE) and translate the
+ *  whole group as one. Holding Alt isolates the drag to just the picked
+ *  wall — useful when the user wants to detach a corner. The original
+ *  remitering happens automatically because computeWallCorners reads
+ *  from the live state. */
 export function beginWallEndpointDrag(
   wallId: NodeId,
   endpoint: "start" | "end",
@@ -213,40 +220,104 @@ export function beginWallEndpointDrag(
 ): WallEditSession | null {
   const wall = useSceneStore.getState().nodes[wallId] as WallNode | undefined;
   if (!wall) return null;
-  const startStart = { ...wall.start };
-  const startEnd = { ...wall.end };
+  const originalEndpoint = endpoint === "start" ? { ...wall.start } : { ...wall.end };
+
+  // Resolve every wall endpoint that lives at this corner. The picked
+  // endpoint is always included; siblings get pulled along unless Alt is
+  // held when the gesture starts. We capture the modifier each frame
+  // (rather than at begin time) so the user can toggle mid-drag.
+  const allWalls = Object.values(useSceneStore.getState().nodes).filter(
+    (n) => n.type === "wall",
+  ) as WallNode[];
+  const junction = findJunction(allWalls, originalEndpoint, JUNCTION_TOLERANCE);
+  // Members snapshot — the position each member started at, so we can
+  // re-base each frame without accumulating numerical error.
+  const memberStart = new Map<string, Vec2>(); // key = `${id}:${endpoint}`
+  if (junction) {
+    for (const m of junction.members) {
+      const w = allWalls.find((x) => x.id === m.wallId);
+      if (!w) continue;
+      memberStart.set(
+        `${m.wallId}:${m.endpoint}`,
+        m.endpoint === "start" ? { ...w.start } : { ...w.end },
+      );
+    }
+  }
+  // Track Alt state — true while the modifier is held, false otherwise.
+  let altHeld = false;
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Alt") altHeld = true;
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (e.key === "Alt") altHeld = false;
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+  }
+  const cleanupKeys = () => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    }
+  };
 
   const update = (world: Vec2) => {
-    const snapped = useSceneStore.getState().snapEnabled
+    const store = useSceneStore.getState();
+    const snapped = store.snapEnabled
       ? { x: snapToGrid(world.x), z: snapToGrid(world.z) }
       : world;
-    if (endpoint === "start") {
-      useSceneStore.getState().setLive(wallId, { start: snapped });
+    // If junction exists and Alt is NOT pressed, move every member to the
+    // new position — preserves connectivity. Otherwise only the picked
+    // endpoint moves (detach).
+    if (junction && !altHeld) {
+      for (const m of junction.members) {
+        store.setLive(m.wallId, { [m.endpoint]: snapped });
+      }
     } else {
-      useSceneStore.getState().setLive(wallId, { end: snapped });
+      store.setLive(wallId, { [endpoint]: snapped });
     }
   };
 
   const commit = () => {
-    const live = useSceneStore.getState().liveTransforms.get(wallId);
-    useSceneStore.getState().commitLive(wallId);
+    cleanupKeys();
+    const store = useSceneStore.getState();
+    const live = store.liveTransforms.get(wallId);
+    if (junction && !altHeld) {
+      for (const m of junction.members) {
+        store.commitLive(m.wallId);
+      }
+    } else {
+      store.commitLive(wallId);
+    }
     rederiveAfterWallChange();
     const next =
       endpoint === "start"
-        ? (live?.start ?? startStart)
-        : (live?.end ?? startEnd);
-    const before = endpoint === "start" ? startStart : startEnd;
-    const dx = next.x - before.x;
-    const dz = next.z - before.z;
+        ? (live?.start ?? originalEndpoint)
+        : (live?.end ?? originalEndpoint);
+    const dx = next.x - originalEndpoint.x;
+    const dz = next.z - originalEndpoint.z;
     if (Math.hypot(dx, dz) > 0.05) {
+      const groupSize = junction && !altHeld ? junction.members.length : 1;
       // Imported lazily so this module stays compatible with non-DOM uses.
       import("./user-action-log").then(({ logEditWall }) => {
-        logEditWall(`endpoint ${endpoint}: Δ ${dx.toFixed(2)} m, ${dz.toFixed(2)} m`);
+        const suffix = groupSize > 1 ? ` (${groupSize} paredes em junção)` : "";
+        logEditWall(`endpoint ${endpoint}: Δ ${dx.toFixed(2)} m, ${dz.toFixed(2)} m${suffix}`);
       });
     }
   };
 
-  const cancel = () => useSceneStore.getState().clearLive(wallId);
+  const cancel = () => {
+    cleanupKeys();
+    const store = useSceneStore.getState();
+    if (junction && !altHeld) {
+      for (const m of junction.members) {
+        store.clearLive(m.wallId);
+      }
+    } else {
+      store.clearLive(wallId);
+    }
+  };
   return { update, commit, cancel };
 }
 
