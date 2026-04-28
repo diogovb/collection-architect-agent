@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import { type ThreeEvent } from "@react-three/fiber";
-import { Evaluator } from "three-bvh-csg";
 
 import type { DoorNode, ViewMode, WallNode, WindowNode } from "@/lib/scene/types";
 import type { WallCorners } from "@/lib/scene/wall-mitering";
@@ -25,9 +24,6 @@ interface Props {
   onPointerDown: (e: ThreeEvent<PointerEvent>) => void;
 }
 
-const sharedEvaluator = new Evaluator();
-sharedEvaluator.useGroups = false;
-
 export function WallView({
   wall,
   corners,
@@ -48,7 +44,7 @@ export function WallView({
     const base = wallExtrudedGeometry(corners, wall.height);
     const openings = [...doors, ...windows];
     if (openings.length === 0) return base;
-    const { geometry, warnings } = applyWallCutouts(base, wall, openings, sharedEvaluator);
+    const { geometry, warnings } = applyWallCutouts(base, wall, openings);
     if (warnings.length > 0 && process.env.NODE_ENV !== "production") {
       for (const w of warnings) console.warn(`[csg] ${w.wallId}: ${w.message}`);
     }

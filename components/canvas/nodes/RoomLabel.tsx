@@ -2,7 +2,7 @@
 
 import { Text } from "@react-three/drei";
 import type { RoomNode, ViewMode } from "@/lib/scene/types";
-import { polygonCentroid } from "@/lib/scene/types";
+import { polygonBounds, polygonCentroid } from "@/lib/scene/types";
 import { PALETTE } from "../materials";
 
 // Drei <Text> uses troika-three-text. We omit font prop here so it falls back
@@ -11,9 +11,12 @@ import { PALETTE } from "../materials";
 const SERIF_FONT: string | undefined = undefined;
 const MONO_FONT: string | undefined = undefined;
 
-/** Rooms below this size only show the name (no area), to avoid overlap with
- *  small labels for sub-1m elements like swing arcs and door openings. */
+/** Rooms below this size show name only (no area), to avoid overlapping
+ *  the swing arc / name in tight quarters. */
 const SUPPRESS_AREA_BELOW = 4; // m²
+/** Long, narrow rooms (corridors) — also show name only to avoid stacking
+ *  two lines of text in a band that's only 1-1.5 m wide. */
+const NARROW_DIM_THRESHOLD = 2; // m on the short side
 
 interface Props {
   room: RoomNode;
@@ -23,7 +26,9 @@ interface Props {
 export function RoomLabel({ room, viewMode }: Props) {
   if (viewMode !== "2d") return null;
   const c = polygonCentroid(room.polygon);
-  const showArea = room.area >= SUPPRESS_AREA_BELOW;
+  const b = polygonBounds(room.polygon);
+  const shortSide = Math.min(b.maxX - b.minX, b.maxZ - b.minZ);
+  const showArea = room.area >= SUPPRESS_AREA_BELOW && shortSide >= NARROW_DIM_THRESHOLD;
   const areaTxt = `${room.area.toFixed(2).replace(".", ",")} m²`.toUpperCase();
   return (
     <group position={[c.x, 0.05, c.z]}>
