@@ -1789,8 +1789,14 @@ function DoorSvg({ door, wall, stroke, onHover, onClick, onPointerDown }: DoorSv
     z: hinge.z + perp.z * door.width * swingSign,
   };
 
-  // Arc path: large-arc=0, sweep depends on swing+hinge
-  const sweep = swingSign > 0 ? 1 : 0;
+  // Arc path: large-arc=0, sweep depends on BOTH swing direction AND hinge
+  // side. XNOR semantics: when both swing=in and hinge=start (or both opposite),
+  // the short arc goes CW in SVG (sweep=1). Otherwise CCW (sweep=0). Without
+  // factoring `hingeSide` here, toggling "Inverter lado" left the arc curving
+  // the wrong way (into the wall instead of into the open quadrant).
+  const swingIn = door.swingDirection === "in";
+  const hingeStart = door.hingeSide === "start";
+  const sweep = swingIn === hingeStart ? 1 : 0;
 
   return (
     <g
