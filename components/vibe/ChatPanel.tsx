@@ -151,6 +151,21 @@ export function ChatPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [history, streamingText, streamingTools]);
 
+  // Bridge: the canvas context menu can dispatch a `ca:agent-prompt` event
+  // ("Mobiliar Sala", "abrir vão 80cm" etc). We forward it to send() so the
+  // user gets one consistent agent loop.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      if (typeof detail === "string" && detail.trim() && !busy) {
+        send(detail.trim());
+      }
+    };
+    window.addEventListener("ca:agent-prompt", handler);
+    return () => window.removeEventListener("ca:agent-prompt", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy]);
+
   async function send(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busy) return;

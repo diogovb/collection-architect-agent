@@ -28,6 +28,7 @@ import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/la
 import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { buildWallEnvelope, envelopeToPath } from "@/lib/scene/envelope";
+import { ContextMenu } from "./ContextMenu";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
 // fontSize:14 would mean "14 metres tall" (huge). We want ~14 CSS pixels at
@@ -676,6 +677,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
             return (
               <polygon
                 key={w.id}
+                data-node-id={w.id}
                 points={cornersToSvg(c)}
                 fill="transparent"
                 stroke={showOutline ? stroke : "transparent"}
@@ -789,6 +791,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
               return (
                 <g
                   key={f.id}
+                  data-node-id={f.id}
                   transform={`translate(${cx} ${cz}) rotate(${rot})`}
                   filter={fStyle.shadow ? "url(#softShadow)" : undefined}
                   onPointerOver={(e) => { e.stopPropagation(); setHover(f.id); }}
@@ -1006,6 +1009,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
           </g>
         )}
       </svg>
+
+      {/* Floating context menu — anchored to the currently-selected node's
+          DOM element via data-node-id. We rebind on every selection / live
+          transform change so it tracks panning and dragging. */}
+      <FloorplanContextMenu svgRef={svgRef} selected={selected} liveSig={liveTransforms.size} />
 
       {/* Empty state overlay */}
       {isEmpty && (
@@ -1415,6 +1423,7 @@ function DoorSvg({ door, wall, stroke, onHover, onClick, onPointerDown }: DoorSv
 
   return (
     <g
+      data-node-id={door.id}
       onPointerOver={(e) => { e.stopPropagation(); onHover(true); }}
       onPointerOut={(e) => { e.stopPropagation(); onHover(false); }}
       onPointerDown={(e) => {
@@ -1482,6 +1491,7 @@ function WindowSvg({ window: win, wall, stroke, onHover, onClick, onPointerDown 
   const isWide = win.width > 1.4;
   return (
     <g
+      data-node-id={win.id}
       onPointerOver={(e) => { e.stopPropagation(); onHover(true); }}
       onPointerOut={(e) => { e.stopPropagation(); onHover(false); }}
       onPointerDown={(e) => {
@@ -1741,4 +1751,62 @@ function ScaleBarSymbol({
       </text>
     </g>
   );
+}
+
+// ---- Floating context menu wiring ---------------------------------------
+// Resolves the SVG element that represents the currently-selected node
+// (via the data-node-id attribute we attach in the renderer) and feeds it
+// to the shared <ContextMenu> component. liveSig is just a render trigger
+// so the menu repositions during drag.
+function FloorplanContextMenu({
+  svgRef,
+  selected,
+  liveSig,
+}: {
+  svgRef: React.RefObject<SVGSVGElement | null>;
+  selected: string[];
+  liveSig: number;
+}) {
+  const setSelection = useSceneStore((s) => s.setSelection);
+  const single = selected.length === 1 ? selected[0] : null;
+  const [anchor, setAnchor] = useState<SVGGraphicsElement | null>(null);
+
+  useEffect(() => {
+    if (!single) {
+      setAnchor(null);
+      return;
+    }
+    const root = svgRef.current;
+    if (!root) return;
+    const el = root.querySelector(
+      `[data-node-id="${cssEscape(single)}"]`
+    ) as SVGGraphicsElement | null;
+    setAnchor(el);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [single, svgRef, liveSig]);
+
+  if (!single) return null;
+  return (
+    <ContextMenu
+      anchorEl={anchor}
+      selectedId={single}
+      onClose={() => setSelection([])}
+      onSendToAgent={(prompt) => {
+        // Forward to the chat panel via a window-level event. ChatPanel
+        // listens and runs `send(prompt)`.
+        window.dispatchEvent(
+          new CustomEvent("ca:agent-prompt", { detail: prompt })
+        );
+      }}
+    />
+  );
+}
+
+function cssEscape(s: string): string {
+  // CSS.escape may not be available in all SSR contexts; fall back to a
+  // permissive replacement of characters that would break a selector.
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(s);
+  }
+  return s.replace(/(["\\#.[\]:])/g, "\\$1");
 }
