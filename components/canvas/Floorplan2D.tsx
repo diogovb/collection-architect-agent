@@ -1081,10 +1081,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
           );
         })()}
 
-        {/* Scale bar moved to a top-left HTML overlay (see Canvas.tsx
-            :ScaleBarOverlay). The old SVG in-canvas version lived in the
-            bottom-left and shrank with the viewBox; the overlay version
-            stays a fixed pixel size and aligns with the 2D/3D toggle. */}
+        {/* Scale bar — bottom-left of the viewBox (Style Guide §10.2).
+            2D/3D toggle lives in the top-left corner; the two anchors
+            stay on the same vertical column but on opposite ends of
+            the canvas. */}
+        <ScaleBarSymbol viewX={v.x} viewY={v.y} viewH={v.h} />
 
         {/* Wall-draw tool overlay: anchor + ghost wall (semi-transparent
             quad showing the actual thickness) + dashed centerline + cursor
