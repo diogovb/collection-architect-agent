@@ -22,6 +22,7 @@ import {
   type OpeningSlideSession,
   type WallEditSession,
 } from "@/lib/scene/drag-engine";
+import { snapAngle } from "@/lib/scene/snap";
 
 type ScreenToWorld = (clientX: number, clientY: number) => { x: number; z: number };
 
@@ -75,6 +76,24 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tool]);
+
+  // Track Shift state to disable angular snap during the wall draw
+  // preview when the user wants a free angle (Fase V).
+  const shiftHeldRef = useRef(false);
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift") shiftHeldRef.current = true;
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") shiftHeldRef.current = false;
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
 
   // Global pointermove + pointerup so a drag survives leaving the SVG.
   useEffect(() => {
@@ -186,14 +205,29 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   const onSvgBackgroundMove = useCallback(
     (clientX: number, clientY: number) => {
       if (tool !== "wall" && tool !== "dimension") return;
-      setPointerWorld(snapDrawPoint(screenToWorld(clientX, clientY)));
+      let snapped = snapDrawPoint(screenToWorld(clientX, clientY));
+      // Angular snap during the draw preview (Fase V). When the user has
+      // already anchored the first click, lock the live segment to the
+      // nearest 0°/45°/90° axis within ±5° unless Shift is held — same
+      // behaviour as the eventual commit (snapAngle in commitDrawWall).
+      const snapEnabled = useSceneStore.getState().snapEnabled;
+      if (
+        tool === "wall" &&
+        wallDrawState.phase === "anchored" &&
+        wallDrawState.anchor &&
+        snapEnabled &&
+        !shiftHeldRef.current
+      ) {
+        snapped = snapAngle(wallDrawState.anchor, snapped, 5);
+      }
+      setPointerWorld(snapped);
     },
-    [tool, screenToWorld]
+    [tool, screenToWorld, wallDrawState],
   );
 
   const onSvgBackgroundClick = useCallback(
     (clientX: number, clientY: number) => {
-      const snapped = snapDrawPoint(screenToWorld(clientX, clientY));
+      let snapped = snapDrawPoint(screenToWorld(clientX, clientY));
 
       if (tool === "wall") {
         if (wallDrawState.phase === "idle") {
@@ -201,6 +235,12 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
           return;
         }
         if (wallDrawState.phase === "anchored" && wallDrawState.anchor) {
+          // Mirror the preview's angular snap so the committed wall ends
+          // exactly where the ghost line was showing (Fase V).
+          const snapEnabled = useSceneStore.getState().snapEnabled;
+          if (snapEnabled && !shiftHeldRef.current) {
+            snapped = snapAngle(wallDrawState.anchor, snapped, 5);
+          }
           commitDrawWall(wallDrawState.anchor, snapped);
           setWallDrawState({ phase: "anchored", anchor: snapped });
         }
