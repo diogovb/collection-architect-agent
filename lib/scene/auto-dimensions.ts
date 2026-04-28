@@ -5,13 +5,40 @@
 // - Group them by axis (horizontal/vertical) and side (north/south/east/west)
 //   based on their position relative to the envelope bounding box.
 // - For each cardinal side, emit ONE DimensionNode covering the full side.
-// - The dimension is offset 0.6m outside the envelope.
+// - The dimension's offset SIGN is chosen relative to the envelope
+//   centroid so the cota always falls OUTSIDE the apartment, regardless
+//   of which order the wall was drawn (Fase H).
 
 import type { DimensionNode, NodeId, Vec2, WallNode } from "./types";
 
 // Distance from the envelope (outermost wall edge) to the dimension line.
 // Calibrated to keep the label clear of swing arcs and exterior wall thickness.
 const ENVELOPE_OFFSET = 0.9;
+
+/** Pick the sign of `magnitude` so that midpoint + perp * offset lies on
+ *  the OUTSIDE of the envelope (i.e. on the opposite side of `centroid`).
+ *  Renderer convention: dim_position = midpoint(start,end) + perp * offset
+ *  where perp = v2Perp(normalize(end - start)). */
+function outwardOffset(
+  start: Vec2,
+  end: Vec2,
+  centroid: Vec2,
+  magnitude: number,
+): number {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const len = Math.hypot(dx, dz) || 1;
+  // Perp matches lib/scene/types.ts:v2Perp = (x,z) -> (-z, x).
+  const perpX = -dz / len;
+  const perpZ = dx / len;
+  const midX = (start.x + end.x) / 2;
+  const midZ = (start.z + end.z) / 2;
+  const outX = midX - centroid.x;
+  const outZ = midZ - centroid.z;
+  // Dot product: positive means perp already points outward.
+  const dot = perpX * outX + perpZ * outZ;
+  return dot >= 0 ? magnitude : -magnitude;
+}
 
 interface Bounds { minX: number; maxX: number; minZ: number; maxZ: number; }
 
@@ -34,6 +61,13 @@ export function computeEnvelopeDimensions(walls: WallNode[]): DimensionNode[] {
   const exterior = walls.filter((w) => w.isExterior);
   if (exterior.length === 0) return [];
   const b = computeBounds(exterior);
+
+  // Centroid from the bounding box — good enough for axis-aligned envelopes
+  // and used to decide which side of the wall a dimension lives on.
+  const centroid: Vec2 = {
+    x: (b.minX + b.maxX) / 2,
+    z: (b.minZ + b.maxZ) / 2,
+  };
 
   const dims: DimensionNode[] = [];
   let seq = 0;
@@ -69,61 +103,33 @@ export function computeEnvelopeDimensions(walls: WallNode[]): DimensionNode[] {
     return merged;
   };
 
-  // North side (z = minZ) — emit dimensions on each merged interval at offset -ENVELOPE_OFFSET in z.
-  for (const iv of collect("h", b.minZ)) {
-    const start: Vec2 = { x: iv.start, z: b.minZ };
-    const end: Vec2 = { x: iv.end, z: b.minZ };
+  const pushDim = (start: Vec2, end: Vec2) => {
     dims.push({
       id: id(),
       type: "dimension",
       parentId: null,
       start,
       end,
-      offset: -ENVELOPE_OFFSET,
+      offset: outwardOffset(start, end, centroid, ENVELOPE_OFFSET),
       scope: "auto-envelope",
     });
+  };
+
+  // North side (z = minZ).
+  for (const iv of collect("h", b.minZ)) {
+    pushDim({ x: iv.start, z: b.minZ }, { x: iv.end, z: b.minZ });
   }
   // South (z = maxZ).
   for (const iv of collect("h", b.maxZ)) {
-    const start: Vec2 = { x: iv.start, z: b.maxZ };
-    const end: Vec2 = { x: iv.end, z: b.maxZ };
-    dims.push({
-      id: id(),
-      type: "dimension",
-      parentId: null,
-      start,
-      end,
-      offset: ENVELOPE_OFFSET,
-      scope: "auto-envelope",
-    });
+    pushDim({ x: iv.start, z: b.maxZ }, { x: iv.end, z: b.maxZ });
   }
   // West (x = minX).
   for (const iv of collect("v", b.minX)) {
-    const start: Vec2 = { x: b.minX, z: iv.start };
-    const end: Vec2 = { x: b.minX, z: iv.end };
-    dims.push({
-      id: id(),
-      type: "dimension",
-      parentId: null,
-      start,
-      end,
-      offset: -ENVELOPE_OFFSET,
-      scope: "auto-envelope",
-    });
+    pushDim({ x: b.minX, z: iv.start }, { x: b.minX, z: iv.end });
   }
   // East (x = maxX).
   for (const iv of collect("v", b.maxX)) {
-    const start: Vec2 = { x: b.maxX, z: iv.start };
-    const end: Vec2 = { x: b.maxX, z: iv.end };
-    dims.push({
-      id: id(),
-      type: "dimension",
-      parentId: null,
-      start,
-      end,
-      offset: ENVELOPE_OFFSET,
-      scope: "auto-envelope",
-    });
+    pushDim({ x: b.maxX, z: iv.start }, { x: b.maxX, z: iv.end });
   }
 
   return dims;

@@ -13,6 +13,7 @@
 // listeners go through these.
 
 import type {
+  DimensionNode,
   DoorNode,
   FurnitureNode,
   NodeId,
@@ -370,6 +371,69 @@ export function beginWallTranslate(
   };
 
   const cancel = () => useSceneStore.getState().clearLive(wallId);
+  return { update, commit, cancel };
+}
+
+// ---- Dimension offset drag -------------------------------------------------
+
+export interface DimensionOffsetSession {
+  update: (world: Vec2) => void;
+  commit: () => void;
+  cancel: () => void;
+}
+
+/** Drag a DimensionNode's offset (the perpendicular distance between the
+ *  measurement line and the segment it annotates). Lets the user park a
+ *  cota anywhere they want by clicking on it and dragging perpendicularly.
+ *
+ *  Implementation: project the pointer onto the perpendicular axis of the
+ *  dim's segment; the projected scalar IS the new offset. We mutate the
+ *  node directly (not via liveTransforms — those are reserved for walls /
+ *  furniture). */
+export function beginDimensionOffsetDrag(
+  dimId: NodeId,
+  pointerWorld: Vec2,
+): DimensionOffsetSession | null {
+  const store = useSceneStore.getState();
+  const dim = store.nodes[dimId];
+  if (!dim || dim.type !== "dimension") return null;
+  const dx = dim.end.x - dim.start.x;
+  const dz = dim.end.z - dim.start.z;
+  const len = Math.hypot(dx, dz) || 1;
+  // Perp matches lib/scene/types.ts:v2Perp = (x,z) -> (-z, x).
+  const perpX = -dz / len;
+  const perpZ = dx / len;
+  // Midpoint of the measured segment — the perpendicular axis passes
+  // through this point and the cota's offset is measured along it.
+  const midX = (dim.start.x + dim.end.x) / 2;
+  const midZ = (dim.start.z + dim.end.z) / 2;
+  const startOffset = dim.offset;
+  // Capture the offset between the pointer's projection and the current
+  // dim line so the cota stays under the cursor as the drag moves.
+  const grabProj = (pointerWorld.x - midX) * perpX + (pointerWorld.z - midZ) * perpZ;
+  const grabDelta = grabProj - startOffset;
+
+  const update = (world: Vec2) => {
+    const proj = (world.x - midX) * perpX + (world.z - midZ) * perpZ;
+    const next = proj - grabDelta;
+    useSceneStore.getState().updateNode<DimensionNode>(dimId, { offset: next });
+  };
+
+  const commit = () => {
+    const next = useSceneStore.getState().nodes[dimId];
+    if (next && next.type === "dimension" && Math.abs(next.offset - startOffset) > 0.05) {
+      import("./user-action-log").then(({ logEditOpening }) => {
+        // Reuse logEditOpening for the chat trail; it just emits a generic
+        // "edição de cota" entry for the agent to read.
+        logEditOpening("cota", `offset ${startOffset.toFixed(2)} → ${next.offset.toFixed(2)} m`);
+      });
+    }
+  };
+
+  const cancel = () => {
+    useSceneStore.getState().updateNode<DimensionNode>(dimId, { offset: startOffset });
+  };
+
   return { update, commit, cancel };
 }
 

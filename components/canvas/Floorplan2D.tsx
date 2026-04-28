@@ -844,11 +844,21 @@ export function Floorplan2D({ onLoadExample }: Props) {
         <g className="dimensions">
           {dimensions.map((d) => {
             const layout = labelLayout.get(`dim:${d.id}`);
+            const isSel = selected.includes(d.id);
+            const isHov = hovered === d.id;
             return (
               <DimensionSvg
                 key={d.id}
                 dim={d}
                 labelOverride={layout ? { x: layout.x, z: layout.z } : null}
+                selected={isSel}
+                hovered={isHov}
+                onPointerOver={() => setHover(d.id)}
+                onPointerOut={() => setHover(null)}
+                onClick={(shift) => toggleSelection(d.id, shift)}
+                onPointerDown={(clientX, clientY) =>
+                  tools.beginDimensionOffsetDrag(d.id, clientX, clientY)
+                }
               />
             );
           })}
@@ -1681,9 +1691,24 @@ interface DimensionSvgProps {
   /** Override label position from auto-layout. Falls back to natural position
    *  if null. */
   labelOverride?: { x: number; z: number } | null;
+  selected?: boolean;
+  hovered?: boolean;
+  onPointerOver?: () => void;
+  onPointerOut?: () => void;
+  onClick?: (shiftKey: boolean) => void;
+  onPointerDown?: (clientX: number, clientY: number) => void;
 }
 
-function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
+function DimensionSvg({
+  dim,
+  labelOverride,
+  selected,
+  hovered,
+  onPointerOver,
+  onPointerOut,
+  onClick,
+  onPointerDown,
+}: DimensionSvgProps) {
   const dir = v2Norm(v2Sub(dim.end, dim.start));
   const perp = v2Perp(dir);
   const a = { x: dim.start.x + perp.x * dim.offset, z: dim.start.z + perp.z * dim.offset };
@@ -1698,8 +1723,42 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
   const labelZ = labelOverride?.z ?? cz + perp.z * 0.25 * labelSide;
   // tick (perpendicular, both sides of line)
   const tick = 0.12;
+  const stroke = selected ? PALETTE.accent : hovered ? PALETTE.hoverStroke : PALETTE.inkSoft;
+  // Padding for the invisible hit zone — wide enough to grab without
+  // having to land on a 0.9px line, narrow enough not to swallow nearby
+  // wall clicks.
+  const hitPad = 0.18;
   return (
-    <g pointerEvents="none">
+    <g>
+      {/* Invisible hit zone: a fat polygon hugging the dim line so that
+          clicking anywhere near the cota selects it (and dragging starts
+          an offset drag). pointerEvents=visible so the transparent fill
+          still receives hits. */}
+      <polygon
+        data-node-id={dim.id}
+        points={[
+          [a.x - perp.x * hitPad, a.z - perp.z * hitPad],
+          [b.x - perp.x * hitPad, b.z - perp.z * hitPad],
+          [b.x + perp.x * hitPad, b.z + perp.z * hitPad],
+          [a.x + perp.x * hitPad, a.z + perp.z * hitPad],
+        ]
+          .map(([x, z]) => `${x},${z}`)
+          .join(" ")}
+        fill="transparent"
+        pointerEvents="visible"
+        onPointerOver={onPointerOver}
+        onPointerOut={onPointerOut}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick?.(e.shiftKey);
+        }}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          onPointerDown?.(e.clientX, e.clientY);
+        }}
+        style={{ cursor: selected ? "grab" : "pointer" }}
+      />
       {/* extension lines from wall to dim line */}
       <line
         x1={dim.start.x}
@@ -1710,6 +1769,7 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         strokeWidth={0.6}
         strokeDasharray="2 2"
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       <line
         x1={dim.end.x}
@@ -1720,6 +1780,7 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         strokeWidth={0.6}
         strokeDasharray="2 2"
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       {/* main dim line */}
       <line
@@ -1727,9 +1788,10 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         y1={a.z}
         x2={b.x}
         y2={b.z}
-        stroke={PALETTE.inkSoft}
-        strokeWidth={0.9}
+        stroke={stroke}
+        strokeWidth={selected ? 1.4 : 0.9}
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       {/* tick marks */}
       <line
@@ -1737,18 +1799,20 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         y1={a.z - perp.z * tick}
         x2={a.x + perp.x * tick}
         y2={a.z + perp.z * tick}
-        stroke={PALETTE.inkSoft}
-        strokeWidth={0.9}
+        stroke={stroke}
+        strokeWidth={selected ? 1.4 : 0.9}
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       <line
         x1={b.x - perp.x * tick}
         y1={b.z - perp.z * tick}
         x2={b.x + perp.x * tick}
         y2={b.z + perp.z * tick}
-        stroke={PALETTE.inkSoft}
-        strokeWidth={0.9}
+        stroke={stroke}
+        strokeWidth={selected ? 1.4 : 0.9}
         vectorEffect="non-scaling-stroke"
+        pointerEvents="none"
       />
       {/* label */}
       <text
@@ -1759,9 +1823,10 @@ function DimensionSvg({ dim, labelOverride }: DimensionSvgProps) {
         style={{
           fontFamily: "var(--font-jetbrains-mono), monospace",
           fontSize: pxToWorld(11),
-          fill: PALETTE.inkSoft,
+          fill: stroke,
         }}
         fontSize={pxToWorld(11)}
+        pointerEvents="none"
       >
         {text}
       </text>

@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { NodeId, Vec2 } from "@/lib/scene/types";
 import { useSceneStore } from "@/lib/scene/store";
 import {
+  beginDimensionOffsetDrag,
   beginFurnitureDrag,
   beginOpeningSlide,
   beginWallEndpointDrag,
@@ -16,6 +17,7 @@ import {
   commitDrawWall,
   commitManualDimension,
   snapDrawPoint,
+  type DimensionOffsetSession,
   type FurnitureDragSession,
   type OpeningSlideSession,
   type WallEditSession,
@@ -38,6 +40,7 @@ export interface SvgToolHandlers {
   beginOpeningSlide: (id: NodeId, clientX: number, clientY: number) => void;
   beginWallEndpointDrag: (id: NodeId, endpoint: "start" | "end", clientX: number, clientY: number) => void;
   beginWallTranslate: (id: NodeId, clientX: number, clientY: number) => void;
+  beginDimensionOffsetDrag: (id: NodeId, clientX: number, clientY: number) => void;
   onSvgBackgroundClick: (clientX: number, clientY: number) => void;
   onSvgBackgroundMove: (clientX: number, clientY: number) => void;
   wallDraw: { state: WallDrawState; pointerWorld: Vec2 | null };
@@ -48,6 +51,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   const furnitureRef = useRef<FurnitureDragSession | null>(null);
   const slideRef = useRef<OpeningSlideSession | null>(null);
   const wallEditRef = useRef<WallEditSession | null>(null);
+  const dimRef = useRef<DimensionOffsetSession | null>(null);
   const [wallDrawState, setWallDrawState] = useState<WallDrawState>({ phase: "idle" });
   const [dimDrawState, setDimDrawState] = useState<DimensionDrawState>({ phase: "idle" });
   const [pointerWorld, setPointerWorld] = useState<Vec2 | null>(null);
@@ -87,6 +91,10 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
         wallEditRef.current.update(screenToWorld(e.clientX, e.clientY));
         return;
       }
+      if (dimRef.current) {
+        dimRef.current.update(screenToWorld(e.clientX, e.clientY));
+        return;
+      }
     };
     const onUp = () => {
       if (furnitureRef.current) {
@@ -102,6 +110,11 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
       if (wallEditRef.current) {
         wallEditRef.current.commit();
         wallEditRef.current = null;
+        document.body.style.cursor = "";
+      }
+      if (dimRef.current) {
+        dimRef.current.commit();
+        dimRef.current = null;
         document.body.style.cursor = "";
       }
     };
@@ -159,6 +172,17 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     [screenToWorld]
   );
 
+  const handleBeginDimensionOffsetDrag = useCallback(
+    (id: NodeId, clientX: number, clientY: number) => {
+      const world = screenToWorld(clientX, clientY);
+      const session = beginDimensionOffsetDrag(id, world);
+      if (!session) return;
+      dimRef.current = session;
+      document.body.style.cursor = "grabbing";
+    },
+    [screenToWorld]
+  );
+
   const onSvgBackgroundMove = useCallback(
     (clientX: number, clientY: number) => {
       if (tool !== "wall" && tool !== "dimension") return;
@@ -204,6 +228,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     beginOpeningSlide: handleBeginOpeningSlide,
     beginWallEndpointDrag: handleBeginWallEndpointDrag,
     beginWallTranslate: handleBeginWallTranslate,
+    beginDimensionOffsetDrag: handleBeginDimensionOffsetDrag,
     onSvgBackgroundClick,
     onSvgBackgroundMove,
     wallDraw: { state: wallDrawState, pointerWorld: tool === "wall" ? pointerWorld : null },
