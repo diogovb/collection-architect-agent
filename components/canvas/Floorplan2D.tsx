@@ -1668,6 +1668,27 @@ function WindowSvg({ window: win, wall, stroke, onHover, onClick, onPointerDown 
         strokeWidth={0.8}
         vectorEffect="non-scaling-stroke"
       />
+      {/* Linhas verticais nas extremidades (Fase Q) — fecham o retângulo
+          da janela, ligando o peitoril externo ao interno em start e end.
+          Sem elas, o desenho técnico fica "aberto". */}
+      <line
+        x1={aLeft.x + perp.x * outerOff}
+        y1={aLeft.z + perp.z * outerOff}
+        x2={aLeft.x - perp.x * outerOff}
+        y2={aLeft.z - perp.z * outerOff}
+        stroke={stroke}
+        strokeWidth={0.8}
+        vectorEffect="non-scaling-stroke"
+      />
+      <line
+        x1={aRight.x + perp.x * outerOff}
+        y1={aRight.z + perp.z * outerOff}
+        x2={aRight.x - perp.x * outerOff}
+        y2={aRight.z - perp.z * outerOff}
+        stroke={stroke}
+        strokeWidth={0.8}
+        vectorEffect="non-scaling-stroke"
+      />
       {/* Caixilho central de janela larga (sliding). */}
       {isWide && (
         <line
