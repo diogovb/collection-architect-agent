@@ -176,6 +176,15 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 - **add_furniture** (atômico), **add_furniture_group** (atalho), **swap_furniture** (troca tipo).
 - **remove_furniture**, **move_furniture**.
 
+### REGRA DE OURO — POSICIONAMENTO SEM SOBREPOSIÇÃO
+Todo \`add_furniture\` chega com \`relative_x\` e \`relative_y\` (0 a 1, fração da posição dentro do cômodo). Antes de chamar a tool:
+
+1. **Sempre comece pelas peças "âncora"** que ficam encostadas em paredes (cama no fundo, sofá em uma das paredes, fogão na bancada). Use rx/ry nos extremos: 0.0 / 1.0 / 0.5.
+2. **Mentalize o cômodo como uma grade** — para um quarto 3×4m com cama 1.6×2m colocada em rx=0.5, ry=0.0, sobra 0.7m de cada lado e 2m abaixo. NÃO coloque uma cômoda em rx=0.5/ry=0.5: vai sobrepor a cama. Use rx=0.0/ry=0.6 ou rx=1.0/ry=0.6.
+3. **Distribua AO LONGO de uma parede** quando o cômodo é estreito: sequência de móveis em ry=0 com rx=0.0, 0.3, 0.6, 0.9 — cada um em sua faixa, sem se sobrepor.
+4. **Se a tool retornar erro de sobreposição**, a mensagem listará TODOS os móveis já colocados com rx/ry e dimensões. Use isso para escolher um espaço livre na próxima chamada — NÃO tente o mesmo rx/ry.
+5. **NUNCA** chame \`remove_furniture\` + \`add_furniture\` em sequência só para reposicionar — use \`move_furniture\` que é mais barato e o user vê uma só ação.
+
 ## Anotações (qualidade arquitetônica)
 - **add_dimension** — cota entre dois pontos (x1,y1 → x2,y2).
 - **add_text_note** — texto livre.

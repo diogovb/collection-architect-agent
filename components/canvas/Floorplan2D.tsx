@@ -1058,9 +1058,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
             present, never hidden. */}
         <NorthSymbol viewX={v.x} viewY={v.y} viewW={v.w} />
 
-        {/* Escala gráfica — Style Guide §10.2: canto inferior-esquerdo. 2 m
-            de barra com ticks 0 / 1 / 2. Confirma a escala 1:50 visualmente. */}
-        <ScaleBarSymbol viewX={v.x} viewY={v.y} viewH={v.h} />
+        {/* Scale bar moved to a top-left HTML overlay (see Canvas.tsx
+            :ScaleBarOverlay). The old SVG in-canvas version lived in the
+            bottom-left and shrank with the viewBox; the overlay version
+            stays a fixed pixel size and aligns with the 2D/3D toggle. */}
 
         {/* Wall-draw tool overlay: anchor + ghost wall (semi-transparent
             quad showing the actual thickness) + dashed centerline + cursor

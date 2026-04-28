@@ -79,6 +79,11 @@ export function Canvas({ onLoadExample }: Props) {
         <Canvas3D center={center} span={span} />
       )}
 
+      {/* Scale bar (2D only) — sits on the same vertical row as the
+          2D/3D toggle, positioned to its left. Rendered as an HTML
+          overlay so it stays a fixed visual size regardless of zoom. */}
+      {viewMode === "2d" && <ScaleBarOverlay />}
+
       {/* 2D ⇄ 3D toggle */}
       <ModeToggle viewMode={viewMode} onChange={setViewMode} />
 
@@ -118,8 +123,11 @@ function ModeToggle({
 }) {
   return (
     <div
-      className="absolute top-4 left-4 z-10 fade-up"
+      className="absolute top-4 z-10 fade-up"
       style={{
+        // Pushed to the right so the ScaleBarOverlay can sit beside it
+        // on the same row (left:16). Both share the top-4 baseline.
+        left: 110,
         background: "var(--panel)",
         border: "1px solid var(--line)",
         borderRadius: 999,
@@ -159,6 +167,41 @@ function ModeToggle({
       >
         3D
       </button>
+    </div>
+  );
+}
+
+/** Scale bar HTML overlay — sits on the top-left row, immediately to the
+ *  left of the 2D/3D toggle. Drawn in screen pixels (fixed size on screen
+ *  regardless of zoom) and labelled "0—1—2 m". The previous SVG version
+ *  lived in the bottom-left and shrank/grew with the viewBox; this one
+ *  reads at a glance no matter how zoomed out the user is. */
+function ScaleBarOverlay() {
+  return (
+    <div
+      className="absolute top-4 z-10 fade-up flex items-center gap-2"
+      style={{
+        left: 16,
+        background: "var(--panel)",
+        border: "1px solid var(--line)",
+        borderRadius: 999,
+        padding: "5px 12px",
+        boxShadow: "0 1px 2px rgba(31,27,22,0.06)",
+        fontFamily: "var(--font-jetbrains-mono)",
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--muted)",
+        textTransform: "uppercase",
+      }}
+      title="Escala — barra mede 2 m"
+    >
+      <svg width={68} height={14} viewBox="0 0 68 14">
+        <line x1={2} y1={9} x2={66} y2={9} stroke="var(--ink)" strokeWidth={1} />
+        <line x1={2} y1={4} x2={2} y2={12} stroke="var(--ink)" strokeWidth={1} />
+        <line x1={34} y1={5} x2={34} y2={11} stroke="var(--ink)" strokeWidth={0.7} />
+        <line x1={66} y1={4} x2={66} y2={12} stroke="var(--ink)" strokeWidth={1} />
+      </svg>
+      <span>2 m</span>
     </div>
   );
 }

@@ -559,17 +559,59 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
-function doAddFurniture(plan: FloorPlan, input: ToolInputs["add_furniture"]): ApplyResult {
+function doAddFurniture(
+  plan: FloorPlan,
+  input: ToolInputs["add_furniture"],
+  opts?: { skipOverlapCheck?: boolean },
+): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
   const t = input.furniture_type;
   const def = FURN_DEFS[t];
   if (!def) return { ok: false, message: `Tipo de móvel desconhecido: ${t}` };
   const size = def.sizeM;
+  // Reject items that don't fit the room outright — gives the agent a
+  // chance to pick a smaller variant or a different room.
+  if (size.w > room.width + 0.01 || size.h > room.height + 0.01) {
+    return {
+      ok: false,
+      message:
+        `${def.label} (${size.w.toFixed(2)}×${size.h.toFixed(2)}m) não cabe em ` +
+        `'${room.name}' (${room.width.toFixed(2)}×${room.height.toFixed(2)}m). ` +
+        `Escolha um modelo menor ou outro cômodo.`,
+    };
+  }
   const rx = clamp01(input.relative_x ?? 0.5);
   const ry = clamp01(input.relative_y ?? 0.5);
   const fx = room.x + rx * Math.max(0, room.width - size.w);
   const fy = room.y + ry * Math.max(0, room.height - size.h);
+
+  // Overlap check (Bug "agente cria coisas em cima da outra"). Rejects
+  // the placement if it intersects an existing furniture in the same
+  // room. The error message lists the conflicting item AND describes
+  // every occupied AABB so the agent can pick a free spot on the next
+  // try without having to call list_furniture first.
+  const conflict = !opts?.skipOverlapCheck
+    ? findFurnitureOverlap(plan, room.id, fx, fy, size.w, size.h)
+    : null;
+  if (conflict) {
+    const occupied = plan.furniture
+      .filter((f) => f.roomId === room.id && !isRugLike(f.type))
+      .map((f) => {
+        const orx = (f.x - room.x) / Math.max(0.01, room.width - f.width);
+        const ory = (f.y - room.y) / Math.max(0.01, room.height - f.height);
+        return `${f.label} (rx≈${orx.toFixed(2)}, ry≈${ory.toFixed(2)}, ${f.width.toFixed(2)}×${f.height.toFixed(2)}m)`;
+      })
+      .join("; ");
+    return {
+      ok: false,
+      message:
+        `Posição (rx=${rx.toFixed(2)}, ry=${ry.toFixed(2)}) de ${def.label} sobrepõe '${conflict.label}' ` +
+        `em '${room.name}'. Móveis já posicionados: ${occupied}. ` +
+        `Reposicione ${def.label} num espaço livre (rx/ry diferente) ou remova um móvel existente antes.`,
+    };
+  }
+
   const item: Furniture = {
     id: nextId("furn"),
     roomId: room.id,
@@ -582,6 +624,39 @@ function doAddFurniture(plan: FloorPlan, input: ToolInputs["add_furniture"]): Ap
   };
   plan.furniture.push(item);
   return { ok: true, message: `${item.label} adicionado em '${room.name}'.` };
+}
+
+/** True if `type` is the kind of low/flat object (rug, mat) that
+ *  legitimately overlaps with other furniture — we skip overlap checks
+ *  for these so the agent can put a sofa over a rug. */
+function isRugLike(type: string): boolean {
+  return /^rug|carpet|mat/i.test(type);
+}
+
+/** Find an existing furniture (same room, non-rug) whose AABB intersects
+ *  the candidate rectangle. Returns the first conflict or null. Uses an
+ *  inset of 1 cm so flush edges (sofa touching a wall-mounted shelf)
+ *  don't trip the check. */
+function findFurnitureOverlap(
+  plan: FloorPlan,
+  roomId: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): Furniture | null {
+  const inset = 0.01;
+  for (const f of plan.furniture) {
+    if (f.roomId !== roomId) continue;
+    if (isRugLike(f.type)) continue;
+    const overlap =
+      f.x + f.width - inset > x &&
+      f.x + inset < x + w &&
+      f.y + f.height - inset > y &&
+      f.y + inset < y + h;
+    if (overlap) return f;
+  }
+  return null;
 }
 
 function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): ApplyResult {
@@ -1031,13 +1106,16 @@ function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): Appl
 // ---------- Furniture groups ----------
 
 function placeFurniture(plan: FloorPlan, room: Room, type: FurnitureType, rx: number, ry: number, label?: string) {
+  // Curated group layouts trust their relative positions; we still want
+  // the size/room-fit guard but skip the per-item overlap check so the
+  // sofa→rug→coffee_table stack can coexist.
   doAddFurniture(plan, {
     room_name: room.name,
     furniture_type: type,
     label,
     relative_x: rx,
     relative_y: ry,
-  });
+  }, { skipOverlapCheck: true });
 }
 
 function doAddFurnitureGroup(plan: FloorPlan, input: ToolInputs["add_furniture_group"]): ApplyResult {
