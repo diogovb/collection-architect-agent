@@ -27,7 +27,6 @@ import { getWallCorners } from "@/lib/scene/wall-corners-cache";
 import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/label-placement";
 import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
-import { buildWallEnvelope, envelopeToPath } from "@/lib/scene/envelope";
 import { ContextMenu } from "./ContextMenu";
 
 // SVG `font-size` is in user-space units. Our viewBox is in metres, so
@@ -135,16 +134,6 @@ export function Floorplan2D({ onLoadExample }: Props) {
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
   const isEmpty = walls.length === 0;
-
-  // Style Guide §4.2 — envelope poché as a single SVG path with evenodd.
-  // We trace the apartment outer ring + each room ring as a hole. The result
-  // fills the area BETWEEN them (= wall thickness strip) with no visible
-  // miter seams. Per-wall polygons below remain for hit-testing only
-  // (transparent fill, accent stroke when selected).
-  const envelopePath = useMemo(() => {
-    const env = buildWallEnvelope(walls);
-    return env ? envelopeToPath(env) : null;
-  }, [walls]);
 
   // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
   // Two-pass approach: render an invisible measurement layer first, read each
@@ -666,41 +655,35 @@ export function Floorplan2D({ onLoadExample }: Props) {
           ))}
         </g>
 
-        {/* Wall envelope poché — single path with fill-rule evenodd.
-            Style Guide §4.2: outer ring + room rings as holes → continuous
-            wall fill with NO internal miter seams. */}
-        {envelopePath && (
-          <path
-            d={envelopePath}
-            fill={PALETTE.wallFill}
-            fillRule="evenodd"
-            stroke={PALETTE.ink}
-            strokeWidth={1.2}
-            strokeLinejoin="miter"
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
-
-        {/* Walls — invisible fill (envelope already paints the poché), but
-            still clickable for hit-test + selection stroke. */}
+        {/* Walls — solid fill per wall (Fase A). Each polygon is the
+            mitered quad from `getWallCorners`, so adjacent walls share
+            their corner vertices and there are no visible seams between
+            them — the look is identical to a continuous envelope but
+            every wall stays individually hit-testable. The strokeWidth
+            stays constant across selection states; only the colour
+            changes (ink → accent) so the wall never appears to "inflate"
+            when clicked. */}
         <g className="walls">
           {walls.map((w) => {
             const c = corners.get(w.id);
             if (!c) return null;
             const isSel = selected.includes(w.id);
             const isHov = hovered === w.id;
-            const showOutline = isSel || isHov;
-            const stroke = isSel ? PALETTE.accent : PALETTE.hoverStroke;
+            const stroke = isSel
+              ? PALETTE.accent
+              : isHov
+                ? PALETTE.hoverStroke
+                : PALETTE.ink;
             return (
               <polygon
                 key={w.id}
                 data-node-id={w.id}
                 points={cornersToSvg(c)}
-                fill="transparent"
-                stroke={showOutline ? stroke : "transparent"}
-                strokeWidth={isSel ? 2 : 1.5}
-                strokeLinejoin="round"
+                fill={PALETTE.wallFill}
+                stroke={stroke}
+                strokeWidth={1.2}
+                strokeLinejoin="miter"
+                strokeMiterlimit={6}
                 vectorEffect="non-scaling-stroke"
                 onPointerOver={(e) => { e.stopPropagation(); setHover(w.id); }}
                 onPointerOut={(e) => { e.stopPropagation(); setHover(null); }}
