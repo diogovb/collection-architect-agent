@@ -1,22 +1,36 @@
 "use client";
 
-// Floating tool toolbar (top-right): Selecionar / Mover / Parede / Cota.
-// Keyboard shortcuts: V (select), M (move), W (wall), D (dimension), Esc (back to select).
+// Floating tool toolbar (top-right): Selecionar / Parede / Cota / Snap.
+// Keyboard shortcuts:
+//   V — select (default)
+//   M — move (alias of select; preserved for muscle memory)
+//   W — wall draw
+//   D — dimension (manual cota)
+//   S — toggle snap
+//   Esc — back to select
 
 import { useEffect } from "react";
 import { useSceneStore } from "@/lib/scene/store";
 import type { Tool } from "@/lib/scene/types";
 
-const TOOLS: { id: Tool; label: string; key: string; hint: string }[] = [
-  { id: "select", label: "Selecionar", key: "V", hint: "Selecionar elementos" },
-  { id: "move", label: "Mover", key: "M", hint: "Mover seleção" },
-  { id: "wall", label: "Parede", key: "W", hint: "Desenhar nova parede (clique para iniciar e finalizar)" },
-  { id: "dimension", label: "Cota", key: "D", hint: "Anotar dimensão manual" },
+interface ToolDef {
+  id: Tool;
+  label: string;
+  key: string;
+  hint: string;
+}
+
+const TOOLS: ToolDef[] = [
+  { id: "select", label: "Selecionar", key: "V", hint: "Selecionar e mover (V/M)" },
+  { id: "wall", label: "Parede", key: "W", hint: "Desenhar nova parede (clique 1: anchor, clique 2: cria)" },
+  { id: "dimension", label: "Cota", key: "D", hint: "Anotar dimensão manual (clique 1: anchor, clique 2: cria)" },
 ];
 
 export function Toolbar() {
   const tool = useSceneStore((s) => s.tool);
   const setTool = useSceneStore((s) => s.setTool);
+  const snapEnabled = useSceneStore((s) => s.snapEnabled);
+  const setSnapEnabled = useSceneStore((s) => s.setSnapEnabled);
 
   useEffect(() => {
     function isTyping(): boolean {
@@ -29,15 +43,19 @@ export function Toolbar() {
     function onKey(e: KeyboardEvent) {
       if (isTyping() || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "v") { setTool("select"); e.preventDefault(); }
-      else if (k === "m") { setTool("move"); e.preventDefault(); }
-      else if (k === "w") { setTool("wall"); e.preventDefault(); }
+      if (k === "v" || k === "m") {
+        // M used to be its own "Mover" tool but it duplicated select+drag
+        // semantics. Both keys now resolve to select.
+        setTool("select");
+        e.preventDefault();
+      } else if (k === "w") { setTool("wall"); e.preventDefault(); }
       else if (k === "d") { setTool("dimension"); e.preventDefault(); }
+      else if (k === "s") { setSnapEnabled(!snapEnabled); e.preventDefault(); }
       else if (e.key === "Escape") { setTool("select"); }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setTool]);
+  }, [setTool, setSnapEnabled, snapEnabled]);
 
   return (
     <div
@@ -84,6 +102,45 @@ export function Toolbar() {
           </button>
         );
       })}
+
+      {/* Vertical separator */}
+      <span
+        style={{
+          width: 1,
+          background: "var(--line)",
+          margin: "4px 4px",
+          alignSelf: "stretch",
+        }}
+      />
+
+      {/* Snap toggle — magnet glyph + on/off chip. */}
+      <button
+        title={`Snap a grid 10 cm + cantos de parede ${snapEnabled ? "ATIVO" : "DESLIGADO"} (S)`}
+        onClick={() => setSnapEnabled(!snapEnabled)}
+        style={{
+          padding: "5px 10px",
+          borderRadius: 999,
+          background: snapEnabled ? "var(--accent)" : "transparent",
+          color: snapEnabled ? "var(--bg)" : "var(--muted)",
+          border: "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+        }}
+      >
+        {/* Magnet glyph (U-shape) drawn inline so we don't bring an icon lib. */}
+        <svg width="11" height="11" viewBox="0 0 11 11" aria-hidden="true">
+          <path
+            d="M1.5 2 L1.5 6.2 A4 4 0 0 0 9.5 6.2 L9.5 2 L7.5 2 L7.5 6.2 A2 2 0 0 1 3.5 6.2 L3.5 2 Z"
+            fill="currentColor"
+          />
+          <rect x="1.5" y="2" width="2" height="1.6" fill="currentColor" />
+          <rect x="7.5" y="2" width="2" height="1.6" fill="currentColor" />
+        </svg>
+        <span>Snap</span>
+        <span style={{ opacity: 0.6, fontSize: 9 }}>S</span>
+      </button>
     </div>
   );
 }

@@ -50,7 +50,8 @@ export function beginFurnitureDrag(
   const update = (world: Vec2) => {
     const fNow = useSceneStore.getState().nodes[id] as FurnitureNode | undefined;
     if (!fNow) return;
-    const corner = snapVec2({ x: world.x - offsetX, z: world.z - offsetZ });
+    const raw = { x: world.x - offsetX, z: world.z - offsetZ };
+    const corner = useSceneStore.getState().snapEnabled ? snapVec2(raw) : raw;
     let cornerX = corner.x;
     let cornerZ = corner.z;
     if (fNow.roomId) {
@@ -110,7 +111,10 @@ export function beginOpeningSlide(
     const delta = along - startAlong;
     const wallLen = Math.hypot(wNow.end.x - wNow.start.x, wNow.end.z - wNow.start.z);
     const half = oNow.width / 2;
-    const proposed = snapToGrid(startOffset + delta);
+    const rawOffset = startOffset + delta;
+    const proposed = useSceneStore.getState().snapEnabled
+      ? snapToGrid(rawOffset)
+      : rawOffset;
     const clamped = Math.max(half, Math.min(wallLen - half, proposed));
     useSceneStore.getState().setLive(id, { offset: clamped });
   };
@@ -131,12 +135,45 @@ function newWallId(): string {
   return `wall:user-${Date.now().toString(36)}-${_wallSeq}`;
 }
 
-/** Snap a candidate point to existing wall endpoints, then to a 10 cm grid. */
+/** Snap a candidate point to existing wall endpoints, then to a 10 cm grid.
+ *  Returns the input unchanged when snap is globally disabled. */
 export function snapDrawPoint(p: Vec2): Vec2 {
-  const walls = Object.values(useSceneStore.getState().nodes).filter(
+  const state = useSceneStore.getState();
+  if (!state.snapEnabled) return p;
+  const walls = Object.values(state.nodes).filter(
     (n) => n.type === "wall"
   ) as WallNode[];
   return snapToEndpoints(snapVec2(p), walls, 0.20).snapped;
+}
+
+// ---- Manual dimension creation ---------------------------------------------
+
+let _dimSeq = 0;
+function newDimId(): string {
+  _dimSeq += 1;
+  return `dim:manual-${Date.now().toString(36)}-${_dimSeq}`;
+}
+
+/** Create a manual DimensionNode between two world points.
+ *  Default offset = 0.6 m perpendicular to the line (Style Guide §8.4: 14 px
+ *  internal, ~ 0.6 m externally). */
+export function commitManualDimension(start: Vec2, end: Vec2): NodeId {
+  const store = useSceneStore.getState();
+  const id = newDimId();
+  const node = {
+    id,
+    type: "dimension" as const,
+    parentId: store.activeLevelId,
+    start,
+    end,
+    offset: 0.6,
+    scope: "manual" as const,
+  };
+  // The DimensionNode shape is defined in lib/scene/types.ts. Cast through
+  // unknown so we can add it without re-importing the type here (the store's
+  // addNode is generic over AnyNode).
+  store.addNode(node as unknown as Parameters<typeof store.addNode>[0]);
+  return id;
 }
 
 /** Commit a new wall from the anchor to the snapped end point, then re-derive

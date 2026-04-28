@@ -12,6 +12,7 @@ import {
   beginFurnitureDrag,
   beginOpeningSlide,
   commitDrawWall,
+  commitManualDimension,
   snapDrawPoint,
   type FurnitureDragSession,
   type OpeningSlideSession,
@@ -24,36 +25,42 @@ interface WallDrawState {
   anchor?: Vec2;
 }
 
+interface DimensionDrawState {
+  phase: "idle" | "anchored";
+  anchor?: Vec2;
+}
+
 export interface SvgToolHandlers {
   beginFurnitureDrag: (id: NodeId, clientX: number, clientY: number) => void;
   beginOpeningSlide: (id: NodeId, clientX: number, clientY: number) => void;
   onSvgBackgroundClick: (clientX: number, clientY: number) => void;
   onSvgBackgroundMove: (clientX: number, clientY: number) => void;
   wallDraw: { state: WallDrawState; pointerWorld: Vec2 | null };
+  dimensionDraw: { state: DimensionDrawState; pointerWorld: Vec2 | null };
 }
 
 export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
   const furnitureRef = useRef<FurnitureDragSession | null>(null);
   const slideRef = useRef<OpeningSlideSession | null>(null);
   const [wallDrawState, setWallDrawState] = useState<WallDrawState>({ phase: "idle" });
+  const [dimDrawState, setDimDrawState] = useState<DimensionDrawState>({ phase: "idle" });
   const [pointerWorld, setPointerWorld] = useState<Vec2 | null>(null);
 
   const tool = useSceneStore((s) => s.tool);
 
-  // Reset wall-draw whenever the active tool changes away.
+  // Reset transient draw state whenever the active tool changes away.
   useEffect(() => {
-    if (tool !== "wall") {
-      setWallDrawState({ phase: "idle" });
-      setPointerWorld(null);
-    }
+    if (tool !== "wall") setWallDrawState({ phase: "idle" });
+    if (tool !== "dimension") setDimDrawState({ phase: "idle" });
+    if (tool !== "wall" && tool !== "dimension") setPointerWorld(null);
   }, [tool]);
 
-  // ESC to cancel wall-draw.
+  // ESC to cancel any draw mode.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && tool === "wall") {
-        setWallDrawState({ phase: "idle" });
-      }
+      if (e.key !== "Escape") return;
+      if (tool === "wall") setWallDrawState({ phase: "idle" });
+      if (tool === "dimension") setDimDrawState({ phase: "idle" });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -117,7 +124,7 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
 
   const onSvgBackgroundMove = useCallback(
     (clientX: number, clientY: number) => {
-      if (tool !== "wall") return;
+      if (tool !== "wall" && tool !== "dimension") return;
       setPointerWorld(snapDrawPoint(screenToWorld(clientX, clientY)));
     },
     [tool, screenToWorld]
@@ -125,19 +132,34 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
 
   const onSvgBackgroundClick = useCallback(
     (clientX: number, clientY: number) => {
-      if (tool !== "wall") return;
       const snapped = snapDrawPoint(screenToWorld(clientX, clientY));
-      if (wallDrawState.phase === "idle") {
-        setWallDrawState({ phase: "anchored", anchor: snapped });
+
+      if (tool === "wall") {
+        if (wallDrawState.phase === "idle") {
+          setWallDrawState({ phase: "anchored", anchor: snapped });
+          return;
+        }
+        if (wallDrawState.phase === "anchored" && wallDrawState.anchor) {
+          commitDrawWall(wallDrawState.anchor, snapped);
+          setWallDrawState({ phase: "anchored", anchor: snapped });
+        }
         return;
       }
-      if (wallDrawState.phase === "anchored" && wallDrawState.anchor) {
-        commitDrawWall(wallDrawState.anchor, snapped);
-        // Chain: anchor at endpoint so the next click extends the wall run.
-        setWallDrawState({ phase: "anchored", anchor: snapped });
+
+      if (tool === "dimension") {
+        // Two-click manual dimension. First click anchors the start, second
+        // click commits a DimensionNode between the two snapped points.
+        if (dimDrawState.phase === "idle") {
+          setDimDrawState({ phase: "anchored", anchor: snapped });
+          return;
+        }
+        if (dimDrawState.phase === "anchored" && dimDrawState.anchor) {
+          commitManualDimension(dimDrawState.anchor, snapped);
+          setDimDrawState({ phase: "idle" });
+        }
       }
     },
-    [tool, screenToWorld, wallDrawState]
+    [tool, screenToWorld, wallDrawState, dimDrawState]
   );
 
   return {
@@ -145,6 +167,10 @@ export function useSvgTools(screenToWorld: ScreenToWorld): SvgToolHandlers {
     beginOpeningSlide: handleBeginOpeningSlide,
     onSvgBackgroundClick,
     onSvgBackgroundMove,
-    wallDraw: { state: wallDrawState, pointerWorld },
+    wallDraw: { state: wallDrawState, pointerWorld: tool === "wall" ? pointerWorld : null },
+    dimensionDraw: {
+      state: dimDrawState,
+      pointerWorld: tool === "dimension" ? pointerWorld : null,
+    },
   };
 }

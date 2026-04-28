@@ -402,8 +402,10 @@ export function Floorplan2D({ onLoadExample }: Props) {
     panRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: v.x, vy: v.y };
   };
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    // Wall-draw preview tracking — runs every move when the tool is active.
-    if (tool === "wall") tools.onSvgBackgroundMove(e.clientX, e.clientY);
+    // Wall + dimension draw preview tracking.
+    if (tool === "wall" || tool === "dimension") {
+      tools.onSvgBackgroundMove(e.clientX, e.clientY);
+    }
     const p = panRef.current;
     if (!p || p.pointerId !== e.pointerId) return;
     const svg = svgRef.current;
@@ -438,8 +440,8 @@ export function Floorplan2D({ onLoadExample }: Props) {
   };
 
   const onBackgroundClick = (e: ReactMouseEvent<SVGSVGElement>) => {
-    // When the wall-draw tool is active, route clicks to the tool layer.
-    if (tool === "wall") {
+    // Wall and dimension draw modes intercept background clicks.
+    if (tool === "wall" || tool === "dimension") {
       tools.onSvgBackgroundClick(e.clientX, e.clientY);
       return;
     }
@@ -458,11 +460,11 @@ export function Floorplan2D({ onLoadExample }: Props) {
           height: "100%",
           display: "block",
           touchAction: "none",
-          // Wall-draw shows crosshair so the click target is unambiguous; pan
-          // shows grabbing once the gesture has started.
+          // Wall + dimension draw show crosshair so the click target is
+          // unambiguous; pan shows grabbing once the gesture has started.
           cursor: panRef.current
             ? "grabbing"
-            : tool === "wall"
+            : tool === "wall" || tool === "dimension"
               ? "crosshair"
               : "default",
         }}
@@ -956,6 +958,48 @@ export function Floorplan2D({ onLoadExample }: Props) {
                 fill="none"
                 stroke={PALETTE.accent}
                 strokeWidth={1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+          </g>
+        )}
+
+        {/* Dimension-draw tool overlay: same visual language as wall-draw,
+            but only renders the anchor + ghost line. The committed
+            DimensionNode then takes over rendering through <DimensionSvg>. */}
+        {tool === "dimension" && (
+          <g className="dimension-draw-overlay" pointerEvents="none">
+            {tools.dimensionDraw.state.phase === "anchored" &&
+              tools.dimensionDraw.state.anchor && (
+                <circle
+                  cx={tools.dimensionDraw.state.anchor.x}
+                  cy={tools.dimensionDraw.state.anchor.z}
+                  r={0.08}
+                  fill={PALETTE.accent}
+                />
+              )}
+            {tools.dimensionDraw.state.phase === "anchored" &&
+              tools.dimensionDraw.state.anchor &&
+              tools.dimensionDraw.pointerWorld && (
+                <line
+                  x1={tools.dimensionDraw.state.anchor.x}
+                  y1={tools.dimensionDraw.state.anchor.z}
+                  x2={tools.dimensionDraw.pointerWorld.x}
+                  y2={tools.dimensionDraw.pointerWorld.z}
+                  stroke={PALETTE.accent}
+                  strokeWidth={1.5}
+                  strokeDasharray="3 3"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+            {tools.dimensionDraw.pointerWorld && (
+              <circle
+                cx={tools.dimensionDraw.pointerWorld.x}
+                cy={tools.dimensionDraw.pointerWorld.z}
+                r={0.05}
+                fill="none"
+                stroke={PALETTE.accent}
+                strokeWidth={1.2}
                 vectorEffect="non-scaling-stroke"
               />
             )}

@@ -47,7 +47,25 @@ function emptyScene(): SceneState {
     diagnostics: [],
     tool: "select",
     viewMode: "2d",
+    snapEnabled: readSnapPreference(),
   };
+}
+
+/** Snap preference is user-level (not per-project). Persisted in localStorage
+ *  so toggling it once carries across reloads. Default ON. */
+const SNAP_LS_KEY = "ca:snapEnabled";
+function readSnapPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  const v = window.localStorage.getItem(SNAP_LS_KEY);
+  return v === null ? true : v === "1";
+}
+function writeSnapPreference(v: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SNAP_LS_KEY, v ? "1" : "0");
+  } catch {
+    // storage may be disabled — silently ignore.
+  }
 }
 
 interface SceneStore extends SceneState {
@@ -72,6 +90,7 @@ interface SceneStore extends SceneState {
   setHover: (id: NodeId | null) => void;
   setTool: (tool: Tool) => void;
   setViewMode: (mode: ViewMode) => void;
+  setSnapEnabled: (enabled: boolean) => void;
 
   // Ephemeral transforms (drag previews)
   setLive: (
@@ -187,6 +206,10 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
   setHover: (id) => set({ hovered: id }),
   setTool: (tool) => set({ tool }),
   setViewMode: (mode) => set({ viewMode: mode }),
+  setSnapEnabled: (enabled) => {
+    writeSnapPreference(enabled);
+    set({ snapEnabled: enabled });
+  },
 
   setLive: (id, transform) =>
     set((state) => {

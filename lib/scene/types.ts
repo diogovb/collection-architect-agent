@@ -227,6 +227,9 @@ export interface SceneState {
   tool: Tool;
   /** Current view mode. */
   viewMode: ViewMode;
+  /** When true, drags snap to a 10 cm grid + wall endpoints. The user can
+   *  toggle this via the toolbar magnet button or by pressing S. */
+  snapEnabled: boolean;
 }
 
 // ---- Type guards ----
