@@ -300,10 +300,12 @@ function SceneContents() {
             onPointerOver={(e) => { e.stopPropagation(); setHover(f.id); }}
             onPointerOut={(e) => { e.stopPropagation(); setHover(null); }}
             onClick={(e) => { e.stopPropagation(); toggleSelection(f.id, e.shiftKey); }}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              startFurnitureDrag(f.id, e.nativeEvent.clientX, e.nativeEvent.clientY);
-            }}
+            // Plain click on the mesh selects but does NOT start a drag —
+            // we let the event bubble so OrbitControls can grab subsequent
+            // pointer moves and rotate the camera. Only the dedicated
+            // gizmo above the selected furniture initiates a translate.
+            onPointerDown={() => {}}
+            onGizmoPointerDown={(cx, cy) => startFurnitureDrag(f.id, cx, cy)}
           />
         );
       })}

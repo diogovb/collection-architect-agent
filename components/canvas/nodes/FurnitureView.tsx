@@ -37,6 +37,11 @@ interface Props {
   onPointerOut: (e: ThreeEvent<PointerEvent>) => void;
   onClick: (e: ThreeEvent<MouseEvent>) => void;
   onPointerDown: (e: ThreeEvent<PointerEvent>) => void;
+  /** Drag gizmo handler (Fase K, 3D only). Fired when the user grabs the
+   *  small accent sphere that hovers above the selected furniture in 3D.
+   *  Lets the body of the mesh stay click/orbit-friendly while still
+   *  exposing a clear "move me" affordance. */
+  onGizmoPointerDown?: (clientX: number, clientY: number) => void;
 }
 
 const FURNITURE_COLORS: Record<string, string> = {
@@ -81,6 +86,7 @@ export function FurnitureView({
   onPointerOut,
   onClick,
   onPointerDown,
+  onGizmoPointerDown,
 }: Props) {
   const baseColor = colorFor(furniture.catalogId);
   const stroke = selected ? PALETTE.accent : hovered ? PALETTE.hoverStroke : PALETTE.ink;
@@ -155,6 +161,21 @@ export function FurnitureView({
       <mesh geometry={hull} renderOrder={-1}>
         <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
       </mesh>
+      {selected && onGizmoPointerDown && (
+        <mesh
+          position={[0, furniture.dimensions.y / 2 + 0.18, 0]}
+          renderOrder={10}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            e.stopPropagation();
+            onGizmoPointerDown(e.nativeEvent.clientX, e.nativeEvent.clientY);
+            document.body.style.cursor = "grabbing";
+          }}
+        >
+          <sphereGeometry args={[0.09, 24, 24]} />
+          <meshBasicMaterial color={PALETTE.accent} />
+        </mesh>
+      )}
     </group>
   );
 }
