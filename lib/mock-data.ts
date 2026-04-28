@@ -8,11 +8,19 @@ import type {
 } from "./intento-types";
 import type { FloorPlan, ToolName } from "./types";
 
-/** Inline status for a single tool call inside a chat message. */
+/** Inline status for a tool call (or grouped run of identical tool calls)
+ *  inside a chat message. When the agent fires the same tool multiple times
+ *  in a row we group them under one entry: `count` shows the total and
+ *  `status` is the aggregate (running while any is pending, error if any
+ *  failed, done when all succeeded). `id` is the first call's id (kept for
+ *  backwards-compat with seeded messages); the streaming code keeps the
+ *  internal map of per-id statuses to compute the aggregate. */
 export interface ToolCallStatus {
   id: string;
   name: ToolName;
   status: "running" | "done" | "error";
+  /** Number of merged invocations of this same tool. Default 1 = single. */
+  count?: number;
 }
 
 /* -------------------- Seed floor plan --------------------

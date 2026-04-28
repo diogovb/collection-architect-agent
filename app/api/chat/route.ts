@@ -120,67 +120,105 @@ export async function POST(req: Request) {
             messages: conversation,
           });
 
-          const announcedToolIds = new Set<string>();
+          // Real-time tool execution (Fase T2). The previous version waited
+          // for `sdkStream.finalMessage()` before running any tool — meaning
+          // the canvas only mutated after the agent had emitted ALL tool
+          // calls in the iteration. Now we accumulate input JSON deltas
+          // per content-block index and, on `content_block_stop`, execute
+          // the tool and emit `tool_input`/`tool_result` IMMEDIATELY.
+          interface ToolBuffer {
+            id: string;
+            name: ToolName;
+            json: string;
+          }
+          const toolBuffers = new Map<number, ToolBuffer>();
+          const accumulatedContent: Anthropic.ContentBlockParam[] = [];
+          const blockIndexToOrdinal = new Map<number, number>();
+          const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          let mutationsHappened = false;
+          let stopReason: string | null = null;
 
           for await (const ev of sdkStream) {
             if (ev.type === "content_block_start") {
               const cb = ev.content_block;
-              if (cb.type === "tool_use" && !announcedToolIds.has(cb.id)) {
-                announcedToolIds.add(cb.id);
+              if (cb.type === "tool_use") {
                 send({ type: "tool_start", id: cb.id, name: cb.name as ToolName });
+                toolBuffers.set(ev.index, { id: cb.id, name: cb.name as ToolName, json: "" });
+                blockIndexToOrdinal.set(ev.index, accumulatedContent.length);
+                accumulatedContent.push({
+                  type: "tool_use",
+                  id: cb.id,
+                  name: cb.name,
+                  input: {},
+                });
+              } else if (cb.type === "text") {
+                blockIndexToOrdinal.set(ev.index, accumulatedContent.length);
+                accumulatedContent.push({ type: "text", text: "" });
               }
             } else if (ev.type === "content_block_delta") {
               const d = ev.delta;
               if (d.type === "text_delta") {
                 send({ type: "text_delta", text: d.text });
+                const ord = blockIndexToOrdinal.get(ev.index);
+                if (ord !== undefined) {
+                  const blk = accumulatedContent[ord];
+                  if (blk && blk.type === "text") blk.text += d.text;
+                }
+              } else if (d.type === "input_json_delta") {
+                const buf = toolBuffers.get(ev.index);
+                if (buf) buf.json += d.partial_json;
               }
+            } else if (ev.type === "content_block_stop") {
+              const buf = toolBuffers.get(ev.index);
+              if (!buf) continue;
+              let input: unknown = {};
+              try {
+                input = JSON.parse(buf.json || "{}");
+              } catch {
+                // partial / malformed JSON — bail with empty object so the
+                // tool can return an error message rather than crashing.
+              }
+              const ord = blockIndexToOrdinal.get(ev.index);
+              if (ord !== undefined) {
+                const blk = accumulatedContent[ord];
+                if (blk && blk.type === "tool_use") {
+                  (blk as { input: unknown }).input = input;
+                }
+              }
+              send({ type: "tool_input", id: buf.id, input });
+              let ok: boolean;
+              let message: string;
+              if (buf.name === "search_knowledge_base") {
+                const r = await runKnowledgeSearch(input);
+                ok = r.ok;
+                message = r.message;
+              } else {
+                const r = applyTool(localPlan, buf.name, input);
+                ok = r.ok;
+                message = r.message;
+                mutationsHappened = mutationsHappened || ok;
+              }
+              send({ type: "tool_result", id: buf.id, ok, message });
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: buf.id,
+                content: message,
+                is_error: !ok,
+              });
+              toolBuffers.delete(ev.index);
+            } else if (ev.type === "message_delta") {
+              if (ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
             }
           }
 
-          const final = await sdkStream.finalMessage();
-
-          // Collect any tool uses to execute
-          const toolUses: { id: string; name: ToolName; input: unknown }[] = [];
-          for (const block of final.content) {
-            if (block.type === "tool_use") {
-              toolUses.push({ id: block.id, name: block.name as ToolName, input: block.input });
-            }
-          }
-
-          if (final.stop_reason !== "tool_use" || toolUses.length === 0) {
+          if (stopReason !== "tool_use" || toolResults.length === 0) {
             break;
           }
 
-          // Append assistant message (with original content blocks) to conversation
-          conversation.push({ role: "assistant", content: final.content });
-
-          // Execute tools and emit results
-          const toolResults: Anthropic.ToolResultBlockParam[] = [];
-          let mutationsHappened = false;
-          for (const tu of toolUses) {
-            send({ type: "tool_input", id: tu.id, input: tu.input });
-            let ok: boolean;
-            let message: string;
-            if (tu.name === "search_knowledge_base") {
-              const r = await runKnowledgeSearch(tu.input);
-              ok = r.ok;
-              message = r.message;
-            } else {
-              const r = applyTool(localPlan, tu.name, tu.input);
-              ok = r.ok;
-              message = r.message;
-              mutationsHappened = mutationsHappened || ok;
-            }
-            send({ type: "tool_result", id: tu.id, ok, message });
-            toolResults.push({
-              type: "tool_result",
-              tool_use_id: tu.id,
-              content: message,
-              is_error: !ok,
-            });
-          }
-
-          conversation.push({ role: "user", content: toolResults });
+          // Append the assistant message and the synthesized tool_results
+          // user message so the next iteration of the agent sees the full
+          // conversation context.
+          conversation.push({ role: "assistant", content: accumulatedContent });
 
           // After mutations, run validators and surface issues to the agent.
           // Cap at MAX_VALIDATOR_ROUNDS to avoid infinite self-correction loops.

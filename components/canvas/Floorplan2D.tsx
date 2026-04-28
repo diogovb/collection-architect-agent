@@ -145,6 +145,20 @@ export function Floorplan2D({ onLoadExample }: Props) {
   const envelopeOutlinePath = useMemo(() => buildWallOutlinePath(walls), [walls]);
   const isEmpty = walls.length === 0;
 
+  // Hide the "Comece pedindo ao agente" overlay the moment the user fires
+  // off a request — even before the first wall lands. ChatPanel dispatches
+  // `ca:agent-busy` { busy: true } on send, false on completion (Fase T).
+  const [agentBusy, setAgentBusy] = useState(false);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ busy: boolean }>).detail;
+      setAgentBusy(!!detail?.busy);
+    };
+    window.addEventListener("ca:agent-busy", handler as EventListener);
+    return () => window.removeEventListener("ca:agent-busy", handler as EventListener);
+  }, []);
+  const showEmptyState = isEmpty && !agentBusy;
+
   // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
   // Two-pass approach: render an invisible measurement layer first, read each
   // <text>'s real bbox via getBBox(), then run greedy collision avoidance.
@@ -1150,7 +1164,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
       <FloorplanContextMenu svgRef={svgRef} selected={selected} liveSig={liveTransforms.size} />
 
       {/* Empty state overlay */}
-      {isEmpty && (
+      {showEmptyState && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="card p-6 max-w-sm text-center pointer-events-auto fade-up">
             <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-accent">PROJETO VAZIO</div>

@@ -229,6 +229,13 @@ export function ChatPanel({
     setStreamingBlocks([]);
     setInput("");
     setBusy(true);
+    // Tell the canvas an agent request just started so its empty state
+    // (`Comece pedindo ao agente`) hides immediately — without this it
+    // would only disappear once the first wall is created, which can
+    // take seconds.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("ca:agent-busy", { detail: { busy: true } }));
+    }
 
     const apiHistory = [...history, userMsg]
       .filter((m) => m.role === "user" || m.role === "assistant")
@@ -236,9 +243,14 @@ export function ChatPanel({
 
     // Block accumulator. Each text_delta either appends to the last text
     // block or opens a new one (right after a tool block). Each tool_start
-    // pushes a fresh tool block. tool_result patches the matching tool
-    // status. The order of arrival defines the order of render.
+    // pushes a fresh tool block — UNLESS the previous block is the same
+    // tool name and still running, in which case we GROUP the calls (count
+    // increments, status remains aggregate). tool_result updates the
+    // per-id tracking and recomputes the aggregate status.
     const blocks: ChatBlock[] = [];
+    // For each block index that holds a tool, track the per-id status so
+    // we can recompute the aggregate when a tool_result lands.
+    const toolStatusByBlock = new Map<number, Map<string, "running" | "done" | "error">>();
 
     function commitBlocks(): ChatBlock[] {
       // Compact consecutive text blocks (paranoia — should only occur in
@@ -266,20 +278,44 @@ export function ChatPanel({
     }
 
     function startTool(id: string, name: ToolName) {
+      const last = blocks[blocks.length - 1];
+      // Group consecutive identical tool calls — keeps the chat tidy
+      // when the agent fires `add_furniture` 8 times in a row.
+      if (last && last.type === "tool" && last.tool.name === name) {
+        const lastIdx = blocks.length - 1;
+        const map = toolStatusByBlock.get(lastIdx);
+        if (map) {
+          map.set(id, "running");
+          last.tool = {
+            ...last.tool,
+            status: aggregateStatus(map),
+            count: (last.tool.count ?? 1) + 1,
+          };
+          setStreamingBlocks([...blocks]);
+          return;
+        }
+      }
+      // New block.
       blocks.push({
         type: "tool",
-        tool: { id, name, status: "running" },
+        tool: { id, name, status: "running", count: 1 },
       });
+      const idx = blocks.length - 1;
+      const map = new Map<string, "running" | "done" | "error">();
+      map.set(id, "running");
+      toolStatusByBlock.set(idx, map);
       setStreamingBlocks([...blocks]);
     }
 
     function patchTool(id: string, ok: boolean) {
       for (let i = blocks.length - 1; i >= 0; i--) {
         const b = blocks[i];
-        if (b.type === "tool" && b.tool.id === id) {
-          b.tool = { ...b.tool, status: ok ? "done" : "error" };
-          break;
-        }
+        if (b.type !== "tool") continue;
+        const map = toolStatusByBlock.get(i);
+        if (!map?.has(id)) continue;
+        map.set(id, ok ? "done" : "error");
+        b.tool = { ...b.tool, status: aggregateStatus(map) };
+        break;
       }
       setStreamingBlocks([...blocks]);
     }
@@ -355,6 +391,9 @@ export function ChatPanel({
       setStreamingId(null);
       setStreamingBlocks([]);
       setBusy(false);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("ca:agent-busy", { detail: { busy: false } }));
+      }
     }
   }
 
@@ -610,9 +649,20 @@ function userActionGlyph(kind: string): string {
   }
 }
 
+/** Aggregate the per-id status of a grouped tool block. */
+function aggregateStatus(
+  map: Map<string, "running" | "done" | "error">,
+): "running" | "done" | "error" {
+  const arr = [...map.values()];
+  if (arr.includes("running")) return "running";
+  if (arr.includes("error")) return "error";
+  return "done";
+}
+
 function ToolIndicator({ tc }: { tc: ToolCallStatus }) {
   const label = TOOL_LABEL_PT[tc.name] ?? tc.name;
   const isError = tc.status === "error";
+  const count = tc.count ?? 1;
   return (
     <div
       className={`flex items-center gap-2 rounded-md border bg-panel-alt px-2 py-1 text-[11px] fade-up ${
@@ -627,6 +677,11 @@ function ToolIndicator({ tc }: { tc: ToolCallStatus }) {
         {tc.name}
       </span>
       <span className="text-ink">{label}</span>
+      {count > 1 && (
+        <span className="font-mono text-[10px] text-accent tracking-[0.04em]">
+          · {count} {count === 1 ? "item" : "itens"}
+        </span>
+      )}
       <span className="ml-auto text-[11px] leading-none">
         {tc.status === "running" ? (
           <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin align-middle" />
