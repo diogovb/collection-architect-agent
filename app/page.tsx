@@ -6,6 +6,7 @@ import { useIntentoState } from "@/lib/use-intento-state";
 import { useFloorPlanBridge } from "@/lib/scene/bridge";
 import { useSceneStore } from "@/lib/scene/store";
 import { logRemove } from "@/lib/scene/user-action-log";
+import { useSceneKeyboardShortcuts } from "@/lib/scene/use-keyboard-shortcuts";
 import { TopBar } from "@/components/intento/TopBar";
 import { LeftNav } from "@/components/intento/LeftNav";
 import { RightPanel } from "@/components/intento/RightPanel";
@@ -26,6 +27,10 @@ const NUDGE_M = 0.1; // arrow-key nudge step
 export default function Page() {
   const v = useIntentoState();
   const { selected, setSelected, plan, setPlan, mode } = v;
+
+  // Global Delete / Esc / Ctrl+Z shortcuts on the scene store (Fase U).
+  // Operates on the multi-select array so Shift+click then Delete works.
+  useSceneKeyboardShortcuts();
 
   // Sync the legacy FloorPlan state into the new SceneStore on every change.
   useFloorPlanBridge(plan);

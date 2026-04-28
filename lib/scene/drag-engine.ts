@@ -30,6 +30,7 @@ import { applyAutoDimensions } from "./auto-dimensions";
 import { logEditOpening, logMove } from "./user-action-log";
 import { resolveCorner } from "./collision";
 import { findJunction, JUNCTION_TOLERANCE } from "./junctions";
+import { pushUndoSnapshot } from "./use-undo-redo";
 
 // ---- Furniture drag --------------------------------------------------------
 
@@ -103,6 +104,7 @@ export function beginFurnitureDrag(
   };
 
   const commit = () => {
+    pushUndoSnapshot();
     const fAfter = useSceneStore.getState().nodes[id] as FurnitureNode | undefined;
     const live = useSceneStore.getState().liveTransforms.get(id);
     const finalX = live?.position?.x ?? fAfter?.position.x ?? startX;
@@ -161,6 +163,7 @@ export function beginOpeningSlide(
   };
 
   const commit = () => {
+    pushUndoSnapshot();
     const live = useSceneStore.getState().liveTransforms.get(id);
     const finalOffset = live?.offset ?? startOffset;
     useSceneStore.getState().commitLive(id);
@@ -290,6 +293,7 @@ export function beginWallEndpointDrag(
   };
 
   const commit = () => {
+    pushUndoSnapshot();
     cleanupKeys();
     const store = useSceneStore.getState();
     const live = store.liveTransforms.get(wallId);
@@ -413,6 +417,7 @@ export function beginWallTranslate(
   };
 
   const commit = () => {
+    pushUndoSnapshot();
     cleanupKeys();
     const store = useSceneStore.getState();
     store.commitLive(wallId);
@@ -488,6 +493,7 @@ export function beginDimensionOffsetDrag(
   };
 
   const commit = () => {
+    pushUndoSnapshot();
     const next = useSceneStore.getState().nodes[dimId];
     if (next && next.type === "dimension" && Math.abs(next.offset - startOffset) > 0.05) {
       import("./user-action-log").then(({ logEditOpening }) => {
@@ -551,6 +557,7 @@ export function commitManualDimension(start: Vec2, end: Vec2): NodeId {
  *  Applies angular snap (0°/45°/90°, ±5° tolerance) when snapEnabled so
  *  freshly-drawn walls click into ortho or diagonal axes naturally. */
 export function commitDrawWall(anchor: Vec2, end: Vec2): NodeId {
+  pushUndoSnapshot();
   const store = useSceneStore.getState();
   const finalEnd = store.snapEnabled ? snapAngle(anchor, end, 5) : end;
   const newWall: WallNode = {
