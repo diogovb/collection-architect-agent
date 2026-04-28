@@ -3,14 +3,16 @@
 import { useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useVibeState } from "@/lib/use-vibe-state";
+import { useFloorPlanBridge } from "@/lib/scene/bridge";
+import { useSceneStore } from "@/lib/scene/store";
 import { TopBar } from "@/components/vibe/TopBar";
 import { LeftNav } from "@/components/vibe/LeftNav";
 import { RightPanel } from "@/components/vibe/RightPanel";
 import { SelectionToolbar } from "@/components/vibe/SelectionToolbar";
 
-const Scene3D = dynamic(
-  () => import("@/components/vibe/Scene3D").then((m) => m.Scene3D),
-  { ssr: false, loading: () => <div className="w-full h-full bg-bg" /> }
+const Canvas = dynamic(
+  () => import("@/components/canvas/Canvas").then((m) => m.Canvas),
+  { ssr: false, loading: () => <div className="w-full h-full" style={{ background: "#FAF7F0" }} /> }
 );
 import { RenderMode } from "@/components/vibe/RenderMode";
 import { PresentationMode } from "@/components/vibe/PresentationMode";
@@ -23,6 +25,9 @@ const NUDGE_M = 0.1; // arrow-key nudge step
 export default function Page() {
   const v = useVibeState();
   const { selected, setSelected, plan, setPlan, mode } = v;
+
+  // Sync the legacy FloorPlan state into the new SceneStore on every change.
+  useFloorPlanBridge(plan);
 
   // ---- Selection mutations ----
   const removeSelected = useCallback(() => {
@@ -166,12 +171,7 @@ export default function Page() {
             <section className="flex-1 min-w-0 min-h-0 relative bg-bg overflow-hidden flex items-center justify-center">
               <SelectionToolbar plan={v.plan} selected={v.selected} />
               <div className="w-full h-full min-h-0 min-w-0">
-                <Scene3D
-                  plan={v.plan}
-                  selected={v.selected}
-                  onSelect={v.setSelected}
-                  onLoadExample={v.loadExample}
-                />
+                <Canvas onLoadExample={v.loadExample} />
               </div>
               {v.showDiff && v.diffTargetId === "wall-divisor" && (
                 <div className="absolute bottom-6 left-1/2 -translate-x-1/2 card p-3 px-4 flex items-center gap-3 fade-up shadow-md z-10">

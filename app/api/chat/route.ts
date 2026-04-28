@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { tools } from "@/lib/anthropic-tools";
+import { tools as legacyTools } from "@/lib/anthropic-tools";
 import { applyTool, summarizePlan } from "@/lib/floor-plan-engine";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
 import {
@@ -8,6 +8,34 @@ import {
   type KnowledgeMatch,
 } from "@/lib/embeddings";
 import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
+import { validatePlan, formatIssuesForAgent, diagnosticsHash } from "@/lib/agent/validate-plan";
+import { sceneTools } from "@/lib/agent/tools";
+import { handleSceneTool, SCENE_TOOL_NAMES, summarizeScene } from "@/lib/agent/tool-handlers";
+import { floorPlanToScene } from "@/lib/scene/migrate";
+import { runDerivation } from "@/lib/scene/derive";
+import { applyAutoDimensions } from "@/lib/scene/auto-dimensions";
+import type { SceneState, WallNode } from "@/lib/scene/types";
+
+const tools = [...legacyTools, ...sceneTools] as Anthropic.Tool[];
+
+function buildScene(plan: FloorPlan): SceneState {
+  const { scene } = floorPlanToScene(plan);
+  const derived = runDerivation(scene.nodes, scene.activeLevelId);
+  const walls = Object.values(derived.nodes).filter((n): n is WallNode => n.type === "wall");
+  const withDims = applyAutoDimensions(derived.nodes, walls);
+  return {
+    nodes: withDims,
+    rootId: scene.rootId,
+    activeLevelId: scene.activeLevelId,
+    selected: [],
+    hovered: null,
+    dirty: new Set(),
+    liveTransforms: new Map(),
+    diagnostics: [],
+    tool: "select",
+    viewMode: "2d",
+  };
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,6 +87,7 @@ export async function POST(req: Request) {
 
       try {
         const localPlan: FloorPlan = JSON.parse(JSON.stringify(plan ?? { rooms: [], doors: [], windows: [], furniture: [] }));
+        let localScene: SceneState = buildScene(localPlan);
 
         // Conversation messages. We mutate this within the tool-use loop.
         const conversation: Anthropic.MessageParam[] = messages.map((m) => ({
@@ -94,13 +123,18 @@ export async function POST(req: Request) {
         }
 
         let iter = 0;
+        let lastDiagnosticsHash = "";
+        let validatorRounds = 0;
+        const MAX_VALIDATOR_ROUNDS = 3;
         while (iter < MAX_ITERATIONS) {
           iter += 1;
 
           const systemBlock =
             SYSTEM_PROMPT +
-            "\n\n# Estado atual da planta\n" +
-            summarizePlan(localPlan);
+            "\n\n# Estado atual da planta (resumo legacy)\n" +
+            summarizePlan(localPlan) +
+            "\n\n# Scene graph (ids reais para tools wall_id / opening_id / room_id)\n" +
+            summarizeScene(localScene);
 
           const sdkStream = anthropic.messages.stream({
             model,
@@ -146,6 +180,7 @@ export async function POST(req: Request) {
 
           // Execute tools and emit results
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          let mutationsHappened = false;
           for (const tu of toolUses) {
             send({ type: "tool_input", id: tu.id, input: tu.input });
             let ok: boolean;
@@ -154,10 +189,19 @@ export async function POST(req: Request) {
               const r = await runKnowledgeSearch(tu.input);
               ok = r.ok;
               message = r.message;
+            } else if (SCENE_TOOL_NAMES.has(tu.name)) {
+              const r = handleSceneTool(localScene, tu.name, tu.input);
+              ok = r.ok;
+              message = r.message;
+              if (r.sceneAfter) localScene = r.sceneAfter;
+              mutationsHappened = mutationsHappened || ok;
             } else {
               const r = applyTool(localPlan, tu.name, tu.input);
               ok = r.ok;
               message = r.message;
+              mutationsHappened = mutationsHappened || ok;
+              // Re-sync scene if legacy plan was mutated.
+              if (ok) localScene = buildScene(localPlan);
             }
             send({ type: "tool_result", id: tu.id, ok, message });
             toolResults.push({
@@ -169,6 +213,35 @@ export async function POST(req: Request) {
           }
 
           conversation.push({ role: "user", content: toolResults });
+
+          // After mutations, run validators and surface issues to the agent.
+          // Cap at MAX_VALIDATOR_ROUNDS to avoid infinite self-correction loops.
+          if (mutationsHappened && validatorRounds < MAX_VALIDATOR_ROUNDS) {
+            try {
+              const issues = validatePlan(localPlan);
+              const hash = diagnosticsHash(issues);
+              const hasFlaggedIssues = issues.some((i) => i.severity !== "info");
+              if (hasFlaggedIssues && hash !== lastDiagnosticsHash) {
+                lastDiagnosticsHash = hash;
+                validatorRounds += 1;
+                const summary = formatIssuesForAgent(issues);
+                // Append a synthetic user message with diagnostics so the agent can self-correct.
+                conversation.push({
+                  role: "user",
+                  content:
+                    `[Auto-validador (NBR 15575 / NBR 9050 / Neufert)]\n` +
+                    `Foram encontrados os seguintes avisos. Avalie se faz sentido auto-corrigir agora ou se devemos apresentar ao cliente:\n\n${summary}\n\n` +
+                    `Se for trivial corrigir (porta menor que mínimo, área pequena, móvel sobreposto), corrija agora chamando a ferramenta apropriada. Caso contrário, mencione brevemente ao cliente as ressalvas relevantes.`,
+                });
+                continue; // give the agent another turn to react
+              }
+            } catch (e) {
+              // Validators are advisory; don't break the chat on errors.
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[validators] error:", e);
+              }
+            }
+          }
         }
 
         send({ type: "done" });

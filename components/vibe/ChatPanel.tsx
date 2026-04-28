@@ -322,7 +322,7 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
       <div className="flex items-center gap-2">
         {proactive && <span className="text-accent text-[11px]">✶</span>}
         <span className={`font-mono text-[9.5px] uppercase tracking-[0.14em] ${labelColor}`}>{t(lang, labelKey)}</span>
-        <span className="font-mono text-[9.5px] text-muted">{m.time}</span>
+        <span className="font-mono text-[9.5px] text-muted" suppressHydrationWarning>{m.time}</span>
       </div>
       {isAssistant && m.toolCalls && m.toolCalls.length > 0 && (
         <div className="space-y-1">
