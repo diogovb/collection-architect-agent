@@ -72,6 +72,17 @@ export function buildWallOutlinePath(walls: WallNode[]): string | null {
     }
   }
 
+  // Bridge thickness-step gaps. When two collinear walls of different
+  // thicknesses share a vertex (e.g. internal 0.10 m meeting external
+  // 0.15 m at an L-shape inner corner), `computeWallCorners` falls back
+  // to default (un-mitered) corners on the parallel side, leaving a
+  // perpendicular gap of |t1 − t2| / 2. The chain hits that gap, halts,
+  // and the path's `Z` would close the open polyline with a long
+  // diagonal across the building (visible bug). Adding a short bridge
+  // edge between the two unmatched endpoints lets the chain continue
+  // cleanly and renders the architectural step truthfully.
+  bridgeUnmatchedEndpoints(edges);
+
   // Chain edges into closed loops.
   const loops = chainEdges(edges);
   if (loops.length === 0) return null;
@@ -81,10 +92,69 @@ export function buildWallOutlinePath(walls: WallNode[]): string | null {
       if (loop.length < 2) return "";
       const head = `M ${loop[0].x} ${loop[0].z}`;
       const tail = loop.slice(1).map((p) => `L ${p.x} ${p.z}`).join(" ");
-      return `${head} ${tail} Z`;
+      // Defensive: only emit `Z` if the chain actually closed back to the
+      // seed vertex. A non-closed loop means the bridge pass missed a
+      // gap — `Z` there would draw a spurious diagonal back to the seed.
+      const first = loop[0];
+      const last = loop[loop.length - 1];
+      const closed = vk(first) === vk(last);
+      return closed ? `${head} ${tail} Z` : `${head} ${tail}`;
     })
     .filter(Boolean)
     .join(" ");
+}
+
+/** Close the perpendicular gap left by `computeWallCorners` when two
+ *  collinear walls of unequal thickness meet at a junction. The mitering
+ *  pass returns `null` for that pair (parallel offset lines) and the two
+ *  un-mitered default corners end up |Δt| / 2 apart. We detect those
+ *  orphaned endpoints by in/out-degree mismatch and bridge each pair
+ *  with a short directed edge, restoring chain continuity. */
+function bridgeUnmatchedEndpoints(edges: OutlineEdge[]): void {
+  const inDegree = new Map<string, number>();
+  const outDegree = new Map<string, number>();
+  const vertexPos = new Map<string, Vec2>();
+  for (const e of edges) {
+    const ka = vk(e.a);
+    const kb = vk(e.b);
+    outDegree.set(ka, (outDegree.get(ka) ?? 0) + 1);
+    inDegree.set(kb, (inDegree.get(kb) ?? 0) + 1);
+    if (!vertexPos.has(ka)) vertexPos.set(ka, e.a);
+    if (!vertexPos.has(kb)) vertexPos.set(kb, e.b);
+  }
+  // Endpoints needing an OUTGOING edge (incoming > outgoing here).
+  const needsOut: string[] = [];
+  // Endpoints needing an INCOMING edge (outgoing > incoming here).
+  const needsIn: string[] = [];
+  for (const [k] of vertexPos) {
+    const inn = inDegree.get(k) ?? 0;
+    const out = outDegree.get(k) ?? 0;
+    if (inn > out) needsOut.push(k);
+    if (out > inn) needsIn.push(k);
+  }
+  // Pair each `needsOut` (a chain end) with the closest `needsIn` (a
+  // chain start). Cap the search at 50 cm — beyond that we assume the
+  // gap is intentional (e.g. a real opening) and not a thickness step.
+  const MAX_BRIDGE = 0.5;
+  const usedIn = new Set<string>();
+  for (const outK of needsOut) {
+    const outP = vertexPos.get(outK)!;
+    let best: { k: string; d: number } | null = null;
+    for (const inK of needsIn) {
+      if (inK === outK) continue;
+      if (usedIn.has(inK)) continue;
+      const inP = vertexPos.get(inK)!;
+      const dx = inP.x - outP.x;
+      const dz = inP.z - outP.z;
+      const d = Math.hypot(dx, dz);
+      if (d > MAX_BRIDGE) continue;
+      if (!best || d < best.d) best = { k: inK, d };
+    }
+    if (best) {
+      edges.push({ a: outP, b: vertexPos.get(best.k)! });
+      usedIn.add(best.k);
+    }
+  }
 }
 
 /** Greedy chain — pick an unused edge, walk it endpoint-by-endpoint until
