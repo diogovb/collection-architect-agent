@@ -26,14 +26,18 @@ export function createSlabGeometry2D(slab: SlabNode): THREE.BufferGeometry {
   // Tiny lift to avoid z-fighting with grid/wall bottoms.
   const y = slab.elevation + 0.001;
   const positions = new Float32Array(slab.polygon.length * 3);
+  const uvs = new Float32Array(slab.polygon.length * 2);
   for (let i = 0; i < slab.polygon.length; i++) {
     positions[i * 3] = slab.polygon[i].x;
     positions[i * 3 + 1] = y;
     positions[i * 3 + 2] = slab.polygon[i].z;
+    uvs[i * 2] = slab.polygon[i].x;
+    uvs[i * 2 + 1] = slab.polygon[i].z;
   }
   const indices = triangulatePolygon(slab.polygon);
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   g.setIndex(indices);
   g.computeVertexNormals();
   return g;
@@ -47,15 +51,20 @@ export function createSlabGeometry3D(slab: SlabNode): THREE.BufferGeometry {
 
   // 2N vertices: N at top (indices 0..n-1), N at bottom (indices n..2n-1).
   const positions = new Float32Array(n * 2 * 3);
+  const uvs = new Float32Array(n * 2 * 2);
   for (let i = 0; i < n; i++) {
     positions[i * 3] = slab.polygon[i].x;
     positions[i * 3 + 1] = top;
     positions[i * 3 + 2] = slab.polygon[i].z;
+    uvs[i * 2] = slab.polygon[i].x;
+    uvs[i * 2 + 1] = slab.polygon[i].z;
   }
   for (let i = 0; i < n; i++) {
     positions[(n + i) * 3] = slab.polygon[i].x;
     positions[(n + i) * 3 + 1] = bottom;
     positions[(n + i) * 3 + 2] = slab.polygon[i].z;
+    uvs[(n + i) * 2] = slab.polygon[i].x;
+    uvs[(n + i) * 2 + 1] = slab.polygon[i].z;
   }
 
   const indices: number[] = [];
@@ -78,6 +87,7 @@ export function createSlabGeometry3D(slab: SlabNode): THREE.BufferGeometry {
 
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   g.setIndex(indices);
   g.computeVertexNormals();
   return g;

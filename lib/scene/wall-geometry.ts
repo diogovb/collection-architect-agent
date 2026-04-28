@@ -37,8 +37,11 @@ export function wallShapeGeometry2D(corners: WallCorners): THREE.BufferGeometry 
   ]);
   // CCW from above (Y up) so face normal points up.
   const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+  // Dummy UVs (three-bvh-csg iterates all attributes; missing uv → crash).
+  const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   g.setIndex(new THREE.BufferAttribute(indices, 1));
   g.computeVertexNormals();
   return g;
@@ -88,8 +91,12 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
     3, 4, 7,
   ]);
 
+  // Dummy UVs (three-bvh-csg requires the attribute to exist).
+  const uvs = new Float32Array(positions.length / 3 * 2);
+
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  g.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   g.setIndex(new THREE.BufferAttribute(indices, 1));
   g.computeVertexNormals();
   return g;
