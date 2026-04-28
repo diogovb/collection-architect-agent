@@ -53,6 +53,34 @@ const TOOL_LABEL_PT: Partial<Record<ToolName, string>> = {
   clear_all: "Limpando projeto",
 };
 
+// Selection type → emoji-style glyph (kept simple to avoid bringing a full
+// icon library — the canvas chat is monoline anyway).
+function selectionIcon(kind: string): string {
+  switch (kind) {
+    case "wall": return "▭";
+    case "door": return "⊐";
+    case "window": return "▤";
+    case "furniture": return "▣";
+    case "room": return "⌂";
+    case "slab": return "◈";
+    case "dimension": return "⤢";
+    default: return "✦";
+  }
+}
+
+function selectionKindLabel(kind: string): string {
+  switch (kind) {
+    case "wall": return "Parede";
+    case "door": return "Porta";
+    case "window": return "Janela";
+    case "furniture": return "Móvel";
+    case "room": return "Ambiente";
+    case "slab": return "Piso";
+    case "dimension": return "Cota";
+    default: return "Seleção";
+  }
+}
+
 function quickPromptsFor(plan: FloorPlan, ctxKind: string | null, ctxName: string | null): string[] {
   if (ctxKind === "room" && ctxName) {
     return [
@@ -109,11 +137,14 @@ export function ChatPanel({
     ctx ? ((ctx.payload.label ?? ctx.payload.name ?? null) as string | null) : null
   );
 
-  // Hide composer chips when the most recent assistant message already shows
-  // suggestion chips ([brackets] in its body) — prevents visual duplication.
+  // Quick chips ALWAYS render in the composer (Style Guide consistency:
+  // empty state and populated state must look the same to the user). When
+  // the last assistant message already shows in-line suggestion chips, the
+  // composer chips dim to opacity 0.5 so they don't compete visually but
+  // remain available — never hidden.
   const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
   const lastAssistantHasSuggestions = !!lastAssistant && stripSuggestions(lastAssistant.content).suggestions.length > 0;
-  const showComposerChips = !busy && !lastAssistantHasSuggestions;
+  const dimComposerChips = busy || lastAssistantHasSuggestions;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -214,15 +245,27 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Context strip */}
+      {/* Selection context strip — always docked above messages whenever
+          something is selected on the canvas. The icon + bold label make the
+          state unambiguous; the • button opens the per-type context menu. */}
       {ctx && (
         <div className="shrink-0 border-b border-line bg-accent-soft px-4 py-2.5 flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-accent shrink-0" />
+          <span className="text-[14px] leading-none w-5 h-5 flex items-center justify-center bg-accent/15 rounded shrink-0">
+            {selectionIcon(ctx.kind)}
+          </span>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-accent">{t(lang, "chat.context")}</span>
-            <span className="text-[12px] text-ink truncate">{ctx.description}</span>
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-accent">
+              {selectionKindLabel(ctx.kind)} · {t(lang, "chat.context")}
+            </span>
+            <span className="text-[12px] text-ink truncate font-medium">{ctx.description}</span>
           </div>
-          <button onClick={onClearSelection} className="text-muted hover:text-ink text-[14px] px-1">×</button>
+          <button
+            onClick={onClearSelection}
+            className="text-muted hover:text-ink text-[14px] px-1 leading-none"
+            title="Limpar seleção"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -257,20 +300,21 @@ export function ChatPanel({
             an element is selected. Hidden when the most recent assistant
             message already shows suggestion chips, so the user doesn't see
             two competing chip rows at once. */}
-        {showComposerChips && (
-          <div className="flex gap-1.5 flex-wrap">
-            {quickPrompts.map((q) => (
-              <button
-                key={q}
-                onClick={() => send(q)}
-                disabled={busy}
-                className="chip text-[11px] disabled:opacity-40"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
+        <div
+          className="flex gap-1.5 flex-wrap transition-opacity duration-150"
+          style={{ opacity: dimComposerChips ? 0.5 : 1 }}
+        >
+          {quickPrompts.map((q) => (
+            <button
+              key={q}
+              onClick={() => send(q)}
+              disabled={busy}
+              className="chip text-[11px] disabled:opacity-40"
+            >
+              {q}
+            </button>
+          ))}
+        </div>
 
         <div className="card p-2">
           <textarea
