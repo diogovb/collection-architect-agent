@@ -7,6 +7,7 @@ import type { SlabNode, ViewMode } from "@/lib/scene/types";
 import { createSlabGeometry2D, createSlabGeometry3D } from "@/lib/scene/slab-geometry";
 import { floorTextureFor, PALETTE } from "../materials";
 import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+import { buildEdgesGeometry } from "@/lib/canvas/toon-edges";
 
 const SLAB_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
@@ -42,23 +43,37 @@ export function SlabView({ slab, viewMode }: Props) {
     return t;
   }, [tex, tileM, slab.polygon]);
 
+  // Black contour lines on the slab silhouette in 3D (Fase D). Threshold
+  // 1° because slabs are flat polygons — every boundary edge survives.
+  const edgesGeom = useMemo(
+    () => (viewMode === "3d" ? buildEdgesGeometry(geom, 1) : null),
+    [geom, viewMode],
+  );
+
   return (
-    <mesh geometry={geom} receiveShadow>
-      {viewMode === "2d" ? (
-        texConfig ? (
-          <meshBasicMaterial color={PALETTE.paper} map={texConfig} side={THREE.DoubleSide} />
+    <group>
+      <mesh geometry={geom} receiveShadow>
+        {viewMode === "2d" ? (
+          texConfig ? (
+            <meshBasicMaterial color={PALETTE.paper} map={texConfig} side={THREE.DoubleSide} />
+          ) : (
+            <meshBasicMaterial color={color} side={THREE.DoubleSide} />
+          )
         ) : (
-          <meshBasicMaterial color={color} side={THREE.DoubleSide} />
-        )
-      ) : (
-        // Toon material in 3D so the slabs read as the same illustrated
-        // editorial language as the walls (Fase 5).
-        texConfig ? (
-          <meshToonMaterial color={"#FFFFFF"} map={texConfig} gradientMap={SLAB_TOON_GRADIENT} />
-        ) : (
-          <meshToonMaterial color={color} gradientMap={SLAB_TOON_GRADIENT} />
-        )
+          // Toon material in 3D so the slabs read as the same illustrated
+          // editorial language as the walls (Fase 5).
+          texConfig ? (
+            <meshToonMaterial color={"#FFFFFF"} map={texConfig} gradientMap={SLAB_TOON_GRADIENT} />
+          ) : (
+            <meshToonMaterial color={color} gradientMap={SLAB_TOON_GRADIENT} />
+          )
+        )}
+      </mesh>
+      {edgesGeom && (
+        <lineSegments geometry={edgesGeom} renderOrder={1}>
+          <lineBasicMaterial color={PALETTE.ink} />
+        </lineSegments>
       )}
-    </mesh>
+    </group>
   );
 }

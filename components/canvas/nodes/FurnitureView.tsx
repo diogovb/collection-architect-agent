@@ -7,8 +7,25 @@ import { type ThreeEvent } from "@react-three/fiber";
 import type { FurnitureNode, ViewMode } from "@/lib/scene/types";
 import { PALETTE } from "../materials";
 import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+import { buildEdgesGeometry } from "@/lib/canvas/toon-edges";
 
 const FURN_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
+
+// Reusable box edges geometry — built once per (w, d, h) tuple and cached.
+// Every furniture piece is a simple box, so we can keep a tiny cache here
+// instead of allocating a fresh EdgesGeometry on every render.
+const BOX_EDGES_CACHE = new Map<string, THREE.EdgesGeometry>();
+function boxEdges(w: number, h: number, d: number): THREE.EdgesGeometry {
+  const key = `${w.toFixed(3)}|${h.toFixed(3)}|${d.toFixed(3)}`;
+  let cached = BOX_EDGES_CACHE.get(key);
+  if (!cached) {
+    const box = new THREE.BoxGeometry(w, h, d);
+    cached = buildEdgesGeometry(box, 1);
+    box.dispose();
+    BOX_EDGES_CACHE.set(key, cached);
+  }
+  return cached;
+}
 
 interface Props {
   furniture: FurnitureNode;
@@ -115,7 +132,8 @@ export function FurnitureView({
     );
   }
 
-  // 3D: simple box.
+  // 3D: simple box with toon body + black contour lines (Fase D).
+  const edges = boxEdges(furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z);
   return (
     <group
       position={[cx, cy, cz]}
@@ -133,6 +151,9 @@ export function FurnitureView({
           gradientMap={FURN_TOON_GRADIENT}
         />
       </mesh>
+      <lineSegments geometry={edges} renderOrder={1}>
+        <lineBasicMaterial color={PALETTE.ink} />
+      </lineSegments>
     </group>
   );
 }

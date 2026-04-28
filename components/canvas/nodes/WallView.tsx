@@ -19,6 +19,7 @@ import {
 import { applyWallCutouts } from "@/lib/scene/csg-cutouts";
 import { PALETTE } from "../materials";
 import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
+import { buildEdgesGeometry } from "@/lib/canvas/toon-edges";
 
 // Shared toon ramp for the whole 3D scene — lives at module scope so the
 // gradient texture isn't rebuilt on every render. Three editorial bands
@@ -67,6 +68,11 @@ export function WallView({
     base.dispose();
     return geometry;
   }, [viewMode, corners, wall, doors, windows]);
+
+  // Black contour lines on top of the toon body — gives every wall the
+  // "ilustração técnica" outline that mirrors the 2D plan (Fase D). 1° threshold
+  // catches every prismatic edge of an extruded wall (silhouette + cutouts).
+  const edgesGeom = useMemo(() => (geom3D ? buildEdgesGeometry(geom3D, 1) : null), [geom3D]);
 
   const fillColor = PALETTE.wallFill;
   const edgeColor = selected ? PALETTE.accent : hovered ? PALETTE.hoverStroke : PALETTE.ink;
@@ -143,6 +149,11 @@ export function WallView({
             />
           </mesh>
         )
+      )}
+      {viewMode === "3d" && edgesGeom && (
+        <lineSegments geometry={edgesGeom} renderOrder={1}>
+          <lineBasicMaterial color={PALETTE.ink} />
+        </lineSegments>
       )}
     </group>
   );
