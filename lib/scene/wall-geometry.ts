@@ -47,23 +47,39 @@ export function wallShapeGeometry2D(corners: WallCorners): THREE.BufferGeometry 
   return g;
 }
 
-/** Wall material group indices. Boundary edge tagging (Pascal pattern) —
- *  every triangle is assigned a `materialIndex` so the multi-material mesh
- *  can show different finishes on caps vs sides, AND so CSG output preserves
- *  the side material on cut boundaries (door jambs, window reveals).
+/** Wall material group indices. Boundary edge tagging (Pascal pattern, full
+ *  6-face split) — every triangle is assigned a `materialIndex` so the multi-
+ *  material mesh can dress each face role independently AND so CSG output
+ *  preserves the appropriate boundary material on door/window cuts.
+ *
+ *  Layout (looking at the wall from above, start→end going right):
+ *  - LEFT  = +perp side (CCW perpendicular of start→end). Often "interior".
+ *  - RIGHT = -perp side. Often "exterior".
+ *  - START = the start endpoint cap.
+ *  - END   = the end endpoint cap.
+ *  - TOP   = +Y face.
+ *  - BOTTOM= -Y face.
  *
  *  three-bvh-csg + Evaluator.useGroups=true preserves these per-triangle. */
 export const WALL_GROUP_TOP = 0;
 export const WALL_GROUP_BOTTOM = 1;
-export const WALL_GROUP_SIDE = 2;
-export const WALL_GROUP_COUNT = 3;
+export const WALL_GROUP_LEFT = 2;
+export const WALL_GROUP_RIGHT = 3;
+export const WALL_GROUP_START = 4;
+export const WALL_GROUP_END = 5;
+export const WALL_GROUP_COUNT = 6;
+
+/** Group used to tag CSG cut boundaries (door reveals). Choose LEFT — the
+ *  reveal will face INTO the wall thickness, which we treat as the interior
+ *  surface. Whichever group we pick must exist in the wall's material array. */
+export const WALL_GROUP_CSG_BOUNDARY = WALL_GROUP_LEFT;
 
 /** 3D box from the four wall corners extruded upward by `height`. World XYZ.
  *  Bottom is at y=0, top at y=height.
  *
- *  Geometry has 3 groups (top / bottom / side). Side group covers all 4 lateral
- *  faces — that way when CSG cuts a door, the new boundary triangles inherit
- *  materialIndex 2, so the door reveal renders with the side material. */
+ *  Geometry has 6 groups (top / bottom / left / right / start / end). When
+ *  CSG cuts a door, new boundary triangles inherit WALL_GROUP_CSG_BOUNDARY
+ *  (LEFT) so the reveal renders with the interior material. */
 export function wallExtrudedGeometry(corners: WallCorners, height: number): THREE.BufferGeometry {
   const sl = corners.startLeft;
   const el = corners.endLeft;
@@ -85,34 +101,46 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
     sr.x, height, sr.z,  // 7
   ]);
 
-  // Indices grouped by face — the `addGroup` calls below tag each chunk
-  // with a materialIndex so CSG preserves it.
+  // Indices grouped by face role.
   const topIndices = [
-    // Top face (looking down: CCW = SL, EL, ER, SR → 4,5,6,7)
+    // Top face (CCW from above = SL, EL, ER, SR → 4,5,6,7)
     4, 5, 6,
     4, 6, 7,
   ];
   const bottomIndices = [
-    // Bottom face (looking up: reverse order)
+    // Bottom face (reversed winding so normal points down)
     0, 2, 1,
     0, 3, 2,
   ];
-  const sideIndices = [
-    // Side: SL-EL (left of wall, from start to end)
+  const leftIndices = [
+    // SL → EL on the +perp side (interior face).
     0, 1, 5,
     0, 5, 4,
-    // Side: EL-ER (end cap)
+  ];
+  const endIndices = [
+    // EL → ER cap at end vertex.
     1, 2, 6,
     1, 6, 5,
-    // Side: ER-SR (right of wall, from end to start)
+  ];
+  const rightIndices = [
+    // ER → SR on the -perp side (exterior face).
     2, 3, 7,
     2, 7, 6,
-    // Side: SR-SL (start cap)
+  ];
+  const startIndices = [
+    // SR → SL cap at start vertex.
     3, 0, 4,
     3, 4, 7,
   ];
 
-  const indices = new Uint16Array([...topIndices, ...bottomIndices, ...sideIndices]);
+  const indices = new Uint16Array([
+    ...topIndices,
+    ...bottomIndices,
+    ...leftIndices,
+    ...endIndices,
+    ...rightIndices,
+    ...startIndices,
+  ]);
 
   // Dummy UVs (three-bvh-csg requires the attribute to exist).
   const uvs = new Float32Array(positions.length / 3 * 2);
@@ -124,11 +152,18 @@ export function wallExtrudedGeometry(corners: WallCorners, height: number): THRE
 
   // Boundary edge tagging — material groups by face role.
   let cursor = 0;
-  g.addGroup(cursor, topIndices.length, WALL_GROUP_TOP);
-  cursor += topIndices.length;
-  g.addGroup(cursor, bottomIndices.length, WALL_GROUP_BOTTOM);
-  cursor += bottomIndices.length;
-  g.addGroup(cursor, sideIndices.length, WALL_GROUP_SIDE);
+  const ranges: Array<[number, number]> = [
+    [topIndices.length, WALL_GROUP_TOP],
+    [bottomIndices.length, WALL_GROUP_BOTTOM],
+    [leftIndices.length, WALL_GROUP_LEFT],
+    [endIndices.length, WALL_GROUP_END],
+    [rightIndices.length, WALL_GROUP_RIGHT],
+    [startIndices.length, WALL_GROUP_START],
+  ];
+  for (const [count, idx] of ranges) {
+    g.addGroup(cursor, count, idx);
+    cursor += count;
+  }
 
   g.computeVertexNormals();
   return g;

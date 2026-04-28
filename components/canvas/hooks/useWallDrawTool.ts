@@ -1,29 +1,18 @@
 "use client";
 
-// "Desenhar parede" tool: click to anchor the start point, click again to
-// place the end point, ESC to cancel. Snaps to existing wall endpoints.
+// R3F adapter over the shared drag engine for the wall-draw tool.
+// Click to anchor, click again to commit, ESC cancels. Snaps via
+// `snapDrawPoint`; commits via `commitDrawWall`.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
-import type { Vec2, WallNode } from "@/lib/scene/types";
+import type { Vec2 } from "@/lib/scene/types";
 import { useSceneStore } from "@/lib/scene/store";
-import { snapVec2, snapToEndpoints } from "@/lib/scene/snap";
-import { runDerivation } from "@/lib/scene/derive";
-import { applyAutoDimensions } from "@/lib/scene/auto-dimensions";
+import { commitDrawWall, snapDrawPoint } from "@/lib/scene/drag-engine";
 
 interface ToolState { phase: "idle" | "anchored"; anchor?: Vec2; }
-
-const EXTERNAL_THICKNESS = 0.15;
-const INTERNAL_THICKNESS = 0.10;
-const DEFAULT_HEIGHT = 2.8;
-
-let _wallSeq = 0;
-function newWallId(): string {
-  _wallSeq += 1;
-  return `wall:user-${Date.now().toString(36)}-${_wallSeq}`;
-}
 
 export function useWallDrawTool(): {
   state: ToolState;
@@ -39,7 +28,6 @@ export function useWallDrawTool(): {
   const [pointerWorld, setPointerWorld] = useState<Vec2 | null>(null);
 
   const tool = useSceneStore((s) => s.tool);
-  const activeLevelId = useSceneStore((s) => s.activeLevelId);
 
   const cancel = useCallback(() => setState({ phase: "idle" }), []);
 
@@ -79,11 +67,7 @@ export function useWallDrawTool(): {
       if (tool !== "wall") return;
       const world = screenToWorld(clientX, clientY);
       if (!world) return;
-      const walls = Object.values(useSceneStore.getState().nodes).filter(
-        (n) => n.type === "wall"
-      ) as WallNode[];
-      const snapped = snapToEndpoints(snapVec2(world), walls, 0.20).snapped;
-      setPointerWorld(snapped);
+      setPointerWorld(snapDrawPoint(world));
     },
     [tool, screenToWorld]
   );
@@ -93,41 +77,21 @@ export function useWallDrawTool(): {
       if (tool !== "wall") return;
       const world = screenToWorld(clientX, clientY);
       if (!world) return;
-      const walls = Object.values(useSceneStore.getState().nodes).filter(
-        (n) => n.type === "wall"
-      ) as WallNode[];
-      const snapped = snapToEndpoints(snapVec2(world), walls, 0.20).snapped;
+      const snapped = snapDrawPoint(world);
       if (state.phase === "idle") {
         setState({ phase: "anchored", anchor: snapped });
-      } else if (state.phase === "anchored" && state.anchor) {
-        // Create wall.
-        const newWall: WallNode = {
-          id: newWallId(),
-          type: "wall",
-          parentId: activeLevelId,
-          start: state.anchor,
-          end: snapped,
-          thickness: INTERNAL_THICKNESS,
-          height: DEFAULT_HEIGHT,
-          isExterior: false,
-          doors: [],
-          windows: [],
-        };
-        const store = useSceneStore.getState();
-        store.addNode(newWall);
-        const allWalls = Object.values(store.nodes).filter((n) => n.type === "wall") as WallNode[];
-        const nextWalls = [...allWalls, newWall];
-        // Re-derive rooms/slabs and dimensions.
-        const out = runDerivation({ ...store.nodes, [newWall.id]: newWall }, store.activeLevelId);
-        const withDims = applyAutoDimensions(out.nodes, nextWalls);
-        useSceneStore.setState({ nodes: withDims });
-        // Continue: anchor at the end point so we can chain walls.
+        return;
+      }
+      if (state.phase === "anchored" && state.anchor) {
+        commitDrawWall(state.anchor, snapped);
+        // Chain — anchor at endpoint so the next click extends the wall run.
         setState({ phase: "anchored", anchor: snapped });
       }
     },
-    [tool, screenToWorld, state, activeLevelId]
+    [tool, screenToWorld, state]
   );
 
-  const preview = state.phase === "anchored" && state.anchor && pointerWorld ? state.anchor : null;
+  const preview =
+    state.phase === "anchored" && state.anchor && pointerWorld ? state.anchor : null;
   return { state, preview, pointerWorld, onCanvasClick, onCanvasMove, cancel };
 }

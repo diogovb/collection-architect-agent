@@ -13,11 +13,19 @@ export const PALETTE = {
   accentSoft: "#F2DDD0",
   wallFill: "#E6DFD2",
   wallEdge: "#1F1B16",
-  // Boundary edge tags for 3D walls (Pascal pattern). Top is the visible
-  // upper surface (slightly cooler), bottom never visible (close to ink for
-  // SSAO contrast), side is the main wall colour.
-  wallTop: "#D9D1C2",
-  wallBottom: "#C4BEB1",
+  // Boundary edge tags for 3D walls (Pascal pattern, full 6-face split):
+  // - top    = upper surface, slightly cooler/lighter so it catches light.
+  // - bottom = floor-facing, slightly darker for SSAO contrast.
+  // - left   = +perp side ("interior" face) — main wall fill.
+  // - right  = -perp side ("exterior" face) — a touch warmer.
+  // - start / end = endpoint caps. Visible on free wall ends; tinted slightly
+  //   darker to read as joinery.
+  wallTop: "#DED7C9",
+  wallBottom: "#BBB5A8",
+  wallLeft: "#E6DFD2",
+  wallRight: "#E0D9CB",
+  wallStart: "#D2CBBE",
+  wallEnd: "#D2CBBE",
   floorWood: "#EFE8DB",
   floorWoodLine: "#1F1B16",
   floorTile: "#EEE6D6",

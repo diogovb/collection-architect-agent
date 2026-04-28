@@ -10,7 +10,17 @@
 // Tools (wall-draw, drag, snap) are not yet wired into the SVG path — they
 // continue to work in 3D mode. We'll port them in a follow-up.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
 import { useSceneStore } from "@/lib/scene/store";
 import { type WallCorners } from "@/lib/scene/wall-mitering";
 import { getWallCorners } from "@/lib/scene/wall-corners-cache";
@@ -95,13 +105,25 @@ export function Floorplan2D({ onLoadExample }: Props) {
   const isEmpty = walls.length === 0;
 
   // ---- Auto-layout for room/area labels + dimension labels (Pascal pattern) ----
-  // Text is sized in CSS px but positioned in world units, so we estimate
-  // world-space bbox using a typical render scale (~60 px/m) and let
-  // placeLabels run greedy collision avoidance.
-  const labelLayout = useMemo(() => {
-    const PX_PER_M = 60;
-    const inputs: LabelInput[] = [];
-    // Room name + area (priority 2 — keep them anchored to centroid first).
+  // Two-pass approach: render an invisible measurement layer first, read each
+  // <text>'s real bbox via getBBox(), then run greedy collision avoidance.
+  // On the very first render we don't have measurements yet, so we fall back
+  // to a heuristic estimate (~60 px/m); subsequent renders use the real values.
+  interface LabelSpec {
+    id: string;
+    text: string;
+    fontFamily: string;
+    fontSizePx: number;
+    fontStyle?: string;
+    letterSpacing?: string;
+    anchor: { x: number; z: number };
+    priority: number;
+    searchDirs: { x: number; z: number }[];
+    maxOffset: number;
+  }
+
+  const labelSpecs = useMemo<LabelSpec[]>(() => {
+    const out: LabelSpec[] = [];
     for (const r of rooms) {
       const c = polygonCentroid(r.polygon);
       const b = polygonBounds(r.polygon);
@@ -109,13 +131,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
       const showArea =
         r.area >= ROOM_LABEL_SUPPRESS_AREA_BELOW &&
         shortSide >= ROOM_LABEL_NARROW_DIM_THRESHOLD;
-      const nameH = 14 / PX_PER_M;
-      inputs.push({
+      out.push({
         id: `name:${r.id}`,
-        x: c.x,
-        z: c.z + (showArea ? -0.18 : 0.05),
-        width: estimateLabelWidth(r.name, nameH),
-        height: nameH,
+        text: r.name,
+        fontFamily: "var(--font-instrument-serif), serif",
+        fontStyle: "italic",
+        fontSizePx: 14,
+        anchor: { x: c.x, z: c.z + (showArea ? -0.18 : 0.05) },
         priority: 2,
         searchDirs: [
           { x: 0, z: -1 },
@@ -127,13 +149,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
       });
       if (showArea) {
         const areaTxt = `${r.area.toFixed(2).replace(".", ",")} M²`;
-        const areaH = 10 / PX_PER_M;
-        inputs.push({
+        out.push({
           id: `area:${r.id}`,
-          x: c.x,
-          z: c.z + 0.22,
-          width: estimateLabelWidth(areaTxt, areaH),
-          height: areaH,
+          text: areaTxt,
+          fontFamily: "var(--font-jetbrains-mono), monospace",
+          fontSizePx: 10,
+          letterSpacing: "0.1em",
+          anchor: { x: c.x, z: c.z + 0.22 },
           priority: 1,
           searchDirs: [
             { x: 0, z: 1 },
@@ -145,7 +167,6 @@ export function Floorplan2D({ onLoadExample }: Props) {
         });
       }
     }
-    // Dimension labels — perpendicular search around their natural position.
     for (const d of dimensions) {
       const dir = v2Norm(v2Sub(d.end, d.start));
       const perp = v2Perp(dir);
@@ -154,14 +175,15 @@ export function Floorplan2D({ onLoadExample }: Props) {
       const labelSide = d.offset >= 0 ? 1 : -1;
       const baseX = cx + perp.x * 0.25 * labelSide;
       const baseZ = cz + perp.z * 0.25 * labelSide;
-      const text = d.text ?? `${Math.hypot(d.end.x - d.start.x, d.end.z - d.start.z).toFixed(2).replace(".", ",")} m`;
-      const dimH = 11 / PX_PER_M;
-      inputs.push({
+      const text =
+        d.text ??
+        `${Math.hypot(d.end.x - d.start.x, d.end.z - d.start.z).toFixed(2).replace(".", ",")} m`;
+      out.push({
         id: `dim:${d.id}`,
-        x: baseX,
-        z: baseZ,
-        width: estimateLabelWidth(text, dimH),
-        height: dimH,
+        text,
+        fontFamily: "var(--font-jetbrains-mono), monospace",
+        fontSizePx: 11,
+        anchor: { x: baseX, z: baseZ },
         priority: 0,
         searchDirs: [
           { x: perp.x * labelSide, z: perp.z * labelSide },
@@ -172,8 +194,67 @@ export function Floorplan2D({ onLoadExample }: Props) {
         maxOffset: 0.5,
       });
     }
-    return placeLabels(inputs);
+    return out;
   }, [rooms, dimensions]);
+
+  // Measured bboxes from the invisible measurement layer. Indexed by spec id.
+  const measureRefs = useRef<Map<string, SVGTextElement | null>>(new Map());
+  const [measuredBboxes, setMeasuredBboxes] = useState<
+    Map<string, { width: number; height: number }>
+  >(new Map());
+
+  // After every render where labelSpecs changed, read the real bboxes from the
+  // hidden text elements and store them. useLayoutEffect runs synchronously
+  // before paint, so the user never sees the heuristic positions.
+  useLayoutEffect(() => {
+    let changed = measuredBboxes.size !== labelSpecs.length;
+    const next = new Map<string, { width: number; height: number }>();
+    for (const spec of labelSpecs) {
+      const el = measureRefs.current.get(spec.id);
+      if (!el) {
+        // No element yet — keep any previous measurement to avoid flicker.
+        const prev = measuredBboxes.get(spec.id);
+        if (prev) next.set(spec.id, prev);
+        else changed = true;
+        continue;
+      }
+      try {
+        const box = el.getBBox();
+        next.set(spec.id, { width: box.width, height: box.height });
+        const prev = measuredBboxes.get(spec.id);
+        if (
+          !prev ||
+          Math.abs(prev.width - box.width) > 1e-3 ||
+          Math.abs(prev.height - box.height) > 1e-3
+        ) {
+          changed = true;
+        }
+      } catch {
+        // getBBox throws if the element isn't mounted yet — skip.
+      }
+    }
+    if (changed) setMeasuredBboxes(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labelSpecs]);
+
+  const labelLayout = useMemo(() => {
+    const PX_PER_M_FALLBACK = 60;
+    const inputs: LabelInput[] = labelSpecs.map((spec) => {
+      const measured = measuredBboxes.get(spec.id);
+      const heightFallback = spec.fontSizePx / PX_PER_M_FALLBACK;
+      return {
+        id: spec.id,
+        x: spec.anchor.x,
+        z: spec.anchor.z,
+        width: measured ? measured.width : estimateLabelWidth(spec.text, heightFallback),
+        height: measured ? measured.height : heightFallback,
+        priority: spec.priority,
+        searchDirs: spec.searchDirs,
+        maxOffset: spec.maxOffset,
+      };
+    });
+    return placeLabels(inputs);
+  }, [labelSpecs, measuredBboxes]);
 
   // ---- Auto-fit viewBox ----
   const fitBounds = useMemo(() => {
@@ -321,7 +402,13 @@ export function Floorplan2D({ onLoadExample }: Props) {
           height: "100%",
           display: "block",
           touchAction: "none",
-          cursor: panRef.current ? "grabbing" : "default",
+          // Wall-draw shows crosshair so the click target is unambiguous; pan
+          // shows grabbing once the gesture has started.
+          cursor: panRef.current
+            ? "grabbing"
+            : tool === "wall"
+              ? "crosshair"
+              : "default",
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -569,6 +656,39 @@ export function Floorplan2D({ onLoadExample }: Props) {
               </g>
             );
           })}
+        </g>
+
+        {/* Hidden measurement layer — produces a real getBBox() for every label
+            so the auto-layout can use accurate widths instead of heuristics.
+            Rendered with visibility:hidden (still laid out) so the user never
+            sees the duplicated text. */}
+        <g
+          className="label-measure"
+          style={{ visibility: "hidden" }}
+          aria-hidden="true"
+          pointerEvents="none"
+        >
+          {labelSpecs.map((spec) => (
+            <text
+              key={`measure-${spec.id}`}
+              ref={(el) => {
+                measureRefs.current.set(spec.id, el);
+              }}
+              x={0}
+              y={0}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              style={{
+                fontFamily: spec.fontFamily,
+                fontStyle: spec.fontStyle,
+                fontSize: spec.fontSizePx,
+                letterSpacing: spec.letterSpacing,
+              }}
+              fontSize={spec.fontSizePx}
+            >
+              {spec.text}
+            </text>
+          ))}
         </g>
 
         {/* Wall-draw tool overlay: anchor + ghost line + cursor crosshair */}

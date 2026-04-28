@@ -8,8 +8,10 @@ import type { DoorNode, ViewMode, WallNode, WindowNode } from "@/lib/scene/types
 import type { WallCorners } from "@/lib/scene/wall-mitering";
 import {
   WALL_GROUP_BOTTOM,
-  WALL_GROUP_COUNT,
-  WALL_GROUP_SIDE,
+  WALL_GROUP_END,
+  WALL_GROUP_LEFT,
+  WALL_GROUP_RIGHT,
+  WALL_GROUP_START,
   WALL_GROUP_TOP,
   wallExtrudedGeometry,
   wallShapeGeometry2D,
@@ -97,25 +99,43 @@ export function WallView({
             castShadow
             receiveShadow
           >
-            {/* Multi-material per boundary tag (Pascal pattern). Order matches
-                the materialIndex in wall-geometry.ts groups (TOP/BOTTOM/SIDE).
-                Mesh's material array is consumed by group.materialIndex. */}
+            {/* Multi-material per boundary tag (Pascal pattern, 6-face split).
+                Order matches WALL_GROUP_* indices in wall-geometry.ts. The
+                mesh's material array is keyed by group.materialIndex. */}
             <meshStandardMaterial
               attach={`material-${WALL_GROUP_TOP}`}
-              color={PALETTE.wallTop ?? fillColor}
-              roughness={0.92}
+              color={PALETTE.wallTop}
+              roughness={0.9}
               metalness={0}
             />
             <meshStandardMaterial
               attach={`material-${WALL_GROUP_BOTTOM}`}
-              color={PALETTE.wallBottom ?? fillColor}
+              color={PALETTE.wallBottom}
               roughness={0.95}
               metalness={0}
             />
             <meshStandardMaterial
-              attach={`material-${WALL_GROUP_SIDE}`}
-              color={fillColor}
-              roughness={0.95}
+              attach={`material-${WALL_GROUP_LEFT}`}
+              color={PALETTE.wallLeft}
+              roughness={0.94}
+              metalness={0}
+            />
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_RIGHT}`}
+              color={PALETTE.wallRight}
+              roughness={0.94}
+              metalness={0}
+            />
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_START}`}
+              color={PALETTE.wallStart}
+              roughness={0.96}
+              metalness={0}
+            />
+            <meshStandardMaterial
+              attach={`material-${WALL_GROUP_END}`}
+              color={PALETTE.wallEnd}
+              roughness={0.96}
               metalness={0}
             />
           </mesh>

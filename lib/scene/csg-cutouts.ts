@@ -19,7 +19,7 @@ import {
 } from "three-mesh-bvh";
 import type { DoorNode, WallNode, WindowNode } from "./types";
 import { v2Norm, v2Sub } from "./types";
-import { WALL_GROUP_SIDE, WALL_GROUP_COUNT } from "./wall-geometry";
+import { WALL_GROUP_CSG_BOUNDARY } from "./wall-geometry";
 
 // One-time install: extend BufferGeometry/Mesh prototypes with BVH helpers.
 // three-bvh-csg uses these under the hood; without them every Brush rebuilds
@@ -124,14 +124,14 @@ export function applyWallCutouts(
       .makeTranslation(centerWorld.x, centerY, centerWorld.z)
       .multiply(new THREE.Matrix4().makeRotationY(-angle));
     cutGeom.applyMatrix4(m);
-    // Tag the cut brush as "side" so SUBTRACTION boundary triangles inherit
-    // WALL_GROUP_SIDE. Without this, the door/window reveal would render with
-    // top/bottom material (visually wrong). BoxGeometry is non-indexed in
-    // modern three.js, so total = position.count.
+    // Tag the cut brush as the CSG boundary group so SUBTRACTION boundary
+    // triangles inherit a sensible material (door reveals/window jambs).
+    // Without clearing first BoxGeometry's default 6 face groups would carry
+    // through, producing wrong materials per-face on the cut surface.
     cutGeom.clearGroups();
     const totalCount =
       cutGeom.getIndex()?.count ?? cutGeom.attributes.position.count;
-    cutGeom.addGroup(0, totalCount, WALL_GROUP_SIDE);
+    cutGeom.addGroup(0, totalCount, WALL_GROUP_CSG_BOUNDARY);
     const cutBrush = makeBrush(cutGeom);
 
     // Wrap in try/catch: three-bvh-csg can throw on degenerate geometry. We
