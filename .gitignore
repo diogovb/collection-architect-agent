@@ -36,3 +36,9 @@ next-env.d.ts
 # IDE
 .vscode/
 .idea/
+
+# Claude Code per-session worktrees (local-only)
+.claude/
+
+# Vercel CLI link files (project ids, deployment cache)
+.vercel/
