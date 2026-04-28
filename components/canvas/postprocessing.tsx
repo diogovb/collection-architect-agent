@@ -1,38 +1,61 @@
 "use client";
 
-// Single postprocessing pass producing outlines for selected and hovered nodes.
-// Consolidates depth/edge passes so we don't re-render the scene twice.
+// 3D post-processing pipeline. Uses @react-three/postprocessing (WebGL2,
+// already a dependency) to give walls and furniture the depth and contour
+// that Pascal achieves with SSGI/TSL on WebGPU. Runs only on the 3D path —
+// the 2D SVG renderer doesn't go through this.
+//
+// Pipeline (in order):
+//   1. SSAO   — ambient occlusion in screen space; settles into corners
+//               where walls meet, gives slabs subtle shadowing.
+//   2. Outline — orange edge on hovered/selected nodes (matches accent
+//                color of the editorial palette).
+//
+// We deliberately skip Bloom/Tonemapping — keeps the editorial flat look.
 
 import { useMemo } from "react";
-import { EffectComposer, Outline } from "@react-three/postprocessing";
-import * as THREE from "three";
+import { EffectComposer, Outline, SSAO } from "@react-three/postprocessing";
+import { BlendFunction } from "postprocessing";
 
 import { useSceneStore } from "@/lib/scene/store";
+
+const ACCENT = 0xb8552e;
+const HIDDEN_INK = 0x1f1b16;
 
 export function CanvasPostprocessing() {
   const selected = useSceneStore((s) => s.selected);
   const hovered = useSceneStore((s) => s.hovered);
-  // We can't pass node ids directly; postprocessing needs Object3D refs.
-  // Instead we tag meshes via userData and let the viewer toggle the
-  // outline from Drei's Outlines mesh helper. To keep it simple here,
-  // we render an EffectComposer with the OUTLINE effect bound to all
-  // meshes whose name matches a selected/hovered id (set in node views).
-  const outlineSelected = useMemo(() => new Set(selected), [selected]);
-  const outlineHovered = useMemo(() => (hovered ? new Set([hovered]) : new Set<string>()), [hovered]);
-
-  // Note: we intentionally use a thin pass — no SSAO/Bloom — to keep the
-  // editorial 2D look flat. The Outline effect is fine to remain off when
-  // no element is hovered/selected (it bails out early internally).
-  if (outlineSelected.size === 0 && outlineHovered.size === 0) return null;
+  const hasOutline = useMemo(
+    () => selected.length > 0 || !!hovered,
+    [selected, hovered]
+  );
 
   return (
-    <EffectComposer multisampling={0} autoClear={false}>
-      <Outline
-        edgeStrength={4}
-        visibleEdgeColor={0xb8552e as unknown as THREE.ColorRepresentation as number}
-        hiddenEdgeColor={0x1f1b16 as unknown as number}
-        blur
+    <EffectComposer multisampling={4} autoClear={false}>
+      <SSAO
+        blendFunction={BlendFunction.MULTIPLY}
+        samples={24}
+        radius={0.18}
+        intensity={18}
+        luminanceInfluence={0.55}
+        worldDistanceThreshold={1.0}
+        worldDistanceFalloff={0.4}
+        worldProximityThreshold={0.6}
+        worldProximityFalloff={0.2}
       />
+      {hasOutline ? (
+        <Outline
+          edgeStrength={4}
+          visibleEdgeColor={ACCENT}
+          hiddenEdgeColor={HIDDEN_INK}
+          blur
+          xRay={false}
+        />
+      ) : (
+        // EffectComposer requires at least one effect; render a no-op
+        // outline that won't have any selection to draw.
+        <Outline edgeStrength={0} visibleEdgeColor={ACCENT} hiddenEdgeColor={HIDDEN_INK} />
+      )}
     </EffectComposer>
   );
 }

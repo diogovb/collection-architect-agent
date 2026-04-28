@@ -40,6 +40,7 @@ import { useWallDrawTool } from "./hooks/useWallDrawTool";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { Toolbar } from "./Toolbar";
 import { Floorplan2D } from "./Floorplan2D";
+import { CanvasPostprocessing } from "./postprocessing";
 
 interface Props {
   onLoadExample?: () => void;
@@ -112,6 +113,9 @@ export function Canvas({ onLoadExample }: Props) {
           <Suspense fallback={null}>
             <SceneContents viewMode={viewMode} />
           </Suspense>
+
+          {/* SSAO + Outline post-processing for the editorial 3D look. */}
+          <CanvasPostprocessing />
 
           <OrbitControls
             enableRotate
