@@ -7,22 +7,23 @@ import { type ThreeEvent } from "@react-three/fiber";
 import type { FurnitureNode, ViewMode } from "@/lib/scene/types";
 import { PALETTE } from "../materials";
 import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
-import { buildEdgesGeometry } from "@/lib/canvas/toon-edges";
+import { inflateGeometry } from "@/lib/canvas/toon-edges";
 
 const FURN_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
-// Reusable box edges geometry — built once per (w, d, h) tuple and cached.
-// Every furniture piece is a simple box, so we can keep a tiny cache here
-// instead of allocating a fresh EdgesGeometry on every render.
-const BOX_EDGES_CACHE = new Map<string, THREE.EdgesGeometry>();
-function boxEdges(w: number, h: number, d: number): THREE.EdgesGeometry {
+// Reusable inverted-hull geometry per (w, h, d) tuple. Inflating a box by
+// 2 cm along its normals gives the silhouette outline used for the 3D
+// "papel ilustrado" look (Fase J). Caching keeps the cost negligible
+// across many similar furniture instances.
+const HULL_CACHE = new Map<string, THREE.BufferGeometry>();
+function boxHull(w: number, h: number, d: number): THREE.BufferGeometry {
   const key = `${w.toFixed(3)}|${h.toFixed(3)}|${d.toFixed(3)}`;
-  let cached = BOX_EDGES_CACHE.get(key);
+  let cached = HULL_CACHE.get(key);
   if (!cached) {
     const box = new THREE.BoxGeometry(w, h, d);
-    cached = buildEdgesGeometry(box, 1);
+    cached = inflateGeometry(box, 0.02);
     box.dispose();
-    BOX_EDGES_CACHE.set(key, cached);
+    HULL_CACHE.set(key, cached);
   }
   return cached;
 }
@@ -132,8 +133,8 @@ export function FurnitureView({
     );
   }
 
-  // 3D: simple box with toon body + black contour lines (Fase D).
-  const edges = boxEdges(furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z);
+  // 3D: simple box with toon body + inverted-hull silhouette (Fase J).
+  const hull = boxHull(furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z);
   return (
     <group
       position={[cx, cy, cz]}
@@ -151,9 +152,9 @@ export function FurnitureView({
           gradientMap={FURN_TOON_GRADIENT}
         />
       </mesh>
-      <lineSegments geometry={edges} renderOrder={1}>
-        <lineBasicMaterial color={PALETTE.ink} />
-      </lineSegments>
+      <mesh geometry={hull} renderOrder={-1}>
+        <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
+      </mesh>
     </group>
   );
 }

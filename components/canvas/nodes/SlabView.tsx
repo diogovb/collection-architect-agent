@@ -7,7 +7,6 @@ import type { SlabNode, ViewMode } from "@/lib/scene/types";
 import { createSlabGeometry2D, createSlabGeometry3D } from "@/lib/scene/slab-geometry";
 import { floorTextureFor, PALETTE } from "../materials";
 import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
-import { buildEdgesGeometry } from "@/lib/canvas/toon-edges";
 
 const SLAB_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
@@ -43,12 +42,22 @@ export function SlabView({ slab, viewMode }: Props) {
     return t;
   }, [tex, tileM, slab.polygon]);
 
-  // Black contour lines on the slab silhouette in 3D (Fase D). Threshold
-  // 1° because slabs are flat polygons — every boundary edge survives.
-  const edgesGeom = useMemo(
-    () => (viewMode === "3d" ? buildEdgesGeometry(geom, 1) : null),
-    [geom, viewMode],
-  );
+  // Boundary outline geometry (Fase J). Slabs are thin horizontal
+  // polygons — inflating along normals would make them look taller, not
+  // outline them. So instead we trace the polygon perimeter explicitly
+  // as a closed line just above the slab top face. Earcut triangulation
+  // never appears because we never look at the inner triangles.
+  const boundaryGeom = useMemo(() => {
+    if (viewMode !== "3d") return null;
+    const y = 0.005; // hover above the slab top face to avoid z-fighting
+    const points: THREE.Vector3[] = slab.polygon.map(
+      (p) => new THREE.Vector3(p.x, y, p.z),
+    );
+    if (points.length === 0) return null;
+    points.push(points[0].clone());
+    const g = new THREE.BufferGeometry().setFromPoints(points);
+    return g;
+  }, [slab.polygon, viewMode]);
 
   return (
     <group>
@@ -69,10 +78,11 @@ export function SlabView({ slab, viewMode }: Props) {
           )
         )}
       </mesh>
-      {edgesGeom && (
-        <lineSegments geometry={edgesGeom} renderOrder={1}>
+      {boundaryGeom && (
+        <line>
+          <primitive object={boundaryGeom} attach="geometry" />
           <lineBasicMaterial color={PALETTE.ink} />
-        </lineSegments>
+        </line>
       )}
     </group>
   );
