@@ -9,33 +9,12 @@ import {
 } from "@/lib/embeddings";
 import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
 import { validatePlan, formatIssuesForAgent, diagnosticsHash } from "@/lib/agent/validate-plan";
-import { sceneTools } from "@/lib/agent/tools";
-import { handleSceneTool, SCENE_TOOL_NAMES, summarizeScene } from "@/lib/agent/tool-handlers";
-import { floorPlanToScene } from "@/lib/scene/migrate";
-import { runDerivation } from "@/lib/scene/derive";
-import { applyAutoDimensions } from "@/lib/scene/auto-dimensions";
-import type { SceneState, WallNode } from "@/lib/scene/types";
 
-const tools = [...legacyTools, ...sceneTools] as Anthropic.Tool[];
-
-function buildScene(plan: FloorPlan): SceneState {
-  const { scene } = floorPlanToScene(plan);
-  const derived = runDerivation(scene.nodes, scene.activeLevelId);
-  const walls = Object.values(derived.nodes).filter((n): n is WallNode => n.type === "wall");
-  const withDims = applyAutoDimensions(derived.nodes, walls);
-  return {
-    nodes: withDims,
-    rootId: scene.rootId,
-    activeLevelId: scene.activeLevelId,
-    selected: [],
-    hovered: null,
-    dirty: new Set(),
-    liveTransforms: new Map(),
-    diagnostics: [],
-    tool: "select",
-    viewMode: "2d",
-  };
-}
+// Scene tools (lib/agent/tools.ts) operate on the server-side scene graph but
+// have no sync path back to the client — every change would be invisible. They
+// are intentionally NOT registered with the model. The legacy tool family
+// modifies the FloorPlan and round-trips through useFloorPlanBridge → SceneStore.
+const tools = legacyTools as Anthropic.Tool[];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +66,6 @@ export async function POST(req: Request) {
 
       try {
         const localPlan: FloorPlan = JSON.parse(JSON.stringify(plan ?? { rooms: [], doors: [], windows: [], furniture: [] }));
-        let localScene: SceneState = buildScene(localPlan);
 
         // Conversation messages. We mutate this within the tool-use loop.
         const conversation: Anthropic.MessageParam[] = messages.map((m) => ({
@@ -131,10 +109,8 @@ export async function POST(req: Request) {
 
           const systemBlock =
             SYSTEM_PROMPT +
-            "\n\n# Estado atual da planta (resumo legacy)\n" +
-            summarizePlan(localPlan) +
-            "\n\n# Scene graph (ids reais para tools wall_id / opening_id / room_id)\n" +
-            summarizeScene(localScene);
+            "\n\n# Estado atual da planta\n" +
+            summarizePlan(localPlan);
 
           const sdkStream = anthropic.messages.stream({
             model,
@@ -189,19 +165,11 @@ export async function POST(req: Request) {
               const r = await runKnowledgeSearch(tu.input);
               ok = r.ok;
               message = r.message;
-            } else if (SCENE_TOOL_NAMES.has(tu.name)) {
-              const r = handleSceneTool(localScene, tu.name, tu.input);
-              ok = r.ok;
-              message = r.message;
-              if (r.sceneAfter) localScene = r.sceneAfter;
-              mutationsHappened = mutationsHappened || ok;
             } else {
               const r = applyTool(localPlan, tu.name, tu.input);
               ok = r.ok;
               message = r.message;
               mutationsHappened = mutationsHappened || ok;
-              // Re-sync scene if legacy plan was mutated.
-              if (ok) localScene = buildScene(localPlan);
             }
             send({ type: "tool_result", id: tu.id, ok, message });
             toolResults.push({

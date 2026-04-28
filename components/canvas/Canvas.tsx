@@ -110,8 +110,10 @@ export function Canvas({ onLoadExample }: Props) {
           intensity={viewMode === "2d" ? 0.0 : 0.85}
           castShadow={false}
         />
-        {/* Background paper */}
-        <PaperBackground bounds={bounds} viewMode={viewMode} />
+        {/* Background paper — only when the scene has content. Showing it on an
+            empty scene was perceived as a stray "gray square" behind the empty
+            state card. */}
+        {!isEmpty && <PaperBackground bounds={bounds} viewMode={viewMode} />}
         {viewMode === "3d" && (
           <gridHelper args={[60, 60, "#D6CCB8", "#ECE4D2"]} position={[center.x, -0.06, center.z]} />
         )}
