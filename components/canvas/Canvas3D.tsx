@@ -27,6 +27,7 @@ import {
 import { getWallCorners } from "@/lib/scene/wall-corners-cache";
 
 import { WallView } from "./nodes/WallView";
+import { WallsUnionView } from "./nodes/WallsUnionView";
 import { SlabView } from "./nodes/SlabView";
 import { DoorView } from "./nodes/DoorView";
 import { WindowView } from "./nodes/WindowView";
@@ -211,6 +212,14 @@ function SceneContents() {
       {slabs.map((slab) => (
         <SlabView key={slab.id} slab={slab} viewMode={viewMode} />
       ))}
+
+      {/* Single fused walls mesh in 3D (Fase M). The per-wall <WallView>
+          below still mounts in 3D but only as a transparent hit-test
+          placeholder so click selection keeps working — visual rendering
+          comes from this unified mesh. */}
+      {viewMode === "3d" && (
+        <WallsUnionView walls={walls} doors={doors} windows={windows} />
+      )}
 
       {walls.map((wall) => {
         const c = corners.get(wall.id);

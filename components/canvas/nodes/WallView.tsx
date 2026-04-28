@@ -7,25 +7,11 @@ import { type ThreeEvent } from "@react-three/fiber";
 import type { DoorNode, ViewMode, WallNode, WindowNode } from "@/lib/scene/types";
 import type { WallCorners } from "@/lib/scene/wall-mitering";
 import {
-  WALL_GROUP_BOTTOM,
-  WALL_GROUP_END,
-  WALL_GROUP_LEFT,
-  WALL_GROUP_RIGHT,
-  WALL_GROUP_START,
-  WALL_GROUP_TOP,
   wallExtrudedGeometry,
   wallShapeGeometry2D,
 } from "@/lib/scene/wall-geometry";
 import { applyWallCutouts } from "@/lib/scene/csg-cutouts";
 import { PALETTE } from "../materials";
-import { makeToonGradient, TOON_RAMP_3 } from "@/lib/canvas/toon-gradient";
-import { inflateGeometry } from "@/lib/canvas/toon-edges";
-
-// Shared toon ramp for the whole 3D scene — lives at module scope so the
-// gradient texture isn't rebuilt on every render. Three editorial bands
-// (shadow → mid → highlight) give the cel-shaded look without losing the
-// volumetric read of the apartment.
-const WALL_TOON_GRADIENT = makeToonGradient(TOON_RAMP_3);
 
 interface Props {
   wall: WallNode;
@@ -56,7 +42,12 @@ export function WallView({
 }: Props) {
   const geom2D = useMemo(() => wallShapeGeometry2D(corners), [corners]);
 
-  const geom3D = useMemo(() => {
+  // 3D rendering moved to <WallsUnionView> (Fase M) so all walls share
+  // ONE fused mesh and junctions look continuous. We still keep a
+  // transparent extruded mesh per-wall for hit-testing — clicks need to
+  // know which specific wall the user picked, and the unified mesh
+  // can't tell us that. The mesh's material is fully invisible.
+  const geom3DInvisible = useMemo(() => {
     if (viewMode !== "3d") return null;
     const base = wallExtrudedGeometry(corners, wall.height);
     const openings = [...doors, ...windows];
@@ -68,13 +59,6 @@ export function WallView({
     base.dispose();
     return geometry;
   }, [viewMode, corners, wall, doors, windows]);
-
-  // Inverted hull silhouette (Fase J). Extrudes vertices along their
-  // normals by 2 cm and renders the result with BackSide + ink colour:
-  // the inflated backfaces poke past the toon body and form a clean
-  // outline wherever the silhouette is, without picking up any CSG or
-  // Earcut triangulation seams.
-  const hullGeom = useMemo(() => (geom3D ? inflateGeometry(geom3D, 0.02) : null), [geom3D]);
 
   const fillColor = PALETTE.wallFill;
   const edgeColor = selected ? PALETTE.accent : hovered ? PALETTE.hoverStroke : PALETTE.ink;
@@ -104,58 +88,20 @@ export function WallView({
           </mesh>
         </>
       ) : (
-        geom3D && (
+        // Hit-test placeholder. The visible 3D rendering happens in
+        // <WallsUnionView>; this transparent mesh exists only so the user
+        // can click a specific wall to select / open the context menu.
+        geom3DInvisible && (
           <mesh
-            geometry={geom3D}
+            geometry={geom3DInvisible}
             onPointerOver={onPointerOver}
             onPointerOut={onPointerOut}
             onClick={onClick}
             onPointerDown={onPointerDown}
-            castShadow
-            receiveShadow
           >
-            {/* Multi-material per boundary tag (Pascal pattern, 6-face split).
-                Style Guide §13 + Fase 5: meshToonMaterial with a 3-stop
-                gradient ramp gives the cel-shaded "ilustração técnica" look
-                that mirrors the 2D editorial style. Per-face colours from
-                the palette modulate the ramp. */}
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_TOP}`}
-              color={PALETTE.wallTop}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_BOTTOM}`}
-              color={PALETTE.wallBottom}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_LEFT}`}
-              color={PALETTE.wallLeft}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_RIGHT}`}
-              color={PALETTE.wallRight}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_START}`}
-              color={PALETTE.wallStart}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
-            <meshToonMaterial
-              attach={`material-${WALL_GROUP_END}`}
-              color={PALETTE.wallEnd}
-              gradientMap={WALL_TOON_GRADIENT}
-            />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
         )
-      )}
-      {viewMode === "3d" && hullGeom && (
-        <mesh geometry={hullGeom} renderOrder={-1}>
-          <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
-        </mesh>
       )}
     </group>
   );
