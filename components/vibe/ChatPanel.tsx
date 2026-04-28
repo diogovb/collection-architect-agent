@@ -82,7 +82,18 @@ function selectionKindLabel(kind: string): string {
   }
 }
 
-function quickPromptsFor(plan: FloorPlan, ctxKind: string | null, ctxName: string | null): string[] {
+function quickPromptsFor(
+  plan: FloorPlan,
+  ctxKind: string | null,
+  ctxName: string | null,
+  lastAssistantSuggestions: string[] = [],
+): string[] {
+  // Highest priority: chips proposed by the last assistant message via
+  // `[brackets]`. They reflect the immediate dialogue context — much more
+  // useful than canned prompts. Slice to 4 to keep the chip row compact.
+  if (lastAssistantSuggestions.length > 0) {
+    return lastAssistantSuggestions.slice(0, 4);
+  }
   if (ctxKind === "room" && ctxName) {
     return [
       `Mobiliar ${ctxName}`,
@@ -135,20 +146,29 @@ export function ChatPanel({
   const toolNameByIdRef = useRef<Map<string, ToolName>>(new Map());
 
   const ctx = selected ? resolveSelection(plan, selected) : null;
+
+  // Single chip row above the composer (Fase C). Priority:
+  //   1. `[bracket]` suggestions from the last assistant message — these
+  //      reflect the dialogue context so they always win.
+  //   2. Selection-aware chips if the user has something selected.
+  //   3. Generic STARTER_PROMPTS / PROJECT_PROMPTS fallback.
+  // The old in-bubble suggestion render was removed; this is the only place
+  // chips appear now, so the user never sees two competing rows.
+  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  const lastAssistantSuggestions = lastAssistant
+    ? stripSuggestions(lastAssistant.content).suggestions
+    : [];
   const quickPrompts = quickPromptsFor(
     plan,
     ctx?.kind ?? null,
-    ctx ? ((ctx.payload.label ?? ctx.payload.name ?? null) as string | null) : null
+    ctx ? ((ctx.payload.label ?? ctx.payload.name ?? null) as string | null) : null,
+    lastAssistantSuggestions,
   );
 
-  // Quick chips ALWAYS render in the composer (Style Guide consistency:
-  // empty state and populated state must look the same to the user). When
-  // the last assistant message already shows in-line suggestion chips, the
-  // composer chips dim to opacity 0.5 so they don't compete visually but
-  // remain available — never hidden.
-  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
-  const lastAssistantHasSuggestions = !!lastAssistant && stripSuggestions(lastAssistant.content).suggestions.length > 0;
-  const dimComposerChips = busy || lastAssistantHasSuggestions;
+  // Dim the chip row only while the agent is mid-stream. When idle (even if
+  // the previous turn produced contextual suggestions) the chips are the
+  // primary call-to-action and should read at full intensity.
+  const dimComposerChips = busy;
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -366,7 +386,7 @@ export function ChatPanel({
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto thin-scroll px-4 py-4 space-y-5">
-        {history.map((m) => <MessageRow key={m.id} m={m} lang={lang} onApplyDiff={onApplyDiff} onCompareDiff={onCompareDiff} onSuggestionClick={send} />)}
+        {history.map((m) => <MessageRow key={m.id} m={m} lang={lang} onApplyDiff={onApplyDiff} onCompareDiff={onCompareDiff} />)}
         {streamingId && (
           <div className="space-y-1.5 fade-up">
             <div className="flex items-center gap-2">
@@ -434,19 +454,22 @@ export function ChatPanel({
   );
 }
 
-function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: {
+function MessageRow({ m, lang, onApplyDiff, onCompareDiff }: {
   m: SeededMessage; lang: Lang;
   onApplyDiff?: () => void; onCompareDiff?: () => void;
-  onSuggestionClick?: (text: string) => void;
 }) {
   const role = m.role;
   const labelKey = role === "system" ? "chat.system" : role === "user" ? "chat.you" : "chat.vibe";
   const labelColor = role === "assistant" ? "text-accent" : role === "user" ? "text-ink" : "text-muted";
   const proactive = m.proactive;
   const isAssistant = role === "assistant";
-  const { stripped, suggestions } = isAssistant
+  // Suggestion `[brackets]` are stripped from the visible message body but
+  // intentionally NOT rendered as inline chips — Fase C surfaces them
+  // exclusively in the composer chip row above the input. Keeping the
+  // render here would duplicate them.
+  const { stripped } = isAssistant
     ? stripSuggestions(m.content)
-    : { stripped: m.content, suggestions: [] as string[] };
+    : { stripped: m.content };
 
   // Prefer block-based rendering when available (Fase 4A). Falls back to the
   // legacy "tools dropped at the end" layout for seeded messages that haven't
@@ -476,19 +499,6 @@ function MessageRow({ m, lang, onApplyDiff, onCompareDiff, onSuggestionClick }: 
             <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{renderInline(stripped)}</div>
           ) : null}
         </>
-      )}
-      {isAssistant && suggestions.length > 0 && onSuggestionClick && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {suggestions.map((s, i) => (
-            <button
-              key={`${i}-${s}`}
-              onClick={() => onSuggestionClick(s)}
-              className="chip text-[11px] hover:bg-accent hover:text-white hover:border-accent transition-colors"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
       )}
       {m.diff && (
         <div className="mt-2 card p-3 space-y-2">
