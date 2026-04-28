@@ -441,9 +441,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     panRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vx: v.x, vy: v.y };
   };
-  // Track the pointer in screen-space so the floating measurement chip
-  // (Fase R) can position itself next to the cursor without re-doing the
-  // world→screen conversion.
+  // Track the pointer in container-relative coordinates so the floating
+  // measurement chip can position itself next to the cursor. We store
+  // values relative to the SVG's bounding rect (not e.clientX/Y), since
+  // the chip is rendered with `position: absolute` inside the
+  // Floorplan2D wrapper — viewport coords would be off by however much
+  // sidebar/topbar sits to the left/above.
   const [pointerScreen, setPointerScreen] = useState<{ x: number; y: number } | null>(null);
 
   // Inline rename state for room labels (Fase S). When set, the label of
@@ -452,16 +455,17 @@ export function Floorplan2D({ onLoadExample }: Props) {
   const [renamingRoomId, setRenamingRoomId] = useState<NodeId | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const onPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
-    setPointerScreen({ x: e.clientX, y: e.clientY });
+    const svg = svgRef.current;
+    const rect = svg?.getBoundingClientRect();
+    if (rect) {
+      setPointerScreen({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    }
     // Wall + dimension draw preview tracking.
     if (tool === "wall" || tool === "dimension") {
       tools.onSvgBackgroundMove(e.clientX, e.clientY);
     }
     const p = panRef.current;
-    if (!p || p.pointerId !== e.pointerId) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
+    if (!p || p.pointerId !== e.pointerId || !svg || !rect) return;
     const dx = ((e.clientX - p.startX) / rect.width) * v.w;
     const dy = ((e.clientY - p.startY) / rect.height) * v.h;
     setView({ ...v, x: p.vx - dx, y: p.vy - dy });
@@ -2161,9 +2165,11 @@ function svgClientToWorld(
   };
 }
 
-/** Inverse of svgClientToWorld — projects a world (x,z) back to screen
- *  pixel coords, used to anchor HTML overlays (the measurement chip)
- *  to a fixed world point even as the user pans/zooms. */
+/** Inverse of svgClientToWorld — projects a world (x,z) point back to
+ *  pixel coords RELATIVE to the SVG container (not the viewport). The
+ *  measurement chip is `position: absolute` inside the Floorplan2D
+ *  wrapper, so we want offsets within that wrapper, not viewport-wide
+ *  client coords. */
 function worldToClient(
   svg: SVGSVGElement,
   worldX: number,
@@ -2175,8 +2181,8 @@ function worldToClient(
   const fracX = (worldX - vb.x) / vb.width;
   const fracY = (worldZ - vb.y) / vb.height;
   return {
-    x: rect.left + fracX * rect.width,
-    y: rect.top + fracY * rect.height,
+    x: fracX * rect.width,
+    y: fracY * rect.height,
   };
 }
 
