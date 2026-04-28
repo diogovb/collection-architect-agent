@@ -1,5 +1,3 @@
-"use client";
-
 // Drag state machine for the canvas. Tracks what is being dragged, the
 // pointer offset, and the live transform applied during drag.
 //

@@ -1,5 +1,3 @@
-"use client";
-
 // Derivation pipeline: given the current node graph (walls + doors + windows +
 // furniture + manual rooms/slabs), recompute derived state.
 //
