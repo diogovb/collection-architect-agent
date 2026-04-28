@@ -154,7 +154,17 @@ export function ChatPanel({
   //   3. Generic STARTER_PROMPTS / PROJECT_PROMPTS fallback.
   // The old in-bubble suggestion render was removed; this is the only place
   // chips appear now, so the user never sees two competing rows.
-  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  // We skip "user-action only" assistant messages — those exist solely to
+  // log manual canvas edits and shouldn't influence the contextual chips.
+  const lastAssistant = [...history].reverse().find(
+    (m) =>
+      m.role === "assistant" &&
+      !(
+        !!m.blocks &&
+        m.blocks.length > 0 &&
+        m.blocks.every((b) => b.type === "user-action")
+      ),
+  );
   const lastAssistantSuggestions = lastAssistant
     ? stripSuggestions(lastAssistant.content).suggestions
     : [];
@@ -190,32 +200,89 @@ export function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
 
-  // Synthetic user-action log (Fase 4B) — when a manual canvas mutation is
-  // logged via lib/scene/user-action-log.ts, append a synthetic "assistant"
-  // entry whose only content is a user-action block. The agent reads its
-  // text content via apiHistory the next time the user sends a message, so
-  // it knows what the user just did.
+  // Synthetic user-action log — manual canvas mutations come in via the
+  // `ca:user-action` event. We append them to the chat as user-action
+  // blocks the agent can read on its next turn.
+  //
+  // Grouping rules (mirrors the agent tool grouping):
+  //   - If the LAST history entry is an "user-action only" assistant
+  //     message AND its last block is the same `kind` as the new event,
+  //     bump that block's count and refresh its label/detail (latest
+  //     wins, since the user usually wants to see CURRENT state).
+  //   - Else, if it's still a user-action only message, append a new
+  //     block to it so the bubble keeps growing.
+  //   - Otherwise create a fresh assistant message.
+  //
+  // The fallback `content` deliberately AVOIDS bracket syntax — the chip
+  // row above the composer extracts `[brackets]` as suggestions, and we
+  // don't want manual edits hijacking the chip slot.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<UserActionPayload>).detail;
       if (!detail || detail.type !== "user-action") return;
       const time = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
       const id = `ua-${Date.now()}`;
-      const fallbackText = `[${detail.label}${detail.detail ? ` — ${detail.detail}` : ""}]`;
-      setHistory((prev) => [
-        ...prev,
-        {
-          id,
-          role: "assistant",
-          time,
-          content: fallbackText,
-          blocks: [detail],
-        },
-      ]);
+      // No brackets — those would be picked up as quick chip suggestions.
+      const fallbackText = `${detail.label}${detail.detail ? ` — ${detail.detail}` : ""}`;
+      const block: ChatBlock = { ...detail, count: 1 };
+      setHistory((prev) => {
+        const last = prev[prev.length - 1];
+        const lastIsUserActionsOnly =
+          last?.role === "assistant" &&
+          !!last.blocks &&
+          last.blocks.length > 0 &&
+          last.blocks.every((b) => b.type === "user-action");
+        if (lastIsUserActionsOnly && last) {
+          const lastBlock = last.blocks![last.blocks!.length - 1];
+          // Same kind right before? merge — bump count, replace label/detail
+          // with the new one so the entry reflects the latest state.
+          if (lastBlock.type === "user-action" && lastBlock.kind === detail.kind) {
+            const merged: ChatBlock = {
+              ...lastBlock,
+              label: detail.label,
+              detail: detail.detail,
+              undoLabel: detail.undoLabel,
+              count: (lastBlock.count ?? 1) + 1,
+            };
+            const nextBlocks = [...last.blocks!.slice(0, -1), merged];
+            const nextContent = userActionBlocksToContent(nextBlocks);
+            return [
+              ...prev.slice(0, -1),
+              { ...last, time, content: nextContent, blocks: nextBlocks },
+            ];
+          }
+          // Different kind — append a new block to the same bubble.
+          const nextBlocks = [...last.blocks!, block];
+          const nextContent = userActionBlocksToContent(nextBlocks);
+          return [
+            ...prev.slice(0, -1),
+            { ...last, time, content: nextContent, blocks: nextBlocks },
+          ];
+        }
+        // Open a fresh user-actions bubble.
+        return [
+          ...prev,
+          { id, role: "assistant", time, content: fallbackText, blocks: [block] },
+        ];
+      });
     };
     window.addEventListener(USER_ACTION_EVENT, handler);
     return () => window.removeEventListener(USER_ACTION_EVENT, handler);
   }, [setHistory]);
+
+  /** Plain-text representation of a user-actions bubble. Used for the
+   *  apiHistory the agent sees on its next turn — keeps it informed about
+   *  what the user did manually without exposing bracket syntax that
+   *  would otherwise be parsed as quick-chip suggestions. */
+  function userActionBlocksToContent(blocks: ChatBlock[]): string {
+    return blocks
+      .filter((b): b is Extract<ChatBlock, { type: "user-action" }> => b.type === "user-action")
+      .map((b) => {
+        const c = (b.count ?? 1) > 1 ? ` (${b.count}×)` : "";
+        return `${b.label}${b.detail ? ` — ${b.detail}` : ""}${c}`;
+      })
+      .join("\n");
+  }
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -611,6 +678,7 @@ function UserActionBlock({
   block: Extract<ChatBlock, { type: "user-action" }>;
 }) {
   const glyph = userActionGlyph(block.kind);
+  const count = block.count ?? 1;
   return (
     <div
       className="flex items-start gap-2.5 rounded-md border border-line bg-panel-alt/70 px-2.5 py-1.5"
@@ -624,7 +692,12 @@ function UserActionBlock({
       </span>
       <span className="text-muted text-[12px] shrink-0">{glyph}</span>
       <div className="flex-1 min-w-0">
-        <div className="text-[12px] leading-snug text-ink">{block.label}</div>
+        <div className="text-[12px] leading-snug text-ink flex items-baseline gap-1.5">
+          <span>{block.label}</span>
+          {count > 1 && (
+            <span className="font-mono text-[10px] text-accent tracking-tight">· {count}×</span>
+          )}
+        </div>
         {block.detail && (
           <div className="text-[10.5px] text-muted font-mono leading-snug mt-0.5">
             {block.detail}

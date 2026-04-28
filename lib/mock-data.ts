@@ -218,6 +218,10 @@ export type ChatBlock =
       detail?: string;
       /** Optional undo handler. */
       undoLabel?: string;
+      /** Number of consecutive identical actions merged into this entry.
+       *  Default 1. The renderer shows "· N×" when > 1 and the label/
+       *  detail reflect the LAST action so the user sees current state. */
+      count?: number;
     };
 
 export interface SeededMessage {
