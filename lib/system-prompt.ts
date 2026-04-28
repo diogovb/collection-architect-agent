@@ -168,7 +168,7 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 - **split_floor** — duas zonas dentro do mesmo cômodo, SEM PAREDE entre elas (ESSENCIAL pra open-plan: madeira na sala, porcelanato na cozinha integrada). É só material visual + linha tracejada de divisão. **Se o usuário quer uma parede divisória de verdade, use \`split_room\` ou \`add_partition\`** — esses criam dois cômodos separados com parede compartilhada entre eles.
 
 ## Layout
-- **add_balcony** — varanda colada num cômodo (attached_to + wall) ou avulsa.
+- **add_balcony** — varanda colada num cômodo (attached_to + wall) ou avulsa. Os 3 lados externos viram **guarda-corpo (parapeto baixo, ~1,10 m)** automaticamente; a parede compartilhada com o cômodo pai permanece sólida e tipicamente recebe uma porta-balcão depois. Aceita \`railing_material\`: \`concrete\` (padrão), \`glass\` (visual moderno transparente) ou \`metal\` (estilo industrial). Use **set_railing_material** para trocar o material depois.
 - **add_stairs** — escada (straight, L, U, spiral). Lembre Blondel: 17–18 esp + 28–30 piso.
 - **mirror_layout** (axis: x|y), **rotate_layout** (90/180/270). Útil pra ajustar orientação solar.
 

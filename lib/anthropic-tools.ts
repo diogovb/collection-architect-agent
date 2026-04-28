@@ -244,6 +244,19 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "set_railing_material",
+    description:
+      "Troca o material do guarda-corpo de uma varanda já existente. Atualiza apenas as paredes externas marcadas como guarda-corpo (kind === 'railing').",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string", description: "Nome da varanda." },
+        material: { type: "string", enum: ["concrete", "glass", "metal"] },
+      },
+      required: ["room_name", "material"],
+    },
+  },
+  {
     name: "split_floor",
     description:
       "Divide o piso de um cômodo em duas zonas com materiais diferentes (essencial para open-plan: ex: sala madeira / cozinha porcelanato no mesmo espaço).",
@@ -347,7 +360,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_balcony",
     description:
-      "Adiciona uma varanda. Se attached_to + wall forem fornecidos, cola na parede daquele cômodo. Senão, posiciona automaticamente.",
+      "Adiciona uma varanda com guarda-corpo (parapeto baixo ~1.10 m) nas três faces externas. A parede compartilhada com o cômodo pai (attached_to) permanece sólida e tipicamente recebe uma porta-balcão. Material padrão do guarda-corpo é concreto; use 'glass' para visual moderno transparente ou 'metal' para estilo industrial.",
     input_schema: {
       type: "object",
       properties: {
@@ -356,6 +369,11 @@ export const tools: Anthropic.Tool[] = [
         wall: { type: "string", enum: ["north", "south", "east", "west"] },
         width: { type: "number" },
         depth: { type: "number" },
+        railing_material: {
+          type: "string",
+          enum: ["concrete", "glass", "metal"],
+          description: "Material do guarda-corpo. Default 'concrete'.",
+        },
       },
       required: ["width", "depth"],
     },

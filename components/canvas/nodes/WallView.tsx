@@ -52,6 +52,11 @@ export function WallView({
 }: Props) {
   const geom2D = useMemo(() => wallShapeGeometry2D(corners), [corners]);
 
+  // Railings extrude only to ~1.10 m (parapet height) and skip CSG cutouts
+  // — no doors/windows on a guarda-corpo. Regular walls keep the full
+  // height + opening cutouts.
+  const isRailing = wall.kind === "railing";
+  const renderHeight = isRailing ? (wall.railingHeight ?? 1.1) : wall.height;
   // 3D mesh per wall — we ABANDONED the unified mesh (Fase M/O) because
   // mergeGeometries' group handling broke our 6-face material layout in
   // ways the manual reorder couldn't fully recover. Mesh-per-wall is
@@ -59,7 +64,8 @@ export function WallView({
   // banding at junctions is preferable to invisible walls.
   const geom3D = useMemo(() => {
     if (viewMode !== "3d") return null;
-    const base = wallExtrudedGeometry(corners, wall.height);
+    const base = wallExtrudedGeometry(corners, renderHeight);
+    if (isRailing) return base; // no openings on a railing parapet
     const openings = [...doors, ...windows];
     if (openings.length === 0) return base;
     const { geometry, warnings } = applyWallCutouts(base, wall, openings);
@@ -68,7 +74,7 @@ export function WallView({
     }
     base.dispose();
     return geometry;
-  }, [viewMode, corners, wall, doors, windows]);
+  }, [viewMode, corners, wall, doors, windows, renderHeight, isRailing]);
 
   // Inverted hull silhouette in 3D — gives the ink contour that mirrors
   // the 2D plan style (Fase J).
@@ -106,59 +112,115 @@ export function WallView({
         </>
       ) : (
         geom3D && (
-          <>
-            <mesh
-              geometry={geom3D}
+          isRailing ? (
+            <RailingMesh
+              geom={geom3D}
+              material={wall.railingMaterial ?? "concrete"}
               onPointerOver={onPointerOver}
               onPointerOut={onPointerOut}
               onClick={onClick}
               onPointerDown={onPointerDown}
-              castShadow
-              receiveShadow
-            >
-              {/* Multi-material per face role (Pascal pattern, 6-face split).
-                  CSG cutouts inherit WALL_GROUP_LEFT (interior) for door
-                  reveals. */}
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_TOP}`}
-                color={PALETTE.wallTop}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_BOTTOM}`}
-                color={PALETTE.wallBottom}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_LEFT}`}
-                color={PALETTE.wallLeft}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_RIGHT}`}
-                color={PALETTE.wallRight}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_START}`}
-                color={PALETTE.wallStart}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-              <meshToonMaterial
-                attach={`material-${WALL_GROUP_END}`}
-                color={PALETTE.wallEnd}
-                gradientMap={WALL_TOON_GRADIENT}
-              />
-            </mesh>
-            {hullGeom && (
-              <mesh geometry={hullGeom} renderOrder={-1}>
-                <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
+              edgeColor={edgeColor}
+            />
+          ) : (
+            <>
+              <mesh
+                geometry={geom3D}
+                onPointerOver={onPointerOver}
+                onPointerOut={onPointerOut}
+                onClick={onClick}
+                onPointerDown={onPointerDown}
+                castShadow
+                receiveShadow
+              >
+                {/* Multi-material per face role (Pascal pattern, 6-face split).
+                    CSG cutouts inherit WALL_GROUP_LEFT (interior) for door
+                    reveals. */}
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_TOP}`}
+                  color={PALETTE.wallTop}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_BOTTOM}`}
+                  color={PALETTE.wallBottom}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_LEFT}`}
+                  color={PALETTE.wallLeft}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_RIGHT}`}
+                  color={PALETTE.wallRight}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_START}`}
+                  color={PALETTE.wallStart}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
+                <meshToonMaterial
+                  attach={`material-${WALL_GROUP_END}`}
+                  color={PALETTE.wallEnd}
+                  gradientMap={WALL_TOON_GRADIENT}
+                />
               </mesh>
-            )}
-          </>
+              {hullGeom && (
+                <mesh geometry={hullGeom} renderOrder={-1}>
+                  <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
+                </mesh>
+              )}
+            </>
+          )
         )
       )}
     </group>
+  );
+}
+
+/** Parapet mesh with material variant (concrete / glass / metal). Lighter
+ *  than a full wall: single material, no inverted hull (transparency would
+ *  fight the silhouette anyway), no toon ramp on glass/metal. */
+interface RailingMeshProps {
+  geom: THREE.BufferGeometry;
+  material: "concrete" | "glass" | "metal";
+  onPointerOver: (e: ThreeEvent<PointerEvent>) => void;
+  onPointerOut: (e: ThreeEvent<PointerEvent>) => void;
+  onClick: (e: ThreeEvent<MouseEvent>) => void;
+  onPointerDown: (e: ThreeEvent<PointerEvent>) => void;
+  edgeColor: string;
+}
+
+function RailingMesh({ geom, material, onPointerOver, onPointerOut, onClick, onPointerDown }: RailingMeshProps) {
+  return (
+    <mesh
+      geometry={geom}
+      onPointerOver={onPointerOver}
+      onPointerOut={onPointerOut}
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      castShadow
+      receiveShadow
+    >
+      {material === "glass" ? (
+        <meshPhysicalMaterial
+          color="#D8E4F0"
+          transmission={0.92}
+          roughness={0.05}
+          thickness={0.05}
+          ior={1.45}
+          opacity={1}
+          transparent
+          side={THREE.DoubleSide}
+        />
+      ) : material === "metal" ? (
+        <meshStandardMaterial color="#3E3A35" metalness={0.85} roughness={0.3} side={THREE.DoubleSide} />
+      ) : (
+        <meshToonMaterial color={PALETTE.wallFill} gradientMap={WALL_TOON_GRADIENT} side={THREE.DoubleSide} />
+      )}
+    </mesh>
   );
 }
 

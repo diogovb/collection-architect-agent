@@ -185,7 +185,14 @@ export function Floorplan2D({ onLoadExample }: Props) {
   // visibly drifted *inside* the polygon fills. The new helper traces the
   // exact mitered edges from `getWallCorners` so the outline coincides with
   // the wall fills to the pixel.
-  const envelopeOutlinePath = useMemo(() => buildWallOutlinePath(walls), [walls]);
+  // Envelope only traces opaque partitions. Railings are low parapets
+  // rendered as a thin twin-line in the walls layer — including them in
+  // the outline would draw a heavy ink stroke around the balcony, defeating
+  // the whole "open guarda-corpo" semantic.
+  const envelopeOutlinePath = useMemo(
+    () => buildWallOutlinePath(walls.filter((w) => w.kind !== "railing")),
+    [walls]
+  );
   const isEmpty = walls.length === 0;
 
   // Hide the "Comece pedindo ao agente" overlay the moment the user fires
@@ -784,17 +791,50 @@ export function Floorplan2D({ onLoadExample }: Props) {
             if (!c) return null;
             const isSel = selected.includes(w.id);
             const isHov = hovered === w.id;
-            const fill = isSel
-              ? PALETTE.accent
-              : isHov
-                ? PALETTE.hoverStroke
-                : PALETTE.wallFill;
             // While the wall tool is active we MUST NOT capture clicks
             // here — the user is mid-draw and clicking near the start
             // anchor must reach the SVG background so the auto-close
             // logic can snap the polygon shut. Same goes for hover so
             // the cursor stays "crosshair", not "pointer".
             const drawing = tool === "wall" || tool === "dimension";
+            if (w.kind === "railing") {
+              // Render railing as two parallel lines tracing the parapet's
+              // long edges (no fill — a parapet has no visible thickness in
+              // plan). Material variants tweak color + opacity for visual
+              // distinction in 2D.
+              const mat = w.railingMaterial ?? "concrete";
+              const stroke = isSel
+                ? PALETTE.accent
+                : isHov
+                  ? PALETTE.hoverStroke
+                  : mat === "glass"
+                    ? "#5A7FA8"
+                    : mat === "metal"
+                      ? "#3E3A35"
+                      : PALETTE.ink;
+              const opacity = mat === "glass" ? 0.55 : mat === "metal" ? 0.85 : 1;
+              const left = `${c.startLeft.x},${c.startLeft.z} ${c.endLeft.x},${c.endLeft.z}`;
+              const right = `${c.endRight.x},${c.endRight.z} ${c.startRight.x},${c.startRight.z}`;
+              return (
+                <g
+                  key={w.id}
+                  data-node-id={w.id}
+                  pointerEvents={drawing ? "none" : "auto"}
+                  onPointerOver={drawing ? undefined : (e) => { e.stopPropagation(); setHover(w.id); }}
+                  onPointerOut={drawing ? undefined : (e) => { e.stopPropagation(); setHover(null); }}
+                  onClick={drawing ? undefined : (e) => { e.stopPropagation(); toggleSelection(w.id, e.shiftKey); }}
+                  style={{ cursor: drawing ? "crosshair" : "pointer" }}
+                >
+                  <polyline points={left} fill="none" stroke={stroke} strokeWidth={0.7} strokeOpacity={opacity} vectorEffect="non-scaling-stroke" />
+                  <polyline points={right} fill="none" stroke={stroke} strokeWidth={0.7} strokeOpacity={opacity} vectorEffect="non-scaling-stroke" />
+                </g>
+              );
+            }
+            const fill = isSel
+              ? PALETTE.accent
+              : isHov
+                ? PALETTE.hoverStroke
+                : PALETTE.wallFill;
             return (
               <polygon
                 key={w.id}

@@ -122,6 +122,8 @@ export function applyTool<T extends ToolName>(
         return doAddColumn(plan, input as ToolInputs["add_column"]);
       case "set_floor_material":
         return doSetFloor(plan, input as ToolInputs["set_floor_material"]);
+      case "set_railing_material":
+        return doSetRailingMaterial(plan, input as ToolInputs["set_railing_material"]);
       case "split_floor":
         return doSplitFloor(plan, input as ToolInputs["split_floor"]);
       case "add_furniture":
@@ -691,6 +693,17 @@ function doSetFloor(plan: FloorPlan, input: ToolInputs["set_floor_material"]): A
   return { ok: true, message: `Piso de '${room.name}' agora é ${input.material}.` };
 }
 
+function doSetRailingMaterial(plan: FloorPlan, input: ToolInputs["set_railing_material"]): ApplyResult {
+  const room = findRoom(plan, input.room_name);
+  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  if (!room.isBalcony) {
+    return { ok: false, message: `'${room.name}' não é uma varanda — guarda-corpo só existe em varandas.` };
+  }
+  room.balconyRailingMaterial = input.material;
+  const label = input.material === "glass" ? "vidro" : input.material === "metal" ? "metal" : "concreto";
+  return { ok: true, message: `Guarda-corpo de '${room.name}' agora é ${label}.` };
+}
+
 function doSplitFloor(plan: FloorPlan, input: ToolInputs["split_floor"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
@@ -867,6 +880,7 @@ function doAddBalcony(plan: FloorPlan, input: ToolInputs["add_balcony"]): ApplyR
     x = spot.x;
     y = spot.y;
   }
+  const railingMaterial = input.railing_material ?? "concrete";
   const room: Room = {
     id: nextId("room"),
     name,
@@ -877,9 +891,11 @@ function doAddBalcony(plan: FloorPlan, input: ToolInputs["add_balcony"]): ApplyR
     floor: "ceramica",
     appear: 0,
     isBalcony: true,
+    balconyRailingMaterial: railingMaterial,
   };
   plan.rooms.push(room);
-  return { ok: true, message: `Varanda '${name}' criada (${input.width}x${input.depth}m).` };
+  const railLabel = railingMaterial === "glass" ? "vidro" : railingMaterial === "metal" ? "metal" : "concreto";
+  return { ok: true, message: `Varanda '${name}' criada (${input.width}x${input.depth}m, guarda-corpo de ${railLabel}).` };
 }
 
 function doAddStairs(plan: FloorPlan, input: ToolInputs["add_stairs"]): ApplyResult {

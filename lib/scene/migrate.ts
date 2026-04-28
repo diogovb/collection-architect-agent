@@ -84,6 +84,12 @@ interface SegmentSpec {
   start: number;
   end: number;
   isExterior: boolean;
+  /** True when the segment belongs to a balcony's exterior side (open to
+   *  outside) — sweep-line marks this so the wall renders as a low parapet
+   *  instead of a full-height partition. */
+  isRailing?: boolean;
+  /** Default "concrete"; preserved from the owning balcony room. */
+  railingMaterial?: "concrete" | "glass" | "metal";
 }
 
 /** Quantization step for room edges (Fase N). Snapping every coordinate to a
@@ -162,6 +168,36 @@ function buildSegments(plan: FloorPlan): SegmentSpec[] {
       }
     }
   }
+  // Mark railing segments: any external segment that lies along a balcony
+  // room's edge becomes a low parapet. Internal (shared) segments stay as
+  // full-height walls — that's the wall between the balcony and the parent
+  // room, which should remain solid (and typically contains a sliding door).
+  for (const seg of out) {
+    if (!seg.isExterior) continue;
+    for (const r of plan.rooms) {
+      if (!r.isBalcony) continue;
+      const edges = [
+        roomEdge(r, "north"),
+        roomEdge(r, "south"),
+        roomEdge(r, "west"),
+        roomEdge(r, "east"),
+      ];
+      let matched = false;
+      for (const e of edges) {
+        if (e.axis !== seg.axis) continue;
+        if (Math.abs(e.fixed - seg.fixed) > EPS) continue;
+        if (seg.start >= e.start - EPS && seg.end <= e.end + EPS) {
+          matched = true;
+          break;
+        }
+      }
+      if (matched) {
+        seg.isRailing = true;
+        seg.railingMaterial = r.balconyRailingMaterial ?? "concrete";
+        break;
+      }
+    }
+  }
   return out.filter((s) => !removed.has(key(s)));
 }
 
@@ -188,17 +224,25 @@ function segmentToWallNode(s: SegmentSpec): WallNode {
   const end: Vec2 = s.axis === "h"
     ? { x: s.end, z: s.fixed }
     : { x: s.fixed, z: s.end };
+  // Railings are thinner than walls (parapet, not load-bearing) so the
+  // 2D drag handles + outline use a tighter footprint.
+  const RAILING_THICKNESS = 0.10;
+  const RAILING_HEIGHT = 1.10;
+  const isRailing = s.isRailing === true;
   return {
     id: segmentId(s),
     type: "wall",
     parentId: LEVEL_ID,
     start,
     end,
-    thickness: s.isExterior ? EXTERNAL_THICKNESS : INTERNAL_THICKNESS,
+    thickness: isRailing ? RAILING_THICKNESS : (s.isExterior ? EXTERNAL_THICKNESS : INTERNAL_THICKNESS),
     height: DEFAULT_WALL_HEIGHT,
     isExterior: s.isExterior,
     doors: [],
     windows: [],
+    ...(isRailing
+      ? { kind: "railing" as const, railingMaterial: s.railingMaterial ?? "concrete", railingHeight: RAILING_HEIGHT }
+      : {}),
   };
 }
 

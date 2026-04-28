@@ -158,6 +158,9 @@ export interface Room {
   floorZones?: FloorZone[];
   /** Marks the room as a balcony (rendered with guard rail on exterior walls). */
   isBalcony?: boolean;
+  /** Material of the balcony's railing/parapet on the exterior sides.
+   *  Only meaningful when `isBalcony` is true. Default "concrete". */
+  balconyRailingMaterial?: "concrete" | "glass" | "metal";
   /** Marks the room as exterior (garden/yard). */
   isExterior?: boolean;
 }
@@ -267,6 +270,7 @@ export type ToolName =
   | "add_furniture"
   | "remove_furniture"
   | "set_floor_material"
+  | "set_railing_material"
   | "move_furniture"
   | "create_apartment_layout"
   | "furnish_room"
@@ -348,6 +352,7 @@ export interface ToolInputs {
   };
   remove_furniture: { furniture_id?: string; label?: string };
   set_floor_material: { room_name: string; material: FloorMaterial };
+  set_railing_material: { room_name: string; material: "concrete" | "glass" | "metal" };
   move_furniture: { furniture_id: string; new_x: number; new_y: number };
   create_apartment_layout: {
     total_area: number;
@@ -401,6 +406,7 @@ export interface ToolInputs {
     wall?: Wall;
     width: number;
     depth: number;
+    railing_material?: "concrete" | "glass" | "metal";
   };
   add_stairs: {
     shape: StairsShape;

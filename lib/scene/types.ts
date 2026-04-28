@@ -70,6 +70,9 @@ export interface LevelNode extends BaseNode {
   defaultWallHeight: number;
 }
 
+/** Material of a railing parapet — only meaningful when `WallNode.kind === "railing"`. */
+export type RailingMaterial = "concrete" | "glass" | "metal";
+
 export interface WallNode extends BaseNode {
   type: "wall";
   start: Vec2;
@@ -80,6 +83,14 @@ export interface WallNode extends BaseNode {
   /** Children: door + window node ids attached to this wall. */
   doors: NodeId[];
   windows: NodeId[];
+  /** "wall" (default) is a full-height opaque partition; "railing" is a low
+   *  parapet (~1.10 m) used on the open sides of balconies. Optional for
+   *  back-compat — undefined behaves like "wall". */
+  kind?: "wall" | "railing";
+  /** Material variant when `kind === "railing"`. Default "concrete". */
+  railingMaterial?: RailingMaterial;
+  /** Override height when `kind === "railing"`. Default 1.10 m. */
+  railingHeight?: number;
 }
 
 export type HingeSide = "start" | "end";
