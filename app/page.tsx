@@ -30,7 +30,43 @@ export default function Page() {
 
   // Global Delete / Esc / Ctrl+Z shortcuts on the scene store (Fase U).
   // Operates on the multi-select array so Shift+click then Delete works.
-  useSceneKeyboardShortcuts();
+  // The `syncDeleteToPlan` callback mirrors deletions into the legacy
+  // FloorPlan so the bridge's plan→scene rebuild (which fires on every
+  // chat turn) doesn't resurrect the deleted nodes — matches the bug where
+  // a deleted móvel reappeared after sending any message to the agent.
+  useSceneKeyboardShortcuts({
+    syncDeleteToPlan: (ids) => {
+      const sceneNodes = useSceneStore.getState().nodes;
+      const next = JSON.parse(JSON.stringify(plan));
+      let touched = false;
+      for (const id of ids) {
+        const node = sceneNodes[id];
+        if (!node) continue;
+        if (node.type === "furniture" && id.startsWith("furniture:")) {
+          const legacyId = id.slice("furniture:".length);
+          next.furniture = next.furniture.filter((f: Furniture) => f.id !== legacyId);
+          touched = true;
+        } else if (node.type === "door" && id.startsWith("door:")) {
+          const legacyId = id.slice("door:".length);
+          next.doors = next.doors.filter((d: { id: string }) => d.id !== legacyId);
+          touched = true;
+        } else if (node.type === "window" && id.startsWith("window:")) {
+          const legacyId = id.slice("window:".length);
+          next.windows = next.windows.filter((w: { id: string }) => w.id !== legacyId);
+          touched = true;
+        } else if (node.type === "room" && id.startsWith("room:legacy-")) {
+          const legacyId = id.slice("room:legacy-".length);
+          next.rooms = next.rooms.filter((r: Room) => r.id !== legacyId);
+          // Also clean up dependents anchored to this room id.
+          next.furniture = next.furniture.filter((f: Furniture) => f.roomId !== legacyId);
+          next.doors = next.doors.filter((d: { roomId?: string }) => d.roomId !== legacyId);
+          next.windows = next.windows.filter((w: { roomId?: string }) => w.roomId !== legacyId);
+          touched = true;
+        }
+      }
+      if (touched) setPlan(next);
+    },
+  });
 
   // Sync the legacy FloorPlan state into the new SceneStore on every change.
   useFloorPlanBridge(plan);

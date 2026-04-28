@@ -12,13 +12,20 @@
 // listener bails out if focus is in a text input so Backspace inside the
 // chat composer doesn't wipe the canvas.
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSceneStore } from "./store";
 import { logRemove } from "./user-action-log";
 import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
-import type { WallNode } from "./types";
+import type { NodeId, WallNode } from "./types";
 import { pushUndoSnapshot, redo, undo } from "./use-undo-redo";
+
+/** Called BEFORE the scene store removes the nodes — gives the caller a
+ *  chance to reflect the delete in the legacy `FloorPlan` so the bridge
+ *  doesn't resurrect the nodes on the next plan→scene rebuild (which fires
+ *  on every chat turn). Without this, deleted furniture / doors / windows
+ *  reappear after the user types anything in the agent chat. */
+export type SyncDeleteToPlan = (ids: NodeId[]) => void;
 
 function isTyping(): boolean {
   const el = document.activeElement as HTMLElement | null;
@@ -29,7 +36,13 @@ function isTyping(): boolean {
   return false;
 }
 
-export function useSceneKeyboardShortcuts(): void {
+export function useSceneKeyboardShortcuts(opts?: { syncDeleteToPlan?: SyncDeleteToPlan }): void {
+  // Stash the latest callback in a ref so the keydown listener (registered
+  // once with `[]`) always sees the current closure without re-registering
+  // on every render.
+  const syncRef = useRef<SyncDeleteToPlan | undefined>(opts?.syncDeleteToPlan);
+  syncRef.current = opts?.syncDeleteToPlan;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping()) return;
@@ -74,6 +87,12 @@ export function useSceneKeyboardShortcuts(): void {
             node.type;
           logRemove(`${label}`);
         }
+        // Mirror the delete into the legacy FloorPlan FIRST so that the
+        // bridge's plan→scene rebuild (next chat turn or any plan change)
+        // doesn't resurrect the nodes. Furniture / doors / windows / rooms
+        // all live in the plan; walls aren't (yet) deletable through this
+        // path so they're handled scene-only.
+        syncRef.current?.(ids);
         store.removeNodes(ids);
         // Re-derive so rooms/slabs/cotas stay consistent after a delete.
         const derived = runDerivation(useSceneStore.getState().nodes, store.activeLevelId);
