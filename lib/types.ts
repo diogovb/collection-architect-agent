@@ -440,6 +440,28 @@ export interface NorthArrow {
   angle: number;
 }
 
+/** Camadas SVG geradas pelo pipeline híbrido (GPT Image + Arrow).
+ *  Quando presentes, o canvas renderiza essas camadas como background
+ *  (atrás dos rooms/walls da FloorPlan tradicional). Plantas geradas
+ *  exclusivamente pelo hybrid pipeline têm rooms vazia e essas camadas
+ *  preenchidas — são read-only no momento (regenerar para alterar). */
+export interface HybridLayers {
+  /** PNG bruto do GPT Image (estrutural). Data URL base64. Para preview/exportação. */
+  structuralImageDataUrl?: string;
+  /** SVG do Arrow vetorizando a imagem estrutural. Renderizado no canvas. */
+  structuralSvg?: string;
+  /** PNG bruto do GPT Image (layout de móveis). */
+  furnitureImageDataUrl?: string;
+  /** SVG do Arrow vetorizando o layout de móveis. */
+  furnitureSvg?: string;
+  /** Override manual da viewBox usada pelo HybridSvgLayer. Se ausente,
+   *  o layer extrai a viewBox do próprio SVG. */
+  viewBox?: { x: number; y: number; width: number; height: number };
+  /** Tamanho em metros do retângulo onde a SVG é encaixada no mundo.
+   *  Default: 20m × 12m centralizado na origem. */
+  worldFit?: { widthMeters: number; heightMeters: number };
+}
+
 export interface FloorPlan {
   rooms: Room[];
   doors: Door[];
@@ -454,6 +476,10 @@ export interface FloorPlan {
    *  laundry, BBQ, TV wall). The Furniture entries with `runId === r.id`
    *  are the materialized modules + countertop + uppers. */
   millworkRuns?: MillworkRun[];
+  /** Camadas geradas pelo hybrid pipeline. Renderizadas pelo canvas como
+   *  background. Quando preenchidas, normalmente as listas tradicionais
+   *  (rooms/doors/etc) ficam vazias — a planta é puramente visual. */
+  hybridLayers?: HybridLayers;
 }
 
 // ----- Tool input shapes (mirror anthropic-tools.ts) -----
@@ -736,6 +762,19 @@ export type StreamEvent =
   | { type: "tool_input"; id: string; input: unknown }
   | { type: "tool_result"; id: string; ok: boolean; message: string }
   | { type: "plan_replace"; plan: FloorPlan }
+  | {
+      type: "debug_image";
+      mediaType: "image/png";
+      dataUrl: string;
+      label: string;
+      phase: "structural" | "furniture";
+    }
+  | {
+      type: "debug_svg";
+      svg: string;
+      label: string;
+      phase: "structural" | "furniture";
+    }
   | { type: "error"; message: string }
   | { type: "done" };
 

@@ -12,13 +12,17 @@ import { floorPlanToScene } from "./migrate";
 import { runDerivation } from "./derive";
 import { applyAutoDimensions } from "./auto-dimensions";
 import { useSceneStore } from "./store";
+import { useHybridStore } from "./hybrid-store";
 import type { WallNode } from "./types";
 import { validateScene } from "./validators";
 
 export function useFloorPlanBridge(plan: FloorPlan): void {
   const replaceScene = useSceneStore((s) => s.replaceScene);
+  const setHybridLayers = useHybridStore((s) => s.setLayers);
 
   useEffect(() => {
+    // Sync hybrid layers from FloorPlan to dedicated store.
+    setHybridLayers(plan.hybridLayers ?? null);
     const { scene, warnings } = floorPlanToScene(plan);
     if (warnings.length > 0 && process.env.NODE_ENV !== "production") {
       for (const w of warnings) console.warn(`[migrate] ${w}`);
@@ -37,5 +41,5 @@ export function useFloorPlanBridge(plan: FloorPlan): void {
       liveTransforms: new Map(),
       diagnostics,
     });
-  }, [plan, replaceScene]);
+  }, [plan, replaceScene, setHybridLayers]);
 }

@@ -29,6 +29,7 @@ import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
 import { FURN_DEFS, type PathSpec } from "@/lib/furniture-svgs";
 import { ContextMenu } from "./ContextMenu";
+import { HybridSvgLayer } from "./HybridSvgLayer";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
 import { buildWallOutlinePath } from "@/lib/scene/wall-outline";
 import { MeasurementChip } from "./MeasurementChip";
@@ -743,6 +744,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
           height={v.h + 100}
           fill={`url(#floorplan-grid-major)`}
         />
+
+        {/* Hybrid SVG layer — quando uma planta foi gerada pelo pipeline
+            híbrido (GPT Image + Arrow), exibe a SVG vetorizada como
+            background. Fica entre grid e slabs para que walls/furniture
+            tradicionais (se existirem em uma cena mista) apareçam por cima. */}
+        <HybridSvgLayer />
 
         {/* Slabs (lowest visual layer above grid). Style Guide §7: pattern
             fill by material — woodgrain/tile/carpet are vector patterns

@@ -222,6 +222,20 @@ export type ChatBlock =
        *  Default 1. The renderer shows "· N×" when > 1 and the label/
        *  detail reflect the LAST action so the user sees current state. */
       count?: number;
+    }
+  | {
+      type: "debug_image";
+      /** Data URL (image/png) que pode ir direto pra <img src>. */
+      dataUrl: string;
+      label: string;
+      phase: "structural" | "furniture" | string;
+    }
+  | {
+      type: "debug_svg";
+      /** SVG bruto (string). Renderizado via dangerouslySetInnerHTML após sanitização. */
+      svg: string;
+      label: string;
+      phase: "structural" | "furniture" | string;
     };
 
 export interface SeededMessage {
