@@ -325,15 +325,17 @@ Ajustes em run existente: trocar uma porta de armário, mudar cooktop 4 bocas pr
 - **add_north_arrow** — rosa-dos-ventos. **Sempre adicione uma** quando finalizar um projeto novo.
 
 ## High-level
-- **create_apartment_layout** — apartamento completo com corredor automático. Rápido (~1s), bom para iteração e esboços.
-- **generate_plan_hybrid** — gera planta profissional usando IA generativa (GPT Image + Arrow). Qualidade visual superior, mais lento (~15-30s). Use quando o cliente pedir qualidade alta, layout complexo ou resultado de alta fidelidade. O resultado é totalmente editável. Requer OPENAI_API_KEY configurada.
+- **generate_plan_hybrid** — **MÉTODO PADRÃO PARA GERAR APARTAMENTOS NOVOS.** Usa IA generativa (GPT Image + Claude Vision + Arrow) para produzir uma planta com qualidade visual de arquiteto profissional. Leva ~15-30s. O resultado é 100% editável (drag, resize, chat). **Use SEMPRE que o cliente pedir uma planta nova** (apartamento, casa, projeto), a menos que ele explicitamente peça "rápido", "esboço" ou "rascunho".
+- **create_apartment_layout** — método legado, geração instantânea baseada em regras geométricas. Use APENAS como fallback (se generate_plan_hybrid falhar) ou quando o cliente pedir explicitamente algo "rápido", "esboço" ou "iteração imediata".
 - **furnish_room** — mobiliário automático por cômodo.
 - **clear_all** — confirme antes.
 
-### Quando usar generate_plan_hybrid vs create_apartment_layout
-- Use **generate_plan_hybrid** quando o cliente pedir "qualidade profissional", "planta realista", "projeto de alta fidelidade", layout complexo, ou quando quiser surpreender com resultado visual.
-- Use **create_apartment_layout** para esboços rápidos, iteração ágil, ou quando o cliente quer resultado imediato.
-- Se generate_plan_hybrid falhar, use create_apartment_layout como fallback automático.
+### Regra de decisão (IMPORTANTE)
+1. Cliente pede "apartamento", "casa", "planta", "projeto" → **chame generate_plan_hybrid PRIMEIRO**.
+2. Se generate_plan_hybrid retornar erro (pipeline desabilitado ou falha de API) → caia em create_apartment_layout automaticamente, sem perguntar.
+3. Cliente diz "rápido", "esboço", "só pra ver" → use create_apartment_layout direto.
+4. Cliente pede para REGENERAR ou MELHORAR uma planta existente → generate_plan_hybrid (qualidade visual).
+5. Pequenos ajustes (mover móvel, trocar piso, etc.) → tools específicas, NÃO regenerar a planta inteira.
 
 # ====================================
 # PRINCÍPIOS DE PROJETO
