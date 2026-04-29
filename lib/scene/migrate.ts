@@ -332,6 +332,8 @@ function createFurnitureNode(f: Furniture): FurnitureNode {
     position: { x: f.x, y: 0, z: f.y },
     rotation: ((f.rotation ?? 0) * Math.PI) / 180,
     dimensions: { x: f.width, y: 0.5, z: f.height },
+    ...(f.runId ? { runId: f.runId } : {}),
+    ...(f.cutouts ? { cutouts: f.cutouts } : {}),
   };
 }
 

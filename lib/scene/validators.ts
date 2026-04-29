@@ -158,12 +158,22 @@ function validateFurnitureWithinRoom(furniture: FurnitureNode[], rooms: RoomNode
 
 function validateFurnitureOverlap(furniture: FurnitureNode[], out: DiagnosticIssue[]) {
   // Pairwise AABB overlap (axis-aligned bounding box on XZ plane, ignoring rotation for now).
+  // Marcenaria embutida (Iteração 7) viola overlap por design: bancada cobre
+  // os módulos lower, uppers ficam acima dos lowers, exaustor sobre cooktop.
+  // Pares com mesmo runId ou ambos sendo módulos são pulados (não-bug).
+  const isMillwork = (f: FurnitureNode): boolean =>
+    /^module_|^bancada_continuous$|^hood_built_in$/.test(f.catalogId);
   for (let i = 0; i < furniture.length; i++) {
     for (let j = i + 1; j < furniture.length; j++) {
       const a = furniture[i];
       const b = furniture[j];
       // Skip lights, outlets, switches — those are point devices.
       if (/light|outlet|switch/.test(a.catalogId) || /light|outlet|switch/.test(b.catalogId)) continue;
+      // Skip pairs from the same millwork run — overlaps são esperados.
+      if (a.runId && b.runId && a.runId === b.runId) continue;
+      // Skip when BOTH are millwork modules (sink/cooktop em cima da
+      // bancada de outro run também é OK na prática, ex: cozinha em L).
+      if (isMillwork(a) && isMillwork(b)) continue;
       const overlap =
         a.position.x < b.position.x + b.dimensions.x - 0.05 &&
         a.position.x + a.dimensions.x > b.position.x + 0.05 &&

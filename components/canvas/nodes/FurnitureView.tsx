@@ -77,6 +77,93 @@ function colorFor(catalogId: string): string {
   return FURNITURE_COLORS[catalogId] ?? "#C7BBA0";
 }
 
+// ---- Marcenaria 3D (Iteração 7 / Fase D) -----------------------------
+// In 3D, millwork modules need real extrusions:
+//   - lower cabinet: 90 cm tall at floor
+//   - full-height: 2.0 m tall at floor (fridge, oven tower, pantry)
+//   - countertop: 4 cm slab at 85 cm elevation
+//   - upper cabinet: 70 cm tall at 1.55 m elevation
+//   - hood: 40 cm tall at 1.65 m elevation
+//
+// Returns null when the catalogId isn't millwork (caller falls through to
+// the default extrusion).
+const COUNTERTOP_3D_COLOR: Record<string, string> = {
+  granito_preto: "#1a1d28",
+  granito_branco: "#cfc8b8",
+  marmore_carrara: "#f0ece2",
+  marmore_travertino: "#d6c9a8",
+  quartzo_branco: "#eee9dc",
+  quartzo_preto: "#2a2d36",
+  porcelanato: "#e6dfd2",
+  madeira_macica: "#a78867",
+  inox: "#c4c4be",
+};
+
+interface MillworkSpec {
+  /** Extrude height in metres. */
+  height: number;
+  /** Bottom Y of the geometry, in metres above floor. */
+  elevation: number;
+  /** Body colour. */
+  color: string;
+  /** True for tracejado / suspended elements (uppers, hood) — render with
+   *  partial transparency to suggest they're above the plan-cut. */
+  isSuspended: boolean;
+  /** True for stone slabs (countertop) — render with slight gloss. */
+  isStoneSlab: boolean;
+}
+
+function millworkSpecFor(catalogId: string, label: string): MillworkSpec | null {
+  // Bancada: thin slab at 85 cm.
+  if (catalogId === "bancada_continuous") {
+    const lbl = label.toLowerCase();
+    let mat = "granito_preto";
+    for (const k of Object.keys(COUNTERTOP_3D_COLOR)) {
+      if (lbl.includes(k.replace("_", " ")) || lbl.includes(k)) { mat = k; break; }
+    }
+    return {
+      height: 0.04,
+      elevation: 0.85,
+      color: COUNTERTOP_3D_COLOR[mat],
+      isSuspended: false,
+      isStoneSlab: true,
+    };
+  }
+  // Hood: 40 cm at 1.65 m.
+  if (catalogId === "hood_built_in") {
+    return { height: 0.4, elevation: 1.65, color: "#5a6172", isSuspended: true, isStoneSlab: false };
+  }
+  // Uppers: 70 cm at 1.55 m.
+  if (catalogId === "module_upper_cabinet") {
+    return { height: 0.7, elevation: 1.55, color: "#e6dfd2", isSuspended: true, isStoneSlab: false };
+  }
+  if (catalogId === "module_upper_glass") {
+    return { height: 0.7, elevation: 1.55, color: "#d8e4f0", isSuspended: true, isStoneSlab: false };
+  }
+  // Full-height modules.
+  if (
+    /^module_(fridge|oven_tower|pantry_tall|washer_dryer_stack|closet_hanging|tv_panel_built_in|closet_shelves)/.test(catalogId)
+  ) {
+    return { height: 2.1, elevation: 0, color: catalogId.includes("fridge") ? "#e8dec8" : "#d6cebc", isSuspended: false, isStoneSlab: false };
+  }
+  // Wall-hung toilet — short but at floor (mounted on wall).
+  if (catalogId === "module_wall_hung_toilet") {
+    return { height: 0.4, elevation: 0.4, color: "#fcfcfc", isSuspended: false, isStoneSlab: false };
+  }
+  // Lower modules — most cabinetry/appliances at counter level.
+  if (/^module_/.test(catalogId)) {
+    // Appliances visible on top get darker tone.
+    let color = "#d6cebc";
+    if (/cooktop|oven_built_in|microwave|dishwasher|wine_cellar|outdoor_cooktop|wine_fridge_outdoor|bbq|pizza_oven/.test(catalogId)) {
+      color = "#3a3f4f";
+    } else if (/sink|vanity|laundry_tank|outdoor_sink/.test(catalogId)) {
+      color = "#cfc8b8";
+    }
+    return { height: 0.85, elevation: 0, color, isSuspended: false, isStoneSlab: false };
+  }
+  return null;
+}
+
 export function FurnitureView({
   furniture,
   viewMode,
@@ -139,31 +226,59 @@ export function FurnitureView({
     );
   }
 
-  // 3D: simple box with toon body + inverted-hull silhouette (Fase J).
-  const hull = boxHull(furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z);
+  // 3D: marcenaria modular tem altura real (lower 0.9m, full-height 2.1m,
+  // bancada slab 4cm, uppers a 1.55m, hood a 1.65m). FurnitureNode default
+  // fica com altura 0.5m. Detectar via millworkSpecFor.
+  const millwork = millworkSpecFor(furniture.catalogId, furniture.label);
+  const millY = millwork ? millwork.height : furniture.dimensions.y;
+  const millElev = millwork ? millwork.elevation : 0;
+  const millColor = millwork ? millwork.color : baseColor;
+  const millCenterY = millElev + millY / 2;
+  const hull = boxHull(furniture.dimensions.x, millY, furniture.dimensions.z);
   return (
     <group
-      position={[cx, cy, cz]}
+      position={[cx, millCenterY, cz]}
       rotation={[0, -furniture.rotation, 0]}
       onPointerOver={onPointerOver}
       onPointerOut={onPointerOut}
       onClick={onClick}
       onPointerDown={onPointerDown}
     >
-      <mesh castShadow>
-        <boxGeometry args={[furniture.dimensions.x, furniture.dimensions.y, furniture.dimensions.z]} />
-        {/* Toon material to match the editorial 3D look (Fase 5). */}
-        <meshToonMaterial
-          color={selected ? PALETTE.accent : baseColor}
-          gradientMap={FURN_TOON_GRADIENT}
-        />
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[furniture.dimensions.x, millY, furniture.dimensions.z]} />
+        {millwork?.isStoneSlab ? (
+          // Bancada: leve gloss, sem gradient toon (parece pedra polida).
+          <meshStandardMaterial
+            color={selected ? PALETTE.accent : millColor}
+            metalness={0.15}
+            roughness={0.4}
+          />
+        ) : millwork?.isSuspended ? (
+          // Uppers / hood: opacidade levemente reduzida pra sugerir
+          // que estao acima do plano de corte sem ficarem fantasmas.
+          <meshToonMaterial
+            color={selected ? PALETTE.accent : millColor}
+            gradientMap={FURN_TOON_GRADIENT}
+            transparent
+            opacity={0.92}
+          />
+        ) : (
+          <meshToonMaterial
+            color={selected ? PALETTE.accent : millColor}
+            gradientMap={FURN_TOON_GRADIENT}
+          />
+        )}
       </mesh>
-      <mesh geometry={hull} renderOrder={-1}>
-        <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
-      </mesh>
+      {/* Inverted-hull outline (Fase J) — apenas pra modulos NAO suspensos.
+          Uppers + hood ficariam com contorno duplicado feio. */}
+      {!millwork?.isSuspended && (
+        <mesh geometry={hull} renderOrder={-1}>
+          <meshBasicMaterial color={PALETTE.ink} side={THREE.BackSide} />
+        </mesh>
+      )}
       {selected && onGizmoPointerDown && (
         <mesh
-          position={[0, furniture.dimensions.y / 2 + 0.18, 0]}
+          position={[0, millY / 2 + 0.18, 0]}
           renderOrder={10}
           onPointerDown={(e) => {
             if (e.button !== 0) return;

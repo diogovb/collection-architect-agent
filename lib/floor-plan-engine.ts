@@ -1191,6 +1191,13 @@ function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): Appl
 
 // ---------- Furniture groups ----------
 
+/** Returns the longest wall of a room — used by kitchen_basic/full to
+ *  pick where to place the bancada. north/south are width; east/west are
+ *  height. */
+function longestWall(room: Room): "north" | "south" | "east" | "west" {
+  return room.width >= room.height ? "north" : "east";
+}
+
 function placeFurniture(plan: FloorPlan, room: Room, type: FurnitureType, rx: number, ry: number, label?: string) {
   // Curated group layouts trust their relative positions; we still want
   // the size/room-fit guard but skip the per-item overlap check so the
@@ -1268,24 +1275,42 @@ function doAddFurnitureGroup(plan: FloorPlan, input: ToolInputs["add_furniture_g
       ]);
       break;
     case "kitchen_basic":
-      placeMany([
-        { type: "stove_4burner", rx: 0.0, ry: 0.0 },
-        { type: "kitchen_sink_single", rx: 0.5, ry: 0.0 },
-        { type: "fridge_single", rx: 1.0, ry: 0.0 },
-        { type: "microwave", rx: 0.3, ry: 0.0 },
-      ]);
+      // Iteração 7 — delega para add_millwork_run criar bancada contínua
+      // arquitetônica em vez de itens espalhados.
+      doAddMillworkRun(plan, {
+        room_name: room.name,
+        wall: longestWall(room),
+        type: "kitchen_counter",
+        modules: [
+          { kind: "fridge_niche", width: 0.7 },
+          { kind: "cabinet_drawer_3", width: 0.6 },
+          { kind: "cooktop_4", width: 0.6, hood_above: true },
+          { kind: "cabinet_door", width: 0.5 },
+          { kind: "sink_single", width: 0.6 },
+        ],
+        countertop: { material: "granito_preto", has_backsplash: true },
+        upper_cabinets: "auto",
+        finish: { body_material: "MDF_branco", door_style: "shaker" },
+      });
       break;
     case "kitchen_full":
-      placeMany([
-        { type: "stove_5burner", rx: 0.0, ry: 0.0 },
-        { type: "hood", rx: 0.04, ry: 0.05 },
-        { type: "kitchen_sink_double", rx: 0.45, ry: 0.0 },
-        { type: "fridge_double", rx: 1.0, ry: 0.0 },
-        { type: "dishwasher", rx: 0.7, ry: 0.0 },
-        { type: "microwave", rx: 0.25, ry: 0.0 },
-        { type: "kitchen_island", rx: 0.5, ry: 0.6 },
-        { type: "pantry", rx: 1.0, ry: 1.0 },
-      ]);
+      doAddMillworkRun(plan, {
+        room_name: room.name,
+        wall: longestWall(room),
+        type: "kitchen_counter",
+        modules: [
+          { kind: "fridge_niche_double", width: 0.9 },
+          { kind: "cabinet_drawer_4", width: 0.6 },
+          { kind: "cooktop_5", width: 0.75, hood_above: true },
+          { kind: "cabinet_door", width: 0.4 },
+          { kind: "sink_double", width: 1.2 },
+          { kind: "dishwasher_niche", width: 0.6 },
+          { kind: "oven_tower", width: 0.6 },
+        ],
+        countertop: { material: "granito_preto", has_backsplash: true },
+        upper_cabinets: "auto",
+        finish: { body_material: "MDF_amadeirado", door_style: "shaker" },
+      });
       break;
     case "bathroom_basic":
       placeMany([

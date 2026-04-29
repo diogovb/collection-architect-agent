@@ -191,6 +191,13 @@ export interface FurnitureNode extends BaseNode {
   wallId?: NodeId;
   wallOffset?: number;
   wallSide?: "front" | "back";
+  /** When this furniture is part of a millwork run, the run id. Pairs of
+   *  furniture from the SAME run are EXPECTED to overlap visually
+   *  (bancada cobre cabinets, uppers acima do exaustor) — the overlap
+   *  validator skips those. */
+  runId?: string;
+  /** Cutouts on bancada_continuous, in run-local metres along its length. */
+  cutouts?: Array<{ offset: number; width: number; kind: "sink" | "cooktop" | "other" }>;
 }
 
 export type DimensionScope = "auto-envelope" | "manual";
