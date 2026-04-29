@@ -229,40 +229,21 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   const finishDoor = input.finish?.door_style ?? "flat";
   const finishHandle = input.finish?.handle_style ?? "bar_horizontal";
 
-  // Materialise modules in order.
+  // The output array. We push in RENDER ORDER — earlier items go below,
+  // later items paint on top. So:
+  //   1) bancada (deepest visual layer, hatched stone)
+  //   2) lower modules (cooktop/sink/fridge with their SVG paths)
+  //   3) uppers (suspended, dashed)
+  //   4) hood (suspended, on top)
   const newFurniture: Furniture[] = [];
-  let cursor = startOffset;
-  for (const m of normalized) {
-    const ftype = moduleFurnitureType(m.kind);
-    const bbox = computeModulePosition(room, wall, cursor, m.width, m.defaultDepth);
-    const item: Furniture = {
-      id: nextFurnId(),
-      roomId: room.id,
-      type: ftype,
-      label: m.label ?? MODULE_DEFS[m.kind].label,
-      x: Math.round(bbox.x * 100) / 100,
-      y: Math.round(bbox.y * 100) / 100,
-      width: bbox.width,
-      height: bbox.height,
-      finish: {
-        bodyMaterial: finishBody,
-        doorStyle: finishDoor,
-        handleStyle: finishHandle,
-      },
-    };
-    newFurniture.push(item);
-    cursor += m.width;
-  }
 
-  // Generate countertop spanning the run if requested. We always create
-  // the countertop unless the run is purely full-height (closets, etc.).
+  // Generate countertop spanning the run FIRST so modules paint on top.
   const hasNonFullHeight = normalized.some((m) => !m.isFullHeight);
   const wantCountertop = !!input.countertop || (runType !== "closet" && hasNonFullHeight);
   let countertopFurniture: Furniture | null = null;
   if (wantCountertop && hasNonFullHeight) {
     const ctMaterial: CountertopMaterial = input.countertop?.material ?? "granito_preto";
     const ctBbox = countertopBbox(room, wall, startOffset, totalLength, RUN_DEFAULTS.countertopDepth);
-    // Compute cutouts in run-local coords.
     const cutouts: NonNullable<Furniture["cutouts"]> = [];
     let runOffset = 0;
     for (const m of normalized) {
@@ -284,6 +265,30 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
       cutouts,
     };
     newFurniture.push(countertopFurniture);
+  }
+
+  // Now lower modules in order.
+  let cursor = startOffset;
+  for (const m of normalized) {
+    const ftype = moduleFurnitureType(m.kind);
+    const bbox = computeModulePosition(room, wall, cursor, m.width, m.defaultDepth);
+    const item: Furniture = {
+      id: nextFurnId(),
+      roomId: room.id,
+      type: ftype,
+      label: m.label ?? MODULE_DEFS[m.kind].label,
+      x: Math.round(bbox.x * 100) / 100,
+      y: Math.round(bbox.y * 100) / 100,
+      width: bbox.width,
+      height: bbox.height,
+      finish: {
+        bodyMaterial: finishBody,
+        doorStyle: finishDoor,
+        handleStyle: finishHandle,
+      },
+    };
+    newFurniture.push(item);
+    cursor += m.width;
   }
 
   // Generate upper cabinets if "auto". Skip above full-height modules and

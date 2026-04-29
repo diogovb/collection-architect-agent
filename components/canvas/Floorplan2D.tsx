@@ -27,6 +27,7 @@ import { getWallCorners } from "@/lib/scene/wall-corners-cache";
 import { placeLabels, estimateLabelWidth, type LabelInput } from "@/lib/scene/label-placement";
 import { useSvgTools } from "./floorplan/use-svg-tools";
 import { styleOf, type FurnitureStyle } from "./floorplan/furniture-style";
+import { FURN_DEFS, type PathSpec } from "@/lib/furniture-svgs";
 import { ContextMenu } from "./ContextMenu";
 import { findJunction, JUNCTION_TOLERANCE } from "@/lib/scene/junctions";
 import { buildWallOutlinePath } from "@/lib/scene/wall-outline";
@@ -982,7 +983,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
                   onClick={(e) => { e.stopPropagation(); toggleSelection(f.id, e.shiftKey); }}
                   style={{ cursor: tool === "select" ? "grab" : "pointer" }}
                 >
-                  <FurniturePiece w={w} d={d} style={fStyle} stroke={stroke} selected={isSel} />
+                  <FurniturePiece w={w} d={d} style={fStyle} stroke={stroke} selected={isSel} catalogId={f.catalogId} furnitureNode={f} />
                 </g>
               );
             })}
@@ -1518,6 +1519,187 @@ function cornersToSvg(c: WallCorners): string {
   return `${c.startLeft.x},${c.startLeft.z} ${c.endLeft.x},${c.endLeft.z} ${c.endRight.x},${c.endRight.z} ${c.startRight.x},${c.startRight.z}`;
 }
 
+// ---- Millwork module piece (Fase C) -------------------------------------
+// Renders a millwork module via the SVG paths from FURN_DEFS, scaled from
+// cm-space (the path units in furniture-svgs.ts) to world-meters.
+// Special cases:
+//   - bancada_continuous: thin hatched strip with cutouts subtracted
+//     (granito/marmore/quartzo hachuras via SVG patterns)
+//   - module_upper_*: dashed outline (suspended above plan-cut)
+//   - hood_built_in: dashed hatched (suspended)
+//   - any other module_*: render the path tree from FURN_DEFS
+//
+// Coords: parent <g> already centred at module's geometric center, with
+// rotation applied. Local space is centred at (0, 0); the SVG paths use
+// cm with origin at top-left of the module's viewBox. We translate by
+// (-halfW, -halfD) and scale by 1/100 to bring cm into world metres.
+
+type MillworkKind = "millwork-module" | "millwork-countertop" | "millwork-upper" | "millwork-hood";
+
+const COUNTERTOP_HATCH_COLOR: Record<string, string> = {
+  granito_preto: "#1a1d28",
+  granito_branco: "#cfc8b8",
+  marmore_carrara: "#f0ece2",
+  marmore_travertino: "#d6c9a8",
+  quartzo_branco: "#eee9dc",
+  quartzo_preto: "#2a2d36",
+  porcelanato: "#e6dfd2",
+  madeira_macica: "#a78867",
+  inox: "#c4c4be",
+};
+
+interface MillworkModulePieceProps {
+  w: number;
+  d: number;
+  kind: MillworkKind;
+  catalogId?: string;
+  node?: FurnitureNode;
+  stroke: string;
+  selected: boolean;
+}
+
+function MillworkModulePiece({ w, d, kind, catalogId, node, stroke, selected }: MillworkModulePieceProps) {
+  // Bancada: special render with material hatch + cutouts.
+  if (kind === "millwork-countertop") {
+    const material =
+      // We stash material via FurnitureNode metadata — currently scene
+      // FurnitureNode drops legacy `finish` field, so we read the label
+      // ("Bancada granito_preto") to recover the material name.
+      (() => {
+        const lbl = (node?.label ?? "").toLowerCase();
+        for (const mat of Object.keys(COUNTERTOP_HATCH_COLOR)) {
+          if (lbl.includes(mat.replace("_", " ")) || lbl.includes(mat)) return mat;
+        }
+        return "granito_preto";
+      })();
+    const fill = COUNTERTOP_HATCH_COLOR[material] ?? "#3a3a30";
+    return (
+      <rect
+        x={-w / 2}
+        y={-d / 2}
+        width={w}
+        height={d}
+        fill={fill}
+        fillOpacity={0.5}
+        stroke={selected ? PALETTE.accent : PALETTE.ink}
+        strokeWidth={selected ? 1.2 : 0.5}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+
+  // Uppers + hood: dashed outline (suspended elements above plan cut).
+  if (kind === "millwork-upper") {
+    return (
+      <rect
+        x={-w / 2}
+        y={-d / 2}
+        width={w}
+        height={d}
+        fill="none"
+        stroke={selected ? PALETTE.accent : PALETTE.ink}
+        strokeOpacity={0.55}
+        strokeWidth={0.6}
+        strokeDasharray="0.08 0.05"
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+  if (kind === "millwork-hood") {
+    return (
+      <g>
+        <rect
+          x={-w / 2}
+          y={-d / 2}
+          width={w}
+          height={d}
+          fill="none"
+          stroke={selected ? PALETTE.accent : PALETTE.ink}
+          strokeOpacity={0.45}
+          strokeWidth={0.6}
+          strokeDasharray="0.08 0.05"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* Diagonal hatch */}
+        <line x1={-w / 2} y1={-d / 2} x2={w / 2} y2={d / 2} stroke={PALETTE.ink} strokeOpacity={0.3} strokeWidth={0.3} strokeDasharray="0.05 0.04" vectorEffect="non-scaling-stroke" />
+        <line x1={w / 2} y1={-d / 2} x2={-w / 2} y2={d / 2} stroke={PALETTE.ink} strokeOpacity={0.3} strokeWidth={0.3} strokeDasharray="0.05 0.04" vectorEffect="non-scaling-stroke" />
+      </g>
+    );
+  }
+
+  // Generic module — render FURN_DEFS.paths scaled to (w, d).
+  // The SVG paths use cm with origin at top-left of (sizeM.w*100, sizeM.h*100).
+  // We need to map onto world metres centred at (0, 0). Strategy: wrap
+  // in a <g> that translates by (-halfW, -halfD) and scales by 1/100.
+  const def = catalogId ? FURN_DEFS[catalogId as keyof typeof FURN_DEFS] : null;
+  if (!def || def.paths.length === 0) {
+    // Fallback: empty rect with label.
+    return (
+      <rect
+        x={-w / 2}
+        y={-d / 2}
+        width={w}
+        height={d}
+        fill={PALETTE.furnUpholstery}
+        stroke={stroke}
+        strokeWidth={selected ? 1.6 : 0.8}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+  // The viewBox cm size is sizeM × 100, but the actual world bbox is (w, d).
+  // We scale the cm-space to fit the world bbox so the path looks right
+  // even if the engine sized the module slightly differently from sizeM.
+  const sxCm = def.sizeM.w * 100;
+  const syCm = def.sizeM.h * 100;
+  const scaleX = w / sxCm;
+  const scaleY = d / syCm;
+  return (
+    <g transform={`translate(${-w / 2} ${-d / 2}) scale(${scaleX} ${scaleY})`}>
+      {def.paths.map((ps: PathSpec, i: number) => {
+        if (ps.circle) {
+          return (
+            <circle
+              key={i}
+              cx={ps.circle.cx}
+              cy={ps.circle.cy}
+              r={ps.circle.r}
+              fill={ps.fill === null ? "none" : (ps.fill ?? "#f5f3ec")}
+              stroke={ps.stroke === null ? "none" : (ps.stroke ?? "#141826")}
+              strokeWidth={ps.strokeWidth ?? 0.7}
+              strokeDasharray={ps.dashed ? "1 0.7" : undefined}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }
+        return (
+          <path
+            key={i}
+            d={ps.d}
+            fill={ps.fill === null ? "none" : (ps.fill ?? "#f5f3ec")}
+            stroke={ps.stroke === null ? "none" : (ps.stroke ?? "#141826")}
+            strokeWidth={ps.strokeWidth ?? 0.7}
+            strokeDasharray={ps.dashed ? "1 0.7" : undefined}
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+      {selected && (
+        <rect
+          x={0}
+          y={0}
+          width={sxCm}
+          height={syCm}
+          fill="none"
+          stroke={PALETTE.accent}
+          strokeWidth={1.5}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
+    </g>
+  );
+}
+
 // ---- FurniturePiece ------------------------------------------------------
 // Style Guide §6: top-down silhouette with one fill token + ink stroke +
 // optional internal details (encosto, tampo, divisão). Centered at (0, 0)
@@ -1529,15 +1711,40 @@ interface FurniturePieceProps {
   style: FurnitureStyle;
   stroke: string;
   selected: boolean;
+  catalogId?: string;
+  furnitureNode?: FurnitureNode;
 }
 
-function FurniturePiece({ w, d, style, stroke, selected }: FurniturePieceProps) {
+function FurniturePiece({ w, d, style, stroke, selected, catalogId, furnitureNode }: FurniturePieceProps) {
   const halfW = w / 2;
   const halfD = d / 2;
   const baseRx = Math.min(style.radius, Math.min(halfW, halfD) * 0.4);
   const detailStroke = PALETTE.ink;
   const detailOpacity = 0.18;
   const strokeW = selected ? 1.6 : 0.8;
+
+  // ---- Marcenaria modular (Fase C) ----
+  // Modules render via FURN_DEFS.paths (cm-space SVG paths) scaled to
+  // fit the world bbox. Bancada gets a special branch with cutouts +
+  // material hatching. Uppers + hood render dashed (suspended elements).
+  if (
+    style.kind === "millwork-module" ||
+    style.kind === "millwork-countertop" ||
+    style.kind === "millwork-upper" ||
+    style.kind === "millwork-hood"
+  ) {
+    return (
+      <MillworkModulePiece
+        w={w}
+        d={d}
+        kind={style.kind}
+        catalogId={catalogId}
+        node={furnitureNode}
+        stroke={stroke}
+        selected={selected}
+      />
+    );
+  }
 
   // Bar stools / lamps — circular silhouettes.
   if (style.kind === "bar-stool" || style.kind === "lamp") {

@@ -34,6 +34,10 @@ export type FurnitureKind =
   | "toilet"
   | "shower"
   | "bathtub"
+  | "millwork-module"
+  | "millwork-countertop"
+  | "millwork-upper"
+  | "millwork-hood"
   | "generic";
 
 export interface FurnitureStyle {
@@ -51,6 +55,18 @@ export function styleOf(f: FurnitureNode): FurnitureStyle {
   const id = (f.catalogId || "").toLowerCase();
   const label = (f.label || "").toLowerCase();
   const m = (re: RegExp) => re.test(id) || re.test(label);
+
+  // ---- Marcenaria modular (Fase C) — these use FURN_DEFS.paths
+  // for architectural CAD rendering inside FurniturePiece. Match BEFORE
+  // the legacy regexes so a module_cooktop_4 isn't classified as "stove".
+  if (id === "bancada_continuous")
+    return { kind: "millwork-countertop", fill: PALETTE.furnStoneDark, shadow: false, radius: 0 };
+  if (id === "hood_built_in")
+    return { kind: "millwork-hood", fill: "transparent", shadow: false, radius: 0 };
+  if (id === "module_upper_cabinet" || id === "module_upper_glass")
+    return { kind: "millwork-upper", fill: "transparent", shadow: false, radius: 0 };
+  if (id.startsWith("module_"))
+    return { kind: "millwork-module", fill: PALETTE.furnUpholstery, shadow: false, radius: 0 };
 
   // ---- Soft seating ----
   if (m(/sofa|couch/))

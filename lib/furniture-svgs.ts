@@ -1190,62 +1190,541 @@ export const FURN_DEFS: Record<FurnitureType, FurnitureDef> = {
   // sizeM/label pra engine + back-compat.
   // =========================================================
   // Storage genérico
-  module_cabinet_door:        { sizeM: { w: 0.5, h: 0.6 }, label: "Armário 1 porta", category: "Marcenaria", paths: [] },
-  module_cabinet_door_double: { sizeM: { w: 0.9, h: 0.6 }, label: "Armário 2 portas", category: "Marcenaria", paths: [] },
-  module_cabinet_drawer_3:    { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 3", category: "Marcenaria", paths: [] },
-  module_cabinet_drawer_4:    { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 4", category: "Marcenaria", paths: [] },
-  module_cabinet_open:        { sizeM: { w: 0.6, h: 0.6 }, label: "Nicho aberto", category: "Marcenaria", paths: [] },
-  module_cabinet_glass:       { sizeM: { w: 0.6, h: 0.4 }, label: "Vitrine vidro", category: "Marcenaria", paths: [] },
-  module_corner_carrousel:    { sizeM: { w: 0.9, h: 0.9 }, label: "Canto giratório", category: "Marcenaria", paths: [] },
-  module_gap_filler:          { sizeM: { w: 0.1, h: 0.6 }, label: "Preenchimento", category: "Marcenaria", paths: [] },
-  // Cozinha
-  module_cooktop_4:           { sizeM: { w: 0.6, h: 0.6 }, label: "Cooktop 4", category: "Marcenaria", paths: [] },
-  module_cooktop_5:           { sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop 5", category: "Marcenaria", paths: [] },
-  module_cooktop_induction:   { sizeM: { w: 0.6, h: 0.6 }, label: "Cooktop indução", category: "Marcenaria", paths: [] },
-  module_oven_built_in:       { sizeM: { w: 0.6, h: 0.6 }, label: "Forno embutido", category: "Marcenaria", paths: [] },
-  module_oven_tower:          { sizeM: { w: 0.6, h: 0.6 }, label: "Torre forno", category: "Marcenaria", paths: [] },
-  module_microwave_niche:     { sizeM: { w: 0.6, h: 0.6 }, label: "Microondas nicho", category: "Marcenaria", paths: [] },
-  module_fridge_niche:        { sizeM: { w: 0.7, h: 0.7 }, label: "Geladeira", category: "Marcenaria", paths: [] },
-  module_fridge_niche_double: { sizeM: { w: 0.9, h: 0.7 }, label: "Geladeira duplex", category: "Marcenaria", paths: [] },
-  module_fridge_french_door:  { sizeM: { w: 0.9, h: 0.7 }, label: "Geladeira french door", category: "Marcenaria", paths: [] },
-  module_sink_single:         { sizeM: { w: 0.6, h: 0.6 }, label: "Pia simples", category: "Marcenaria", paths: [] },
-  module_sink_double:         { sizeM: { w: 1.2, h: 0.6 }, label: "Pia dupla", category: "Marcenaria", paths: [] },
-  module_dishwasher_niche:    { sizeM: { w: 0.6, h: 0.6 }, label: "Lava-louças", category: "Marcenaria", paths: [] },
-  module_wine_cellar:         { sizeM: { w: 0.6, h: 0.6 }, label: "Adega", category: "Marcenaria", paths: [] },
-  module_pantry_tall:         { sizeM: { w: 0.6, h: 0.6 }, label: "Despensa", category: "Marcenaria", paths: [] },
+  // Convention: width × height of viewBox = sizeM × 100. Module rendered
+  // in plan view from above — wall is at y=0, room interior at y=height.
+  // For cabinets: subtle box outline + door swing arc OR drawer lines.
+  module_cabinet_door: {
+    sizeM: { w: 0.5, h: 0.6 }, label: "Armário 1 porta", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 46, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // door swing arc (dashed)
+      { d: `M2 58 A56 56 0 0 1 48 58`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      // door panel hairline
+      { d: line(25, 2, 25, 58), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  module_cabinet_door_double: {
+    sizeM: { w: 0.9, h: 0.6 }, label: "Armário 2 portas", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(45, 2, 45, 58), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      // 2 swing arcs from center outward (dashed)
+      { d: `M2 58 A43 43 0 0 1 45 58`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      { d: `M88 58 A43 43 0 0 0 45 58`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+    ],
+  },
+  module_cabinet_drawer_3: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 3", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // 3 horizontal drawer divider lines
+      { d: line(2, 21, 58, 21), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 39, 58, 39), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      // small handle bar per drawer (centered)
+      { d: line(24, 12, 36, 12), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(24, 30, 36, 30), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(24, 49, 36, 49), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+    ],
+  },
+  module_cabinet_drawer_4: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 4", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 16, 58, 16), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 30, 58, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 44, 58, 44), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(24, 9, 36, 9), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(24, 23, 36, 23), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(24, 37, 36, 37), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(24, 51, 36, 51), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+    ],
+  },
+  module_cabinet_open: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Nicho aberto", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.7 },
+      // shelves (horizontal lines)
+      { d: line(2, 22, 58, 22), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(2, 40, 58, 40), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_cabinet_glass: {
+    sizeM: { w: 0.6, h: 0.4 }, label: "Vitrine vidro", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 36), fill: GLASS, stroke: STROKE, strokeWidth: 0.7 },
+      // diagonal cross hatch inside (glass marker)
+      { d: line(2, 2, 58, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(58, 2, 2, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_corner_carrousel: {
+    sizeM: { w: 0.9, h: 0.9 }, label: "Canto giratório", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 86), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // diagonal line + circular carrousel hint
+      { d: line(2, 2, 88, 88), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4, dashed: true },
+      circ(45, 45, 36),
+    ],
+  },
+  module_gap_filler: {
+    sizeM: { w: 0.1, h: 0.6 }, label: "Filler", category: "Marcenaria",
+    paths: [
+      { d: rect(0, 2, 10, 56), fill: BODY_SOFT, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  // Cozinha — appliances rendered IN PLAN view, on top of the bancada.
+  // Conventions: dark appliance fill (#3a3f4f) for stove/microwave/oven;
+  // sink basins as ellipses; fridge as full-height with vertical door line.
+  module_cooktop_4: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Cooktop", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      // 4 burners 2×2 grid
+      circ(18, 18, 6), circ(42, 18, 6), circ(18, 42, 6), circ(42, 42, 6),
+      // smaller inner ring for each
+      { d: `M14 18 A4 4 0 1 1 22 18 A4 4 0 1 1 14 18`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: `M38 18 A4 4 0 1 1 46 18 A4 4 0 1 1 38 18`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: `M14 42 A4 4 0 1 1 22 42 A4 4 0 1 1 14 42`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: `M38 42 A4 4 0 1 1 46 42 A4 4 0 1 1 38 42`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  module_cooktop_5: {
+    sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 71, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      circ(15, 18, 5), circ(37, 18, 7), circ(59, 18, 5),
+      circ(26, 42, 5), circ(48, 42, 5),
+    ],
+  },
+  module_cooktop_induction: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Indução", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: "#1a1d28", stroke: STROKE, strokeWidth: 0.7 },
+      // 4 induction zones (squares)
+      { d: rect(10, 10, 18, 18), fill: null, stroke: "#888", strokeWidth: 0.4 },
+      { d: rect(32, 10, 18, 18), fill: null, stroke: "#888", strokeWidth: 0.4 },
+      { d: rect(10, 32, 18, 18), fill: null, stroke: "#888", strokeWidth: 0.4 },
+      { d: rect(32, 32, 18, 18), fill: null, stroke: "#888", strokeWidth: 0.4 },
+    ],
+  },
+  module_oven_built_in: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Forno", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      // oven door (smaller inner rect)
+      { d: rect(8, 18, 44, 32), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.5 },
+      // handle bar
+      { d: rect(14, 11, 32, 3), fill: STONE, stroke: STROKE, strokeWidth: 0.3 },
+    ],
+  },
+  module_oven_tower: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Torre forno", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.8 },
+      // upper oven (microwave?) zone
+      { d: rect(8, 8, 44, 18), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.5 },
+      // lower oven zone
+      { d: rect(8, 32, 44, 22), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.5 },
+      // handles
+      { d: rect(14, 5, 32, 2), fill: STONE, stroke: null, strokeWidth: 0 },
+      { d: rect(14, 28, 32, 2), fill: STONE, stroke: null, strokeWidth: 0 },
+    ],
+  },
+  module_microwave_niche: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Microondas", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rect(8, 12, 44, 36), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.5 },
+      { d: rect(38, 18, 10, 24), fill: APPLIANCE_LIGHT, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_fridge_niche: {
+    sizeM: { w: 0.7, h: 0.7 }, label: "Geladeira", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 66, 66), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.8 },
+      // appliance face (diagonal hatch suggesting machine)
+      { d: line(8, 8, 62, 62), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(8, 62, 62, 8), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      // door split line
+      { d: line(35, 4, 35, 66), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+    ],
+  },
+  module_fridge_niche_double: {
+    sizeM: { w: 0.9, h: 0.7 }, label: "Geladeira duplex", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 66), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.8 },
+      { d: line(45, 4, 45, 66), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(8, 8, 82, 62), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(8, 62, 82, 8), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_fridge_french_door: {
+    sizeM: { w: 0.9, h: 0.7 }, label: "French door", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 66), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.8 },
+      // 2 french doors top + 1 freezer drawer bottom
+      { d: line(45, 4, 45, 40), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(4, 40, 86, 40), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(8, 8, 82, 36), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_sink_single: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Pia", category: "Marcenaria",
+    paths: [
+      // sink basin (rounded rect with darker interior)
+      { d: rrect(8, 8, 44, 44, 4), fill: "#dad6c8", stroke: STROKE, strokeWidth: 0.6 },
+      { d: rrect(12, 12, 36, 36, 3), fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.3 },
+      // drain (small circle in center)
+      circ(30, 30, 1.6),
+      // faucet base (back of sink)
+      { d: rect(26, 2, 8, 4), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_sink_double: {
+    sizeM: { w: 1.2, h: 0.6 }, label: "Pia dupla", category: "Marcenaria",
+    paths: [
+      // 2 basins side by side
+      { d: rrect(8, 8, 50, 44, 4), fill: "#dad6c8", stroke: STROKE, strokeWidth: 0.6 },
+      { d: rrect(12, 12, 42, 36, 3), fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.3 },
+      circ(33, 30, 1.6),
+      { d: rrect(62, 8, 50, 44, 4), fill: "#dad6c8", stroke: STROKE, strokeWidth: 0.6 },
+      { d: rrect(66, 12, 42, 36, 3), fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.3 },
+      circ(87, 30, 1.6),
+      // shared faucet base
+      { d: rect(56, 2, 8, 4), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_dishwasher_niche: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Lava-louças", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE_LIGHT, stroke: STROKE, strokeWidth: 0.7 },
+      // panel front
+      { d: rect(6, 6, 48, 48), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      // small handle bar
+      { d: rect(20, 50, 20, 2), fill: STONE, stroke: null, strokeWidth: 0 },
+      // suggestion: subtle interior cross
+      { d: line(8, 30, 52, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3, dashed: true },
+    ],
+  },
+  module_wine_cellar: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Adega", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      // glass front (transparent rect with bottle hint)
+      { d: rect(6, 6, 48, 48), fill: GLASS, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      // 3 bottle hints
+      { d: rect(14, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+      { d: rect(28, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+      { d: rect(42, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+    ],
+  },
+  module_pantry_tall: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Despensa", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.8 },
+      // tall door split + handle
+      { d: line(30, 4, 30, 56), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(28, 28, 32, 28), fill: null, stroke: STROKE, strokeWidth: 0.5 },
+      // shelves hint inside (dashed horizontal lines)
+      { d: line(4, 18, 56, 18), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3, dashed: true },
+      { d: line(4, 36, 56, 36), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3, dashed: true },
+    ],
+  },
   // Banheiro
-  module_vanity_sink_single:  { sizeM: { w: 0.7, h: 0.5 }, label: "Vanity 1 cuba", category: "Marcenaria", paths: [] },
-  module_vanity_sink_double:  { sizeM: { w: 1.4, h: 0.5 }, label: "Vanity 2 cubas", category: "Marcenaria", paths: [] },
-  module_vanity_drawer_3:     { sizeM: { w: 0.5, h: 0.5 }, label: "Gaveteiro banh.", category: "Marcenaria", paths: [] },
-  module_wall_hung_toilet:    { sizeM: { w: 0.4, h: 0.65 }, label: "Vaso suspenso", category: "Marcenaria", paths: [] },
-  // Closet
-  module_closet_hanging_full:   { sizeM: { w: 0.9, h: 0.6 }, label: "Cabide longo", category: "Marcenaria", paths: [] },
-  module_closet_hanging_double: { sizeM: { w: 0.9, h: 0.6 }, label: "Cabide duplo", category: "Marcenaria", paths: [] },
-  module_closet_drawer_4:       { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro closet 4", category: "Marcenaria", paths: [] },
-  module_closet_drawer_6:       { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro closet 6", category: "Marcenaria", paths: [] },
-  module_closet_shoe:           { sizeM: { w: 0.6, h: 0.4 }, label: "Sapateira", category: "Marcenaria", paths: [] },
-  module_closet_shelves:        { sizeM: { w: 0.6, h: 0.4 }, label: "Prateleiras", category: "Marcenaria", paths: [] },
-  module_closet_jewelry:        { sizeM: { w: 0.45, h: 0.5 }, label: "Gaveta joias", category: "Marcenaria", paths: [] },
-  // Lavanderia
-  module_washer_niche:         { sizeM: { w: 0.65, h: 0.65 }, label: "Lavadora", category: "Marcenaria", paths: [] },
-  module_dryer_niche:          { sizeM: { w: 0.65, h: 0.65 }, label: "Secadora", category: "Marcenaria", paths: [] },
-  module_washer_dryer_stack:   { sizeM: { w: 0.65, h: 0.65 }, label: "Lav+sec vert", category: "Marcenaria", paths: [] },
-  module_laundry_tank:         { sizeM: { w: 0.6, h: 0.55 }, label: "Tanque", category: "Marcenaria", paths: [] },
-  module_drying_rack_built_in: { sizeM: { w: 1.0, h: 0.5 }, label: "Varal embutido", category: "Marcenaria", paths: [] },
-  // Churrasqueira
-  module_bbq_built_in:        { sizeM: { w: 0.8, h: 0.7 }, label: "Churrasqueira", category: "Marcenaria", paths: [] },
-  module_pizza_oven:          { sizeM: { w: 0.7, h: 0.7 }, label: "Forno pizza", category: "Marcenaria", paths: [] },
-  module_outdoor_cooktop:     { sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop ext.", category: "Marcenaria", paths: [] },
-  module_outdoor_sink:        { sizeM: { w: 0.6, h: 0.6 }, label: "Cuba ext.", category: "Marcenaria", paths: [] },
-  module_wine_fridge_outdoor: { sizeM: { w: 0.6, h: 0.6 }, label: "Frigobar ext.", category: "Marcenaria", paths: [] },
+  module_vanity_sink_single: {
+    sizeM: { w: 0.7, h: 0.5 }, label: "Vanity 1 cuba", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 66, 46), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // single oval basin (encaixada no centro)
+      { d: `M35 24 m-15 0 a15 11 0 1 0 30 0 a15 11 0 1 0 -30 0`, fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.4 },
+      // drain
+      circ(35, 24, 1.5),
+      { d: rect(31, 4, 8, 3), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_vanity_sink_double: {
+    sizeM: { w: 1.4, h: 0.5 }, label: "Vanity 2 cubas", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 136, 46), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // 2 ovals
+      { d: `M40 24 m-15 0 a15 11 0 1 0 30 0 a15 11 0 1 0 -30 0`, fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.4 },
+      circ(40, 24, 1.5),
+      { d: `M100 24 m-15 0 a15 11 0 1 0 30 0 a15 11 0 1 0 -30 0`, fill: "#a8a8a0", stroke: STROKE_FINE, strokeWidth: 0.4 },
+      circ(100, 24, 1.5),
+      { d: rect(36, 4, 8, 3), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: rect(96, 4, 8, 3), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_vanity_drawer_3: {
+    sizeM: { w: 0.5, h: 0.5 }, label: "Gaveteiro banh.", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 46, 46), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 17, 48, 17), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 32, 48, 32), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(20, 9, 30, 9), fill: null, stroke: STROKE, strokeWidth: 0.4 },
+      { d: line(20, 24, 30, 24), fill: null, stroke: STROKE, strokeWidth: 0.4 },
+      { d: line(20, 40, 30, 40), fill: null, stroke: STROKE, strokeWidth: 0.4 },
+    ],
+  },
+  module_wall_hung_toilet: {
+    sizeM: { w: 0.4, h: 0.65 }, label: "Vaso suspenso", category: "Marcenaria",
+    paths: [
+      // tank (back, against wall)
+      { d: rect(4, 2, 32, 18), fill: BODY, stroke: STROKE, strokeWidth: 0.6 },
+      // bowl (oval forward into room)
+      { d: `M20 38 m-14 0 a14 18 0 1 0 28 0 a14 18 0 1 0 -28 0`, fill: BODY, stroke: STROKE, strokeWidth: 0.6 },
+    ],
+  },
+  // Closet — em planta o tracejado fino sugere cabide; gavetas iguais aos
+  // gaveteiros genericos; sapateira como serie de prateleiras inclinadas.
+  module_closet_hanging_full: {
+    sizeM: { w: 0.9, h: 0.6 }, label: "Cabide", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // hanger rod indication: thick line down center top
+      { d: line(2, 12, 88, 12), fill: null, stroke: STROKE, strokeWidth: 0.6 },
+      // hanger silhouettes
+      { d: `M14 18 L10 24 L22 24 L18 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M34 18 L30 24 L42 24 L38 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M54 18 L50 24 L62 24 L58 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M74 18 L70 24 L82 24 L78 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_closet_hanging_double: {
+    sizeM: { w: 0.9, h: 0.6 }, label: "Cabide duplo", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 86, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 12, 88, 12), fill: null, stroke: STROKE, strokeWidth: 0.6 },
+      { d: line(2, 36, 88, 36), fill: null, stroke: STROKE, strokeWidth: 0.6 },
+      // hangers x 4 in each rod
+      { d: `M14 18 L10 24 L22 24 L18 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M44 18 L40 24 L52 24 L48 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M74 18 L70 24 L82 24 L78 18 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M14 42 L10 48 L22 48 L18 42 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M44 42 L40 48 L52 48 L48 42 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: `M74 42 L70 48 L82 48 L78 42 Z`, fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_closet_drawer_4: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 4", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 16, 58, 16), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 30, 58, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 44, 58, 44), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  module_closet_drawer_6: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 6", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 11, 58, 11), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 20, 58, 20), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 29, 58, 29), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 38, 58, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 47, 58, 47), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  module_closet_shoe: {
+    sizeM: { w: 0.6, h: 0.4 }, label: "Sapateira", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 36), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.7 },
+      // angled shelves (inclined lines suggesting shoe storage)
+      { d: line(4, 12, 56, 8), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(4, 22, 56, 18), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(4, 32, 56, 28), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_closet_shelves: {
+    sizeM: { w: 0.6, h: 0.4 }, label: "Prateleiras", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 36), fill: BODY_SOFT, stroke: STROKE, strokeWidth: 0.7 },
+      { d: line(2, 11, 58, 11), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(2, 20, 58, 20), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(2, 29, 58, 29), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_closet_jewelry: {
+    sizeM: { w: 0.45, h: 0.5 }, label: "Joias", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 41, 46), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // small compartments grid
+      { d: line(2, 16, 43, 16), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(2, 30, 43, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(15, 2, 15, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(28, 2, 28, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  // Lavanderia — máquinas com porta circular características.
+  module_washer_niche: {
+    sizeM: { w: 0.65, h: 0.65 }, label: "Lavadora", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 61, 61), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // circular door
+      circ(32, 32, 18),
+      { d: `M14 32 A18 18 0 0 1 50 32 A18 18 0 0 1 14 32`, fill: GLASS, stroke: STROKE, strokeWidth: 0.5 },
+      circ(32, 32, 12),
+      // control panel
+      { d: rect(8, 6, 50, 6), fill: APPLIANCE_LIGHT, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_dryer_niche: {
+    sizeM: { w: 0.65, h: 0.65 }, label: "Secadora", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 61, 61), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      circ(32, 32, 18),
+      { d: `M14 32 A18 18 0 0 1 50 32 A18 18 0 0 1 14 32`, fill: GLASS, stroke: STROKE, strokeWidth: 0.5 },
+      circ(32, 32, 12),
+      { d: rect(8, 6, 50, 6), fill: APPLIANCE_LIGHT, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      // little flame icon to differentiate (heat indicator)
+      circ(54, 54, 2),
+    ],
+  },
+  module_washer_dryer_stack: {
+    sizeM: { w: 0.65, h: 0.65 }, label: "Lav+sec vert", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 61, 61), fill: BODY, stroke: STROKE, strokeWidth: 0.8 },
+      // 2 stacked circular doors
+      circ(32, 18, 13),
+      { d: `M19 18 A13 13 0 0 1 45 18 A13 13 0 0 1 19 18`, fill: GLASS, stroke: STROKE, strokeWidth: 0.4 },
+      circ(32, 46, 13),
+      { d: `M19 46 A13 13 0 0 1 45 46 A13 13 0 0 1 19 46`, fill: GLASS, stroke: STROKE, strokeWidth: 0.4 },
+      // divider
+      { d: line(2, 32, 63, 32), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_laundry_tank: {
+    sizeM: { w: 0.6, h: 0.55 }, label: "Tanque", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 51), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // big rectangular basin
+      { d: rect(8, 8, 44, 39), fill: "#a8a8a0", stroke: STROKE, strokeWidth: 0.5 },
+      { d: rect(11, 11, 38, 33), fill: "#888880", stroke: STROKE_FINE, strokeWidth: 0.3 },
+      // drain
+      circ(30, 27, 1.5),
+      // washboard ridges (3 horizontal lines)
+      { d: line(11, 18, 49, 18), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(11, 24, 49, 24), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+      { d: line(11, 30, 49, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_drying_rack_built_in: {
+    sizeM: { w: 1.0, h: 0.5 }, label: "Varal", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 96, 46), fill: BODY_SOFT, stroke: STROKE_FINE, strokeWidth: 0.5 },
+      // 4 horizontal rods
+      { d: line(2, 14, 98, 14), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 22, 98, 22), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 30, 98, 30), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(2, 38, 98, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  // Churrasqueira / gourmet
+  module_bbq_built_in: {
+    sizeM: { w: 0.8, h: 0.7 }, label: "Churrasqueira", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 76, 66), fill: BODY_DARK, stroke: STROKE, strokeWidth: 0.8 },
+      // grill grid
+      { d: rect(8, 12, 64, 48), fill: "#222", stroke: STROKE, strokeWidth: 0.5 },
+      { d: line(8, 22, 72, 22), fill: null, stroke: "#555", strokeWidth: 0.3 },
+      { d: line(8, 32, 72, 32), fill: null, stroke: "#555", strokeWidth: 0.3 },
+      { d: line(8, 42, 72, 42), fill: null, stroke: "#555", strokeWidth: 0.3 },
+      { d: line(8, 52, 72, 52), fill: null, stroke: "#555", strokeWidth: 0.3 },
+      // chimney mark (small rect at back)
+      { d: rect(30, 4, 20, 5), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_pizza_oven: {
+    sizeM: { w: 0.7, h: 0.7 }, label: "Forno pizza", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 66, 66), fill: BODY_DARK, stroke: STROKE, strokeWidth: 0.8 },
+      // dome (semi-circle)
+      { d: `M14 50 A20 18 0 0 1 54 50 L54 56 L14 56 Z`, fill: "#3a3a30", stroke: STROKE, strokeWidth: 0.5 },
+      { d: `M20 50 A14 12 0 0 1 48 50`, fill: null, stroke: "#666", strokeWidth: 0.3 },
+      // fire opening
+      { d: rect(28, 44, 12, 8), fill: "#882200", stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_outdoor_cooktop: {
+    sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop ext.", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 71, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      circ(18, 18, 6), circ(54, 18, 6), circ(18, 42, 6), circ(54, 42, 6),
+    ],
+  },
+  module_outdoor_sink: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Cuba ext.", category: "Marcenaria",
+    paths: [
+      { d: rrect(8, 8, 44, 44, 4), fill: "#dad6c8", stroke: STROKE, strokeWidth: 0.6 },
+      { d: rrect(12, 12, 36, 36, 3), fill: "#888", stroke: STROKE_FINE, strokeWidth: 0.3 },
+      circ(30, 30, 1.5),
+      { d: rect(26, 2, 8, 4), fill: STONE, stroke: STROKE_FINE, strokeWidth: 0.3 },
+    ],
+  },
+  module_wine_fridge_outdoor: {
+    sizeM: { w: 0.6, h: 0.6 }, label: "Frigobar ext.", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 56), fill: APPLIANCE, stroke: STROKE, strokeWidth: 0.7 },
+      { d: rect(6, 6, 48, 48), fill: GLASS, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: rect(14, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+      { d: rect(28, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+      { d: rect(42, 12, 4, 36), fill: WATER_DARK, stroke: null, strokeWidth: 0 },
+    ],
+  },
   // Sala
-  module_tv_console:          { sizeM: { w: 1.8, h: 0.4 }, label: "Console TV", category: "Marcenaria", paths: [] },
-  module_tv_panel_built_in:   { sizeM: { w: 2.4, h: 0.2 }, label: "Painel TV embutido", category: "Marcenaria", paths: [] },
-  // Composição (geradas pela engine)
-  bancada_continuous:    { sizeM: { w: 1.0, h: 0.04 }, label: "Bancada", category: "Marcenaria", paths: [] },
-  module_upper_cabinet:  { sizeM: { w: 0.6, h: 0.35 }, label: "Armário superior", category: "Marcenaria", paths: [] },
-  module_upper_glass:    { sizeM: { w: 0.6, h: 0.35 }, label: "Sup. vidro", category: "Marcenaria", paths: [] },
-  hood_built_in:         { sizeM: { w: 0.6, h: 0.5 }, label: "Exaustor", category: "Marcenaria", paths: [] },
+  module_tv_console: {
+    sizeM: { w: 1.8, h: 0.4 }, label: "Console TV", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 176, 36), fill: BODY, stroke: STROKE, strokeWidth: 0.7 },
+      // 3 doors
+      { d: line(60, 2, 60, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+      { d: line(120, 2, 120, 38), fill: null, stroke: STROKE_FINE, strokeWidth: 0.4 },
+    ],
+  },
+  module_tv_panel_built_in: {
+    sizeM: { w: 2.4, h: 0.2 }, label: "Painel TV", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 236, 16), fill: BODY_DARK, stroke: STROKE, strokeWidth: 0.7 },
+      // ripado vertical lines indicating wood slat finish
+      ...Array.from({ length: 14 }, (_, i) => ({
+        d: line(20 + i * 16, 2, 20 + i * 16, 18), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3,
+      })),
+    ],
+  },
+  // Composição (geradas pela engine) — render especial em Floorplan2D.tsx
+  bancada_continuous: {
+    sizeM: { w: 1.0, h: 0.04 }, label: "Bancada", category: "Marcenaria",
+    // Paths vazios — bancada renderiza via custom branch em Floorplan2D
+    // que usa cutouts pra furar onde tem sink/cooktop e aplica hachura
+    // por material via <pattern>.
+    paths: [],
+  },
+  module_upper_cabinet: {
+    sizeM: { w: 0.6, h: 0.35 }, label: "Sup", category: "Marcenaria",
+    // Tracejado porque está suspenso (acima do plano de corte de 1m).
+    paths: [
+      { d: rect(2, 2, 56, 31), fill: null, stroke: STROKE_FINE, strokeWidth: 0.6, dashed: true },
+      // door split hairline
+      { d: line(30, 2, 30, 33), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3, dashed: true },
+    ],
+  },
+  module_upper_glass: {
+    sizeM: { w: 0.6, h: 0.35 }, label: "Sup vidro", category: "Marcenaria",
+    paths: [
+      { d: rect(2, 2, 56, 31), fill: GLASS, stroke: STROKE_FINE, strokeWidth: 0.6, dashed: true },
+      { d: line(30, 2, 30, 33), fill: null, stroke: STROKE_FINE, strokeWidth: 0.3, dashed: true },
+    ],
+  },
+  hood_built_in: {
+    sizeM: { w: 0.6, h: 0.5 }, label: "Exaustor", category: "Marcenaria",
+    paths: [
+      // Hood is suspended above the cooktop — dashed outline + hatch.
+      { d: rect(2, 2, 56, 46), fill: null, stroke: STROKE_FINE, strokeWidth: 0.5, dashed: true },
+      // diagonal hatch
+      { d: line(2, 2, 58, 48), fill: null, stroke: STROKE_FINE, strokeWidth: 0.25, dashed: true },
+      { d: line(58, 2, 2, 48), fill: null, stroke: STROKE_FINE, strokeWidth: 0.25, dashed: true },
+    ],
+  },
 };
 
 // ---------- Utilities ----------
