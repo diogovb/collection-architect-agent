@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { tools as legacyTools } from "@/lib/anthropic-tools";
 import { applyTool, summarizePlan } from "@/lib/floor-plan-engine";
+import { runOpenAIAgent } from "@/lib/openai-agent";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
 import {
   isRagConfigured,
@@ -49,7 +50,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const DEFAULT_MODEL = "claude-opus-4-7";
-const ALLOWED_MODELS = new Set(["claude-opus-4-7", "claude-sonnet-4-6"]);
+const ALLOWED_MODELS = new Set([
+  "claude-opus-4-7",
+  "claude-sonnet-4-6",
+  "gpt-5.5-pro",
+  "gpt-5.5",
+]);
+function isOpenAIModel(m: string): boolean {
+  return m.startsWith("gpt-");
+}
 const MAX_TOKENS = 4096;
 const MAX_ITERATIONS = 8;
 
@@ -61,15 +70,6 @@ interface ClientPayload {
 }
 
 export async function POST(req: Request) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return new Response(
-      JSON.stringify({
-        error: "ANTHROPIC_API_KEY ausente. Configure .env.local na raiz do projeto.",
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
-  }
-
   let body: ClientPayload;
   try {
     body = (await req.json()) as ClientPayload;
@@ -84,7 +84,28 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "Conversa vazia." }), { status: 400 });
   }
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  // Validar a API key adequada para o provider escolhido.
+  if (isOpenAIModel(model)) {
+    if (!process.env.OPENAI_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "OPENAI_API_KEY ausente. Configure no Vercel/.env.local." }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  } else {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return new Response(
+        JSON.stringify({
+          error: "ANTHROPIC_API_KEY ausente. Configure .env.local na raiz do projeto.",
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }
+
+  const anthropic = isOpenAIModel(model)
+    ? null
+    : new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const encoder = new TextEncoder();
 
   const readable = new ReadableStream<Uint8Array>({
@@ -95,6 +116,27 @@ export async function POST(req: Request) {
 
       try {
         const localPlan: FloorPlan = JSON.parse(JSON.stringify(plan ?? { rooms: [], doors: [], windows: [], furniture: [] }));
+
+        // OpenAI fork — agent loop separado em lib/openai-agent.ts.
+        if (isOpenAIModel(model)) {
+          const selectionBlock = selection
+            ? `[Contexto de seleção do usuário no canvas — referências como "isso", "esse", "essa", "aqui" se referem a este elemento]\nTipo: ${selection.kind}\n${selection.description}\nDados: ${JSON.stringify(selection.payload)}\n\nPedido do usuário: `
+            : undefined;
+          const systemBlock =
+            SYSTEM_PROMPT + "\n\n# Estado atual da planta\n" + summarizePlan(localPlan);
+          await runOpenAIAgent({
+            model,
+            systemPrompt: systemBlock,
+            initialMessages: messages,
+            selectionBlock,
+            tools,
+            localPlan,
+            send,
+          });
+          send({ type: "done" });
+          controller.close();
+          return;
+        }
 
         // Conversation messages. We mutate this within the tool-use loop.
         const conversation: Anthropic.MessageParam[] = messages.map((m) => ({
@@ -143,7 +185,9 @@ export async function POST(req: Request) {
             "\n\n# Estado atual da planta\n" +
             summarizePlan(localPlan);
 
-          const sdkStream = anthropic.messages.stream({
+          // anthropic é garantidamente non-null aqui — a rota faz early-return
+          // para modelos OpenAI antes de entrar nesse loop.
+          const sdkStream = anthropic!.messages.stream({
             model,
             max_tokens: MAX_TOKENS,
             system: systemBlock,
