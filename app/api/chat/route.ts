@@ -9,6 +9,29 @@ import {
 } from "@/lib/embeddings";
 import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
 import { validatePlan, formatIssuesForAgent, diagnosticsHash } from "@/lib/agent/validate-plan";
+import { renderPlanPng } from "@/lib/canvas/render-png";
+
+/** Tools whose successful execution should trigger the visual review pass.
+ *  Pure-info tools (search_knowledge_base) and trivial cosmetic ones
+ *  (set_floor_material) don't require a visual sanity check. */
+const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
+  "add_furniture",
+  "add_furniture_group",
+  "furnish_room",
+  "move_furniture",
+  "swap_furniture",
+  "add_partition",
+  "split_room",
+  "merge_rooms",
+  "add_door",
+  "add_window",
+  "add_balcony",
+  "add_stairs",
+  "add_column",
+  "create_apartment_layout",
+]);
+
+const MAX_VISUAL_REVIEWS = 2;
 
 // Scene tools (lib/agent/tools.ts) operate on the server-side scene graph but
 // have no sync path back to the client — every change would be invisible. They
@@ -103,6 +126,8 @@ export async function POST(req: Request) {
         let iter = 0;
         let lastDiagnosticsHash = "";
         let validatorRounds = 0;
+        let visualReviews = 0;
+        let pendingVisualReview = false;
         const MAX_VALIDATOR_ROUNDS = 3;
         while (iter < MAX_ITERATIONS) {
           iter += 1;
@@ -197,6 +222,9 @@ export async function POST(req: Request) {
                 ok = r.ok;
                 message = r.message;
                 mutationsHappened = mutationsHappened || ok;
+                if (ok && VISUAL_TRIGGER_TOOLS.has(buf.name)) {
+                  pendingVisualReview = true;
+                }
               }
               send({ type: "tool_result", id: buf.id, ok, message });
               toolResults.push({
@@ -212,6 +240,47 @@ export async function POST(req: Request) {
           }
 
           if (stopReason !== "tool_use" || toolResults.length === 0) {
+            // Visual review pass (Phase D). Before letting the agent end its
+            // turn, render the current plan to PNG and ask multimodal
+            // Claude to spot blocking / overlap / orientation mistakes.
+            // Capped at MAX_VISUAL_REVIEWS to avoid infinite loops on a
+            // model that keeps tweaking forever.
+            if (pendingVisualReview && visualReviews < MAX_VISUAL_REVIEWS) {
+              try {
+                const png = await renderPlanPng(localPlan);
+                const b64 = png.toString("base64");
+                visualReviews += 1;
+                pendingVisualReview = false;
+                conversation.push({ role: "assistant", content: accumulatedContent });
+                conversation.push({
+                  role: "user",
+                  content: [
+                    {
+                      type: "image",
+                      source: { type: "base64", media_type: "image/png", data: b64 },
+                    },
+                    {
+                      type: "text",
+                      text:
+                        "Acima está o resultado visual da planta após as suas tools. Verifique de forma crítica:\n" +
+                        "- Móveis na frente de portas (zona de aproximação 60cm + arco da folha)\n" +
+                        "- Móveis bloqueando janelas (precisa ≥30cm livres na frente)\n" +
+                        "- Sobreposições visíveis entre móveis\n" +
+                        "- Camas/sofás flutuando longe de paredes\n" +
+                        "- Triângulo de cozinha (geladeira-pia-fogão fora de 0.6–2.7m)\n" +
+                        "- Móveis fora dos cômodos\n\n" +
+                        "Se identificar problemas REAIS, chame as ferramentas (move_furniture, swap_furniture, remove_furniture) para corrigir. Se estiver tudo coerente, responda apenas com um resumo curto pro usuário e finalize sem chamar mais tools.",
+                    },
+                  ],
+                });
+                continue; // give the model a chance to fix what it sees
+              } catch (e) {
+                if (process.env.NODE_ENV !== "production") {
+                  console.warn("[visual-review] render failed:", e);
+                }
+                // fall through to break
+              }
+            }
             break;
           }
 
