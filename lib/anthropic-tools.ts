@@ -648,12 +648,13 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "generate_plan_hybrid",
     description:
-      "Gera uma planta profissional usando IA generativa (GPT Image + Arrow). " +
-      "Produz layout realista com paredes, portas, janelas e dimensões em qualidade visual superior. " +
-      "O resultado é editável como qualquer planta (drag, resize, chat). " +
-      "Mais lento que create_apartment_layout (~15-30s). " +
-      "Use quando o cliente pedir qualidade visual profissional, layout complexo ou resultado de alta fidelidade. " +
-      "Requer OPENAI_API_KEY e HYBRID_PIPELINE_ENABLED=true.",
+      "**MÉTODO PRINCIPAL PARA GERAR PLANTAS NOVAS.** Gera uma planta arquitetônica profissional " +
+      "combinando GPT Image (geração visual) + Claude Vision (extração estrutural) + Arrow 1.1 (vetorização). " +
+      "Produz layout com qualidade de arquiteto profissional: paredes, portas, janelas e dimensões realistas. " +
+      "O resultado é 100% editável (drag, resize, chat, tools individuais). Leva ~15-30s. " +
+      "**SEMPRE prefira esta tool sobre create_apartment_layout** quando o cliente pedir um apartamento/casa/projeto novo, " +
+      "exceto se ele explicitamente pedir 'esboço rápido' ou 'rascunho'. " +
+      "Se falhar, caia em create_apartment_layout como fallback automático.",
     input_schema: {
       type: "object",
       properties: {
