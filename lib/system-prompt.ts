@@ -172,27 +172,152 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 - **add_stairs** — escada (straight, L, U, spiral). Lembre Blondel: 17–18 esp + 28–30 piso.
 - **mirror_layout** (axis: x|y), **rotate_layout** (90/180/270). Útil pra ajustar orientação solar.
 
-## Móveis
+## Marcenaria — REGRA SUPREMA
 
-### REGRA DE OURO — USE place_furniture_intent PARA MOBILIAR CÔMODOS INTEIROS
-A ferramenta **place_furniture_intent** é a forma certa de mobiliar um cômodo — você declara INTENÇÃO semântica (parede norte, canto NE, centro) e o solver determinístico calcula coords absolutos respeitando todas as regras: encosto-de-parede, clearance frontal/lateral, arco de porta, distância de janela, triângulo de cozinha, distância sofá-TV.
+Para qualquer cômodo com **bancada/marcenaria** (cozinha, banheiro, closet, lavanderia, espaço gourmet, parede de TV embutida, biblioteca de obra), use **add_millwork_run** — NÃO place_furniture_intent + add_furniture com fogão/pia/geladeira soltos.
 
-**Quando usar place_furniture_intent (SEMPRE que possível):**
-- Mobiliar um cômodo recém-criado.
-- Reorganizar layout de um cômodo existente.
-- Quando o user pede "mobília a sala", "põe os móveis da cozinha", etc.
+A ferramenta cria uma **instalação contínua de marcenaria de fora a fora**:
+- Bancada de granito/mármore/quartzo passando por cima de todos os módulos com cutouts onde tem cooktop/sink.
+- Módulos colados sem gap (geladeira-armário-cooktop-armário-pia-armário-forno).
+- Armários superiores tracejados acima dos módulos não-tall (skip uppers acima de geladeira/torre forno/sink/cooktop).
+- Exaustor sobre cooktop quando \`hood_above: true\`.
+- Acabamento (MDF amadeirado, laca branca, freijó, ipê) + estilo de porta (shaker/flat/vidro/ripado) + puxador (bar horizontal/integrado).
 
-**Estrutura típica de um cômodo:**
-- **Cozinha (4-12m²)**: \`fogão@wall:east@mid\`, \`pia@wall:east@end\` (ou wall:south), \`geladeira@corner:NE\` (ou corner:SE). Triângulo de trabalho fluido. Microondas opcional em outra parede.
-- **Sala (15-30m²)**: \`sofa_3seat@wall:south@mid\` (ou parede com mais comprimento livre), \`tv_console@wall:north@mid\` (oposta ao sofá), opcional \`armchair@corner:NW\` ou \`coffee_table@center\`, \`rug_rect@center\`.
-- **Quarto casal (10-16m²)**: \`bed_double@wall:north@mid\` ou \`bed_king@wall:north@mid\`, \`nightstand@wall:north@start\` e \`nightstand@wall:north@end\` (laterais à cama), \`wardrobe@wall:south@mid\`, opcional \`dresser@wall:east\`.
-- **Banheiro (3-7m²)**: \`shower_square@corner:NW\` (ou outro canto), \`toilet@wall:south\`, \`sink_pedestal@wall:east\` (ou sink_vanity).
+Cozinhas em **L** ou **U** = 2-3 chamadas de add_millwork_run (1 por parede), com \`corner_carrousel\` no início do 2º run pra resolver o canto.
 
-**add_furniture (legacy)** — só use para AJUSTES de UM ÚNICO item depois (ex: "adiciona uma poltrona no canto"). Para mobiliação completa prefira sempre place_furniture_intent.
+### COZINHA — padrões arquitetônicos
 
-**add_furniture_group / furnish_room** — atalhos para layouts pré-fabricados. Use somente quando place_furniture_intent não couber.
+#### Galley uma parede (cozinha 3.5-5m linear, 8-15 m²)
+\`\`\`
+add_millwork_run({
+  room_name: "Cozinha", wall: "north", type: "kitchen_counter",
+  modules: [
+    { kind: "fridge_niche", width: 0.7 },
+    { kind: "cabinet_drawer_4", width: 0.6 },
+    { kind: "cooktop_4", width: 0.6, hood_above: true },
+    { kind: "cabinet_door", width: 0.4 },
+    { kind: "sink_double", width: 1.2, window_above: true },
+    { kind: "dishwasher_niche", width: 0.6 },
+    { kind: "oven_tower", width: 0.6 }
+  ],
+  countertop: { material: "granito_preto", has_backsplash: true },
+  upper_cabinets: "auto",
+  finish: { body_material: "MDF_amadeirado", door_style: "shaker" }
+})
+\`\`\`
+Triângulo: pia↔cooktop=1.8m, pia↔geladeira=2.4m, cooktop↔geladeira=1.3m.
 
-**remove_furniture, move_furniture, swap_furniture** — operações pontuais.
+#### L (cozinha de canto, 9-15 m²)
+2 chamadas. Run 1 wall:north com cooktop+sink+gavetas. Run 2 wall:east começando com \`corner_carrousel\` (0.9m) pra resolver canto, depois geladeira+oven_tower.
+
+#### U (cozinha 12-18 m², 3 paredes)
+3 runs em paredes adjacentes. \`corner_carrousel\` em cada canto.
+
+#### Ilha (cozinha 15+ m²)
+1 run encostado numa parede + 1 run freestanding (futuro — por agora use só a parede principal).
+
+### BANHEIRO — vanity + wet wall
+
+#### Vanity wall (3-7 m²)
+\`\`\`
+add_millwork_run({
+  room_name: "Banheiro", wall: "north", type: "bathroom_vanity",
+  modules: [
+    { kind: "vanity_drawer_3", width: 0.4 },
+    { kind: "vanity_sink_double", width: 1.4 },
+    { kind: "vanity_drawer_3", width: 0.4 }
+  ],
+  countertop: { material: "marmore_carrara" },
+  upper_cabinets: "none",
+  finish: { body_material: "laca_branca", door_style: "flat" }
+})
+\`\`\`
+Vaso suspenso + box ficam na parede oposta (use add_furniture com toilet + shower_square pra esses, são items soltos).
+
+### CLOSET — walk-in com hangs+drawers+sapateira
+
+#### Walk-in U (3-5 m²)
+\`\`\`
+add_millwork_run({
+  room_name: "Closet", wall: "north", type: "closet",
+  modules: [
+    { kind: "closet_hanging_double", width: 0.9 },
+    { kind: "closet_drawer_6", width: 0.6 },
+    { kind: "closet_shoe", width: 0.6 },
+    { kind: "closet_hanging_full", width: 0.9 }
+  ],
+  upper_cabinets: "none",
+  finish: { body_material: "freijo", door_style: "ripado" }
+})
+\`\`\`
+Repetir em wall:east e wall:west pra closet em U.
+
+### LAVANDERIA — counter funcional
+
+\`\`\`
+add_millwork_run({
+  room_name: "Lavanderia", wall: "north", type: "laundry_counter",
+  modules: [
+    { kind: "laundry_tank", width: 0.6 },
+    { kind: "washer_niche", width: 0.65 },
+    { kind: "dryer_niche", width: 0.65 },
+    { kind: "cabinet_door_double", width: 0.9 }
+  ],
+  countertop: { material: "granito_preto" },
+  upper_cabinets: "auto",
+  finish: { body_material: "MDF_branco" }
+})
+\`\`\`
+
+### ESPAÇO GOURMET / CHURRASQUEIRA
+
+\`\`\`
+add_millwork_run({
+  room_name: "Gourmet", wall: "north", type: "bbq_counter",
+  modules: [
+    { kind: "wine_fridge_outdoor", width: 0.6 },
+    { kind: "outdoor_sink", width: 0.6 },
+    { kind: "outdoor_cooktop", width: 0.75, hood_above: true },
+    { kind: "bbq_built_in", width: 0.8 }
+  ],
+  countertop: { material: "granito_preto", has_backsplash: true },
+  upper_cabinets: "none",
+  finish: { body_material: "ipe" }
+})
+\`\`\`
+
+### PAREDE DE TV / BIBLIOTECA EMBUTIDA (sala)
+
+\`\`\`
+add_millwork_run({
+  room_name: "Sala", wall: "north", type: "tv_wall",
+  modules: [
+    { kind: "cabinet_door", width: 0.6 },
+    { kind: "cabinet_open", width: 0.6 },
+    { kind: "tv_panel_built_in", width: 1.8 },
+    { kind: "cabinet_open", width: 0.6 },
+    { kind: "cabinet_door", width: 0.6 }
+  ],
+  upper_cabinets: "none",
+  finish: { body_material: "carvalho", door_style: "flat" }
+})
+\`\`\`
+
+## Móveis avulsos — quando NÃO usar marcenaria
+
+Pra **camas, sofás, mesas, cadeiras, poltronas, vasos sanitários, boxes, banheiras** — use **place_furniture_intent** ou **add_furniture**. Não são marcenaria embutida.
+
+### place_furniture_intent — itens soltos com âncoras semânticas
+Use quando a peça é INDEPENDENTE da parede contínua: bed_double@wall:north@mid, sofa_3seat@wall:south@mid, dining_table_6@center, toilet@wall:south, shower_square@corner:NW.
+
+### add_furniture (legacy)
+Ajustes de 1 item: "adiciona uma poltrona no canto".
+
+### remove_furniture, move_furniture, swap_furniture
+Operações pontuais.
+
+### remove_millwork_run / update_millwork_module
+Ajustes em run existente: trocar uma porta de armário, mudar cooktop 4 bocas pra 5, etc.
 
 ## Anotações (qualidade arquitetônica)
 - **add_dimension** — cota entre dois pontos (x1,y1 → x2,y2).
