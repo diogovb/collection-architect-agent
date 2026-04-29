@@ -16,6 +16,7 @@ interface Props {
   selected: SelectedElement | null;
   onClearSelection: () => void;
   onApplyTool: (name: ToolName, input: unknown) => void;
+  onPlanReplace?: (plan: FloorPlan) => void;
   history: SeededMessage[];
   setHistory: (m: SeededMessage[] | ((prev: SeededMessage[]) => SeededMessage[])) => void;
   refs: ReferenceImage[];
@@ -65,6 +66,7 @@ export function RightPanel(p: Props) {
             plan={p.plan}
             selected={p.selected}
             onApplyTool={p.onApplyTool}
+            onPlanReplace={p.onPlanReplace}
             onClearSelection={p.onClearSelection}
             history={p.history}
             setHistory={p.setHistory}

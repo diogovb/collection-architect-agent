@@ -256,6 +256,11 @@ export async function POST(req: Request) {
                       (result.issues.length > 0 ? ` Avisos: ${result.issues.join("; ")}` : "");
                     mutationsHappened = true;
                     pendingVisualReview = true;
+                    // Sync the new plan to the client. The hybrid pipeline does NOT
+                    // go through the legacy applyTool path on the client (which
+                    // mirrors mutations from tool_input), so we must explicitly
+                    // push the full plan via plan_replace for the canvas to render.
+                    send({ type: "plan_replace", plan: localPlan });
                   } catch (e) {
                     ok = false;
                     message = `Erro no pipeline híbrido: ${e instanceof Error ? e.message : "desconhecido"}. Use create_apartment_layout como fallback.`;
