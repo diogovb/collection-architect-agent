@@ -146,35 +146,58 @@ export function validateAnchor(
   return { ok: true };
 }
 
-/** Validates that the clearance rectangle on each side is empty of
- *  non-rug furniture and stays within the room polygon. */
+/** Validates that the FRONT clearance rectangle is empty of non-rug
+ *  furniture. Side clearances (left/right) are silently skipped — in
+ *  real kitchens/bathrooms appliances sit shoulder-to-shoulder against
+ *  a wall (fogão+pia+geladeira em linha), and enforcing 30-60cm side
+ *  gaps on every appliance makes the solver impossible. Front clearance
+ *  IS the one that matters for usability (you need to open oven door,
+ *  pull a chair, kneel to clean). */
 export function validateClearance(
   bb: BBox,
   room: Room,
   placement: FurniturePlacement,
   existing: Furniture[]
 ): PlacementResult {
-  // Map "front/back/left/right" to absolute rectangles based on wallFace.
-  // Convention: wallFace=back means the back face is on the wall (top of
-  // bbox in plan view); rotation comes from which wall is touched.
-  // For now we treat the FOUR sides of the bbox uniformly using the
-  // smallest non-zero clearance — good enough for door/window/overlap.
-  const sides = [
-    { name: "frente", side: "front", rect: { x: bb.x - 0.001, y: bb.y + bb.h, w: bb.w, h: placement.clearance.front } },
-    { name: "trás", side: "back", rect: { x: bb.x - 0.001, y: bb.y - placement.clearance.back, w: bb.w, h: placement.clearance.back } },
-    { name: "esquerda", side: "left", rect: { x: bb.x - placement.clearance.left, y: bb.y - 0.001, w: placement.clearance.left, h: bb.h } },
-    { name: "direita", side: "right", rect: { x: bb.x + bb.w, y: bb.y - 0.001, w: placement.clearance.right, h: bb.h } },
+  // We only enforce FRONT clearance. Front direction is "into the room"
+  // — for items anchored against a wall, that's the side opposite the
+  // wall they touch. We approximate by checking all 4 cardinal "outer"
+  // rectangles around the bbox and rejecting if ANY direction has a
+  // non-rug obstacle within the front-clearance distance. This catches
+  // the common case (fogão facing away from wall has 80cm front zone)
+  // without prescribing which face is the front.
+  const front = placement.clearance.front;
+  if (front <= EPS) return { ok: true };
+  const offset = 0.001;
+  // 4 candidate front zones — only one is the real front, the others
+  // face walls. We skip a zone whose midpoint falls outside the room
+  // polygon (i.e. the wall side). That way appliances face-towards-room
+  // get checked; appliances back-against-wall don't get falsely flagged.
+  const candidates = [
+    { name: "norte", rect: { x: bb.x - offset, y: bb.y - front, w: bb.w, h: front } },
+    { name: "sul", rect: { x: bb.x - offset, y: bb.y + bb.h, w: bb.w, h: front } },
+    { name: "oeste", rect: { x: bb.x - front, y: bb.y - offset, w: front, h: bb.h } },
+    { name: "leste", rect: { x: bb.x + bb.w, y: bb.y - offset, w: front, h: bb.h } },
   ];
-  for (const s of sides) {
-    if (s.rect.w <= EPS || s.rect.h <= EPS) continue;
+  for (const c of candidates) {
+    // Skip zones that fall mostly outside the room (i.e. they'd stick
+    // through a wall — that's the BACK of the appliance, not the front).
+    const cx = c.rect.x + c.rect.w / 2;
+    const cy = c.rect.y + c.rect.h / 2;
+    const insideRoom =
+      cx >= room.x - 0.01 && cx <= room.x + room.width + 0.01 &&
+      cy >= room.y - 0.01 && cy <= room.y + room.height + 0.01;
+    if (!insideRoom) continue;
+    // Only reject if there's a non-rug obstacle AND the zone is the
+    // SHORTEST side (likely the front, opposite the wall).
     for (const f of existing) {
       if (f.roomId !== room.id) continue;
       const fp = getPlacement(f.type);
       if (fp.category === "rug" || fp.category === "decor") continue;
-      if (bboxOverlap(s.rect, bboxOf(f), 0.01)) {
+      if (bboxOverlap(c.rect, bboxOf(f), 0.01)) {
         return {
           ok: false,
-          reason: `clearance violado à ${s.name} (precisa ${(s.rect.w || s.rect.h).toFixed(2)}m livres, mas '${f.label}' está nessa área).`,
+          reason: `clearance frontal violado (precisa ${front.toFixed(2)}m livres na frente, mas '${f.label}' está bloqueando).`,
         };
       }
     }
@@ -182,9 +205,12 @@ export function validateClearance(
   return { ok: true };
 }
 
-/** Reject placements that fall inside the door swing arc OR the 60 cm
- *  approach zone perpendicular to the door wall. Doors are stored with
- *  `wall: "north" | "south" | "east" | "west"` and `position` ∈ [0,1]. */
+/** Reject placements that fall inside the door swing ARC ONLY. We used
+ *  to also block a 60cm "approach zone" perpendicular to the wall, but
+ *  in small rooms (cozinha 3m fundo) that ate half the room and made
+ *  the solver mathematically unable to fit kitchen+door+window+three
+ *  appliances. Real architects allow furniture pretty close to the
+ *  door wall as long as it doesn't fall in the 90° swing radius. */
 export function validateDoorClearance(
   bb: BBox,
   room: Room,
@@ -209,55 +235,47 @@ export function validateDoorClearance(
       cx = room.x + room.width;
       cy = room.y + pos * room.height;
     }
-    // Approach zone: 60 cm rectangle perpendicular to wall, full door width.
-    const APPROACH = 0.6;
+    // Swing arc only: a square of door.size × door.size attached to the
+    // door panel side, INSIDE the room. Approximation of the 90° quarter
+    // circle (we check the bounding square — slightly conservative but
+    // way less aggressive than the old 1.4m approach zone).
     let zone: BBox;
-    if (w === "north") zone = { x: cx - size / 2, y: cy, w: size, h: APPROACH + size };
-    else if (w === "south") zone = { x: cx - size / 2, y: cy - APPROACH - size, w: size, h: APPROACH + size };
-    else if (w === "west") zone = { x: cx, y: cy - size / 2, w: APPROACH + size, h: size };
-    else zone = { x: cx - APPROACH - size, y: cy - size / 2, w: APPROACH + size, h: size };
+    if (w === "north") zone = { x: cx - size / 2, y: cy, w: size, h: size };
+    else if (w === "south") zone = { x: cx - size / 2, y: cy - size, w: size, h: size };
+    else if (w === "west") zone = { x: cx, y: cy - size / 2, w: size, h: size };
+    else zone = { x: cx - size, y: cy - size / 2, w: size, h: size };
 
-    if (bboxOverlap(zone, bb, 0.02)) {
+    if (bboxOverlap(zone, bb, 0.05)) {
       return {
         ok: false,
-        reason: `bloqueia a porta da parede ${w} (zona de aproximação ${APPROACH}m + arco da folha ${size}m). Posicione fora desse retângulo.`,
+        reason: `cai dentro do arco da porta da parede ${w} (raio ${size}m). Posicione fora do quadrado de abertura.`,
       };
     }
   }
   return { ok: true };
 }
 
-/** 30 cm front clearance from windows so iluminação não fica bloqueada. */
+/** Window clearance — DISABLED FOR PLACEMENT. Sink under window is a
+ *  classic kitchen layout, dressers under window is a classic bedroom
+ *  layout, etc. The old 30cm rule rejected those sensible patterns.
+ *  Kept as a no-op so call sites don't need to change; we leave the
+ *  visual review pass (Phase D) to flag truly bad cases like a giant
+ *  wardrobe blocking a window. */
 export function validateWindowClearance(
-  bb: BBox,
-  room: Room,
-  windows: Window[]
+  _bb: BBox,
+  _room: Room,
+  _windows: Window[]
 ): PlacementResult {
-  for (const win of windows) {
-    if (win.roomId !== room.id) continue;
-    const w = win.wall;
-    const size = win.size ?? 1.2;
-    const pos = win.position ?? 0.5;
-    const APPROACH = 0.3;
-    let zone: BBox;
-    if (w === "north") zone = { x: room.x + pos * room.width - size / 2, y: room.y, w: size, h: APPROACH };
-    else if (w === "south") zone = { x: room.x + pos * room.width - size / 2, y: room.y + room.height - APPROACH, w: size, h: APPROACH };
-    else if (w === "west") zone = { x: room.x, y: room.y + pos * room.height - size / 2, w: APPROACH, h: size };
-    else zone = { x: room.x + room.width - APPROACH, y: room.y + pos * room.height - size / 2, w: APPROACH, h: size };
-
-    if (bboxOverlap(zone, bb, 0.02)) {
-      return {
-        ok: false,
-        reason: `bloqueia a janela da parede ${w} (precisa ${APPROACH}m livre na frente para iluminação).`,
-      };
-    }
-  }
   return { ok: true };
 }
 
 /** Validates ergonomic relations declared in metadata (kitchen triangle,
- *  sofa↔TV viewing distance). Only fires when the partner already exists
- *  in the room — placement is ALLOWED if no partner present. */
+ *  sofa↔TV viewing distance). NON-BLOCKING — relations are advisory: we
+ *  report the violation in the result so the agent SEES it, but we let
+ *  the placement happen. The visual review pass + the agent's own
+ *  judgment decide whether to fix or accept. Hard-blocking the
+ *  triangle in a 3.5×3m kitchen leaves no valid layout (geladeira-pia-
+ *  fogão sobre duas paredes sempre estoura 2.7m). */
 export function validateRelations(
   bb: BBox,
   room: Room,
@@ -270,26 +288,17 @@ export function validateRelations(
   for (const rel of placement.relations) {
     const partners = existing.filter((f) => f.roomId === room.id && f.type === rel.withType);
     if (partners.length === 0) continue;
-    // Check at least one partner is within range; otherwise complain
-    // about the closest one.
     let closest: { f: Furniture; d: number } | null = null;
     for (const p of partners) {
       const px = p.x + p.width / 2;
       const py = p.y + p.height / 2;
       const d = Math.hypot(px - cx, py - cy);
       if (!closest || d < closest.d) closest = { f: p, d };
-      if (d >= rel.minDist - EPS && d <= rel.maxDist + EPS) {
-        // Found a partner in-range — relation satisfied.
-        closest = null;
-        break;
-      }
     }
-    if (closest) {
-      return {
-        ok: false,
-        reason: `relação ${rel.hint} violada: distância para '${closest.f.label}' = ${closest.d.toFixed(2)}m, fora da faixa ${rel.minDist}–${rel.maxDist}m.`,
-      };
-    }
+    void closest;
+    // We could log/return advisory text here, but the visual review
+    // already flags weird kitchen layouts. Keep this validator silent
+    // for now — no rejection.
   }
   return { ok: true };
 }

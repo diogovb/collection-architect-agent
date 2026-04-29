@@ -183,6 +183,18 @@ export function solvePlacement(input: SolverInput): SolverOutput {
 
   const buckets = bucketByAnchor(items);
 
+  // Order of fallback anchors when the requested one fails. We try the
+  // declared anchor first, then sibling positions on the same wall, then
+  // the 4 corners (for items whose metadata accepts wall-or-corner), then
+  // any remaining wall. This converts "single attempt" failures into
+  // graceful re-tries the agent doesn't have to script.
+  const FALLBACK_POSITIONS: Array<"start" | "mid" | "end"> = ["mid", "start", "end"];
+  const FALLBACK_ANCHORS: Anchor[] = [
+    "wall:north", "wall:south", "wall:east", "wall:west",
+    "corner:NW", "corner:NE", "corner:SW", "corner:SE",
+    "free",
+  ];
+
   for (const it of items) {
     const def = FURN_DEFS[it.type];
     if (!def) {
@@ -200,36 +212,66 @@ export function solvePlacement(input: SolverInput): SolverOutput {
     const bucket = buckets.get(it.anchor)!;
     const slot = bucket.indexOf(it);
     const slotsTotal = bucket.length;
-    const bb = computeAnchoredBbox(it, size, room, slot, slotsTotal);
 
-    // Validate against the working plan (which includes previously
-    // solved items in this batch). First failure wins — agent retries
-    // with different anchor.
-    const check = validatePlacement(
-      { type: it.type, x: bb.x, y: bb.y, width: bb.width, height: bb.height, label: it.label ?? def.label },
-      room,
-      workingPlan,
-    );
-    if (!check.ok) {
+    // Build the candidate list: requested anchor first (with the
+    // requested position + the other two as fallbacks), then sibling
+    // anchors. We keep slot/slotsTotal only for the requested anchor;
+    // fallback attempts treat the item as a single-slot placement.
+    interface Candidate { anchor: Anchor; position: "start" | "mid" | "end"; slot: number; slotsTotal: number }
+    const candidates: Candidate[] = [];
+    const requestedPos = it.position ?? "mid";
+    candidates.push({ anchor: it.anchor, position: requestedPos, slot, slotsTotal });
+    for (const p of FALLBACK_POSITIONS) {
+      if (p !== requestedPos) candidates.push({ anchor: it.anchor, position: p, slot: 0, slotsTotal: 1 });
+    }
+    for (const a of FALLBACK_ANCHORS) {
+      if (a === it.anchor) continue;
+      for (const p of FALLBACK_POSITIONS) {
+        candidates.push({ anchor: a, position: p, slot: 0, slotsTotal: 1 });
+      }
+    }
+
+    let landed: { x: number; y: number; width: number; height: number; anchor: Anchor; position: string } | null = null;
+    let lastReason = "";
+    for (const cand of candidates) {
+      const tryIntent: PlacementIntent = { ...it, anchor: cand.anchor, position: cand.position };
+      const bb = computeAnchoredBbox(tryIntent, size, room, cand.slot, cand.slotsTotal);
+      const check = validatePlacement(
+        { type: it.type, x: bb.x, y: bb.y, width: bb.width, height: bb.height, label: it.label ?? def.label },
+        room,
+        workingPlan,
+      );
+      if (check.ok) {
+        landed = { ...bb, anchor: cand.anchor, position: cand.position };
+        break;
+      }
+      lastReason = check.reason ?? "rejeitado";
+    }
+
+    if (!landed) {
       failed.push({
         intent: it,
-        reason: `âncora ${it.anchor}@${it.position ?? "mid"}: ${check.reason}`,
+        reason: `nenhuma âncora encaixou (tentei ${candidates.length} alternativas). Último motivo: ${lastReason}`,
       });
       continue;
     }
 
-    solved.push({ intent: it, ...bb });
-    // Push into the working plan so the next item's clearance/overlap
-    // checks see this one already placed.
+    solved.push({
+      intent: { ...it, anchor: landed.anchor, position: landed.position as "start" | "mid" | "end" },
+      x: landed.x,
+      y: landed.y,
+      width: landed.width,
+      height: landed.height,
+    });
     const placed: Furniture = {
       id: `solver-${solved.length}`,
       roomId: room.id,
       type: it.type,
       label: it.label ?? def.label,
-      x: bb.x,
-      y: bb.y,
-      width: bb.width,
-      height: bb.height,
+      x: landed.x,
+      y: landed.y,
+      width: landed.width,
+      height: landed.height,
     };
     workingPlan.furniture.push(placed);
   }
