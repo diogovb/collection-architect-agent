@@ -14,6 +14,7 @@ interface Props {
   plan: FloorPlan;
   selected: SelectedElement | null;
   onApplyTool: (name: ToolName, input: unknown) => void;
+  onPlanReplace?: (plan: FloorPlan) => void;
   onClearSelection: () => void;
   history: SeededMessage[];
   setHistory: (m: SeededMessage[] | ((prev: SeededMessage[]) => SeededMessage[])) => void;
@@ -127,7 +128,7 @@ function quickPromptsFor(
 }
 
 export function ChatPanel({
-  plan, selected, onApplyTool, onClearSelection,
+  plan, selected, onApplyTool, onPlanReplace, onClearSelection,
   history, setHistory, lang, onApplyDiff, onCompareDiff,
 }: Props) {
   const [input, setInput] = useState("");
@@ -425,9 +426,14 @@ export function ChatPanel({
             startTool(ev.id, ev.name);
           } else if (ev.type === "tool_input") {
             const n = toolNameByIdRef.current.get(ev.id);
-            if (n) onApplyTool(n, ev.input);
+            // Skip applyTool for tools whose mutation is server-side only
+            // (e.g. generate_plan_hybrid). Those send a `plan_replace` event
+            // afterwards with the resulting FloorPlan.
+            if (n && n !== "generate_plan_hybrid") onApplyTool(n, ev.input);
           } else if (ev.type === "tool_result") {
             patchTool(ev.id, ev.ok);
+          } else if (ev.type === "plan_replace") {
+            if (onPlanReplace) onPlanReplace(ev.plan);
           } else if (ev.type === "error") {
             appendText(`\n\n_Erro: ${ev.message}_`);
           }

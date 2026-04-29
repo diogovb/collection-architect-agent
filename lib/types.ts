@@ -735,6 +735,7 @@ export type StreamEvent =
   | { type: "tool_start"; id: string; name: ToolName }
   | { type: "tool_input"; id: string; input: unknown }
   | { type: "tool_result"; id: string; ok: boolean; message: string }
+  | { type: "plan_replace"; plan: FloorPlan }
   | { type: "error"; message: string }
   | { type: "done" };
 

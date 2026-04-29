@@ -239,6 +239,7 @@ export default function Page() {
               selected={v.selected}
               onClearSelection={() => v.setSelected(null)}
               onApplyTool={v.applyPlanTool}
+              onPlanReplace={v.setPlan}
               history={v.chatHistory}
               setHistory={v.setChatHistory}
               refs={v.refs}
