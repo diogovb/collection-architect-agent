@@ -165,6 +165,8 @@ export function applyTool<T extends ToolName>(
         return doCreateApartment(plan, input as ToolInputs["create_apartment_layout"]);
       case "furnish_room":
         return doFurnishRoom(plan, input as ToolInputs["furnish_room"]);
+      case "generate_plan_hybrid":
+        return { ok: false, message: "generate_plan_hybrid é tratada diretamente na route (assíncrona)." };
       case "clear_all":
         plan.rooms.length = 0;
         plan.doors.length = 0;

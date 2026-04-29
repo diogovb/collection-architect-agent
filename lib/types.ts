@@ -499,7 +499,9 @@ export type ToolName =
   | "add_text_note"
   | "add_north_arrow"
   // ---- knowledge base (RAG) ----
-  | "search_knowledge_base";
+  | "search_knowledge_base"
+  // ---- hybrid pipeline ----
+  | "generate_plan_hybrid";
 
 export type FurnitureGroup =
   | "dining_set_4"
@@ -697,6 +699,14 @@ export interface ToolInputs {
     angle?: number;
   };
   search_knowledge_base: { query: string; category?: string };
+  generate_plan_hybrid: {
+    total_area: number;
+    num_bedrooms: number;
+    num_bathrooms: number;
+    style?: "modern" | "classic" | "compact" | "luxury";
+    include_furniture?: boolean;
+    additional_notes?: string;
+  };
 }
 
 // ----- Selection -----

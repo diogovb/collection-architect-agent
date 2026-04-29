@@ -7,7 +7,8 @@ import {
   searchKnowledgeBase,
   type KnowledgeMatch,
 } from "@/lib/embeddings";
-import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
+import type { FloorPlan, SelectionContext, StreamEvent, ToolName, ToolInputs } from "@/lib/types";
+import { isHybridEnabled, runHybridPipeline } from "@/lib/hybrid/pipeline";
 import { validatePlan, formatIssuesForAgent, diagnosticsHash } from "@/lib/agent/validate-plan";
 import { renderPlanPng } from "@/lib/canvas/render-png";
 
@@ -30,6 +31,7 @@ const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
   "add_stairs",
   "add_column",
   "create_apartment_layout",
+  "generate_plan_hybrid",
 ]);
 
 const MAX_VISUAL_REVIEWS = 2;
@@ -218,6 +220,47 @@ export async function POST(req: Request) {
                 const r = await runKnowledgeSearch(input);
                 ok = r.ok;
                 message = r.message;
+              } else if (buf.name === "generate_plan_hybrid") {
+                if (!isHybridEnabled()) {
+                  ok = false;
+                  message = "Pipeline híbrido desabilitado. Use create_apartment_layout como fallback.";
+                } else {
+                  try {
+                    send({ type: "text_delta", text: "Gerando planta profissional com IA generativa..." });
+                    const hi = input as ToolInputs["generate_plan_hybrid"];
+                    const result = await runHybridPipeline({
+                      totalArea: hi.total_area,
+                      numBedrooms: hi.num_bedrooms,
+                      numBathrooms: hi.num_bathrooms,
+                      style: hi.style,
+                      includeFurniture: hi.include_furniture,
+                      additionalNotes: hi.additional_notes,
+                    });
+                    localPlan.rooms = result.plan.rooms;
+                    localPlan.doors = result.plan.doors;
+                    localPlan.windows = result.plan.windows;
+                    localPlan.furniture = result.plan.furniture;
+                    localPlan.stairs = result.plan.stairs ?? [];
+                    localPlan.columns = result.plan.columns ?? [];
+                    localPlan.annotations = result.plan.annotations ?? [];
+                    localPlan.northArrow = result.plan.northArrow ?? null;
+                    localPlan.millworkRuns = result.plan.millworkRuns ?? [];
+                    ok = true;
+                    const pct = Math.round(result.confidence * 100);
+                    message =
+                      `Planta gerada com ${pct}% de confiança. ` +
+                      `${result.plan.rooms.length} cômodos, ${result.plan.doors.length} portas, ` +
+                      `${result.plan.windows.length} janelas` +
+                      (result.plan.furniture.length > 0 ? `, ${result.plan.furniture.length} móveis` : "") +
+                      `. Tempo: ${(result.timings.total / 1000).toFixed(1)}s.` +
+                      (result.issues.length > 0 ? ` Avisos: ${result.issues.join("; ")}` : "");
+                    mutationsHappened = true;
+                    pendingVisualReview = true;
+                  } catch (e) {
+                    ok = false;
+                    message = `Erro no pipeline híbrido: ${e instanceof Error ? e.message : "desconhecido"}. Use create_apartment_layout como fallback.`;
+                  }
+                }
               } else {
                 const r = applyTool(localPlan, buf.name, input);
                 ok = r.ok;
