@@ -8,7 +8,18 @@ import { t } from "@/lib/i18n";
 import type { ChatBlock, SeededMessage, ToolCallStatus } from "@/lib/mock-data";
 import { USER_ACTION_EVENT, type UserActionPayload } from "@/lib/scene/user-action-log";
 
-type ModelId = "claude-opus-4-7" | "claude-sonnet-4-6";
+type ModelId =
+  | "claude-opus-4-7"
+  | "claude-sonnet-4-6"
+  | "gpt-5.5-pro"
+  | "gpt-5.5";
+
+const MODEL_LABELS: Record<ModelId, { short: string; long: string }> = {
+  "claude-opus-4-7": { short: "OPUS 4.7", long: "Opus 4.7 — Mais inteligente" },
+  "claude-sonnet-4-6": { short: "SONNET 4.6", long: "Sonnet 4.6 — Mais rápido" },
+  "gpt-5.5-pro": { short: "GPT-5.5 PRO", long: "GPT-5.5 Pro — OpenAI raciocínio profundo" },
+  "gpt-5.5": { short: "GPT-5.5", long: "GPT-5.5 — OpenAI rápido" },
+};
 
 interface Props {
   plan: FloorPlan;
@@ -905,6 +916,12 @@ function ModelChip({ model, onChange, disabled }: {
   model: ModelId; onChange: (m: ModelId) => void; disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const allModels: ModelId[] = [
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "gpt-5.5-pro",
+    "gpt-5.5",
+  ];
   return (
     <div className="relative">
       <button
@@ -913,18 +930,18 @@ function ModelChip({ model, onChange, disabled }: {
         onClick={() => setOpen((o) => !o)}
         className="px-2 py-1 rounded-md text-[10.5px] font-mono uppercase tracking-wider text-muted hover:bg-panel hover:text-ink transition-colors flex items-center gap-1"
       >
-        {model === "claude-opus-4-7" ? "OPUS 4.7" : "SONNET 4.6"}
+        {MODEL_LABELS[model].short}
         <span className="text-[8px]">▾</span>
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 mb-1 bg-panel border border-line rounded-md shadow-md p-1 min-w-[140px] z-30">
-          {(["claude-opus-4-7", "claude-sonnet-4-6"] as ModelId[]).map((m) => (
+        <div className="absolute bottom-full left-0 mb-1 bg-panel border border-line rounded-md shadow-md p-1 min-w-[200px] z-30">
+          {allModels.map((m) => (
             <button
               key={m}
               onClick={() => { onChange(m); setOpen(false); }}
               className={`w-full text-left px-2 py-1.5 rounded text-[11px] hover:bg-panel-alt ${model === m ? "text-accent" : ""}`}
             >
-              {m === "claude-opus-4-7" ? "Opus 4.7 — Mais inteligente" : "Sonnet 4.6 — Mais rápido"}
+              {MODEL_LABELS[m].long}
             </button>
           ))}
         </div>
