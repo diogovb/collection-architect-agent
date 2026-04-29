@@ -1,3 +1,8 @@
+/**
+ * DEAD-CODE (V2). Mantido para referência futura.
+ * Veja o cabeçalho de vision-extractor.ts para contexto.
+ */
+
 import type {
   FloorPlan,
   Room,

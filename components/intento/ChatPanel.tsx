@@ -434,6 +434,22 @@ export function ChatPanel({
             patchTool(ev.id, ev.ok);
           } else if (ev.type === "plan_replace") {
             if (onPlanReplace) onPlanReplace(ev.plan);
+          } else if (ev.type === "debug_image") {
+            blocks.push({
+              type: "debug_image",
+              dataUrl: ev.dataUrl,
+              label: ev.label,
+              phase: ev.phase,
+            });
+            setStreamingBlocks([...blocks]);
+          } else if (ev.type === "debug_svg") {
+            blocks.push({
+              type: "debug_svg",
+              svg: ev.svg,
+              label: ev.label,
+              phase: ev.phase,
+            });
+            setStreamingBlocks([...blocks]);
           } else if (ev.type === "error") {
             appendText(`\n\n_Erro: ${ev.message}_`);
           }
@@ -668,9 +684,77 @@ function BlockSequence({
         if (b.type === "user-action") {
           return <UserActionBlock key={i} block={b} />;
         }
+        if (b.type === "debug_image") {
+          return <DebugImageBlock key={i} block={b} />;
+        }
+        if (b.type === "debug_svg") {
+          return <DebugSvgBlock key={i} block={b} />;
+        }
         return null;
       })}
     </div>
+  );
+}
+
+// Inline debug visualization for hybrid pipeline. Shows the PNG that GPT
+// Image generated, with phase tag (structural / furniture) and label.
+function DebugImageBlock({
+  block,
+}: {
+  block: Extract<ChatBlock, { type: "debug_image" }>;
+}) {
+  return (
+    <figure className="rounded-md border border-line bg-panel-alt/40 overflow-hidden">
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-line">
+        <span
+          className="font-mono text-[9px] uppercase tracking-[0.14em] text-accent shrink-0"
+          title="Hybrid pipeline debug"
+        >
+          {block.phase}
+        </span>
+        <span className="text-[10.5px] text-muted truncate">{block.label}</span>
+      </div>
+      <img
+        src={block.dataUrl}
+        alt={block.label}
+        className="w-full h-auto block bg-white cursor-zoom-in"
+        onClick={(e) => {
+          // Open fullscreen in new tab for inspection.
+          const w = window.open();
+          if (w)
+            w.document.write(
+              `<title>${block.label}</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${block.dataUrl}" style="max-width:100%;max-height:100vh"/></body>`,
+            );
+        }}
+      />
+    </figure>
+  );
+}
+
+// Inline debug visualization for the Arrow vectorization output. Renders the
+// SVG inline (no DOMPurify yet — Arrow output is trusted server-side; if user
+// flags issue we add sanitization).
+function DebugSvgBlock({
+  block,
+}: {
+  block: Extract<ChatBlock, { type: "debug_svg" }>;
+}) {
+  return (
+    <figure className="rounded-md border border-line bg-panel-alt/40 overflow-hidden">
+      <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-line">
+        <span
+          className="font-mono text-[9px] uppercase tracking-[0.14em] text-accent shrink-0"
+          title="Arrow vectorization"
+        >
+          {block.phase} · svg
+        </span>
+        <span className="text-[10.5px] text-muted truncate">{block.label}</span>
+      </div>
+      <div
+        className="w-full bg-white p-1 [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-h-[400px]"
+        dangerouslySetInnerHTML={{ __html: block.svg }}
+      />
+    </figure>
   );
 }
 

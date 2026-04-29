@@ -649,12 +649,15 @@ export const tools: Anthropic.Tool[] = [
     name: "generate_plan_hybrid",
     description:
       "**MÉTODO PRINCIPAL PARA GERAR PLANTAS NOVAS.** Gera uma planta arquitetônica profissional " +
-      "combinando GPT Image (geração visual) + Claude Vision (extração estrutural) + Arrow 1.1 (vetorização). " +
-      "Produz layout com qualidade de arquiteto profissional: paredes, portas, janelas e dimensões realistas. " +
-      "O resultado é 100% editável (drag, resize, chat, tools individuais). Leva ~15-30s. " +
-      "**SEMPRE prefira esta tool sobre create_apartment_layout** quando o cliente pedir um apartamento/casa/projeto novo, " +
-      "exceto se ele explicitamente pedir 'esboço rápido' ou 'rascunho'. " +
-      "Se falhar, caia em create_apartment_layout como fallback automático.",
+      "combinando GPT Image (geração visual) + Arrow 1.1 (vetorização). EXIBE EXATAMENTE o que esses " +
+      "modelos produzem — sem reinterpretação. Resultado: SVG vetorial com qualidade de arquiteto, " +
+      "renderizada como background no canvas. Cada artefato intermediário (PNG do GPT Image, SVG do " +
+      "Arrow) aparece inline no chat durante a execução para o usuário acompanhar. Leva ~15-30s. " +
+      "**SEMPRE prefira esta tool sobre create_apartment_layout** quando o cliente pedir um apartamento/" +
+      "casa/projeto novo, exceto se pedir 'esboço rápido' ou 'rascunho'. " +
+      "**LIMITAÇÃO**: plantas hybrid são read-only (rooms/walls/furniture ficam vazios — a planta é " +
+      "puramente SVG). Para alterar, regenere com novos parâmetros. Não chame move_furniture, " +
+      "set_floor_material, etc. sobre uma planta hybrid — não vai funcionar.",
     input_schema: {
       type: "object",
       properties: {

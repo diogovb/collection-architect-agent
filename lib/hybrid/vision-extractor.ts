@@ -1,3 +1,16 @@
+/**
+ * DEAD-CODE (V2). Mantido para referência futura.
+ *
+ * V1 do pipeline híbrido usava Claude Vision para extrair rooms/doors/etc da
+ * imagem do GPT Image e reconstruir uma FloorPlan retangular. O resultado
+ * ficava genérico — perdia toda a fidelidade visual da imagem original.
+ *
+ * V2 abandona essa rota: GPT Image → Arrow → SVG é exibido como está.
+ *
+ * Este arquivo NÃO é importado pelo pipeline atual. Pode ser reciclado em V3
+ * caso decidamos adicionar uma camada de "convert to editable" sobre as SVGs.
+ */
+
 import Anthropic from "@anthropic-ai/sdk";
 import type { FloorPlan } from "../types";
 import type { ParsedStructure, ParsedFurniture, HybridPipelineSpec } from "./types";

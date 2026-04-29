@@ -1,120 +1,129 @@
-import type { HybridPipelineSpec, HybridPipelineResult } from "./types";
+/**
+ * Pipeline Híbrido v2 — GPT Image + Arrow puros.
+ *
+ * Diferente da v1 (que usava Claude Vision para extrair rooms e reconstruir
+ * uma FloorPlan retangular), a v2 EXIBE EXATAMENTE o que GPT Image gera +
+ * Arrow vetoriza, sem reinterpretação. O canvas renderiza as SVGs como
+ * camadas de background.
+ */
+
+import type {
+  HybridPipelineSpec,
+  HybridPipelineResult,
+  PipelineProgressEvent,
+} from "./types";
 import { generateFloorPlanImage, generateFurnitureLayout } from "./openai-client";
 import { vectorizeImage } from "./arrow-client";
-import { extractStructure, extractFurniture } from "./vision-extractor";
-import { reconstructFloorPlan } from "./reconstruct";
 import { buildStructuralPrompt, buildFurniturePrompt } from "./prompts";
 
 export function isHybridEnabled(): boolean {
   return (
     process.env.HYBRID_PIPELINE_ENABLED === "true" &&
-    !!process.env.OPENAI_API_KEY &&
-    !!process.env.ANTHROPIC_API_KEY
+    !!process.env.OPENAI_API_KEY
   );
 }
 
 export async function runHybridPipeline(
   spec: HybridPipelineSpec,
+  onProgress?: (ev: PipelineProgressEvent) => void,
 ): Promise<HybridPipelineResult> {
   const t0 = Date.now();
   const issues: string[] = [];
 
-  // ---- Phase A: structural plan ----
-  const structPrompt = buildStructuralPrompt(spec);
+  // ---------- Phase A: Estrutura ----------
+  onProgress?.({ kind: "stage", label: "Gerando planta estrutural com GPT Image..." });
+  const structuralPrompt = buildStructuralPrompt(spec);
 
-  const tImageStart = Date.now();
+  const tImgA0 = Date.now();
   const structuralImage = await generateFloorPlanImage({
-    prompt: structPrompt,
+    prompt: structuralPrompt,
     size: "1536x1024",
     quality: "high",
   });
-  const tImageEnd = Date.now();
+  const tImgA1 = Date.now();
+  onProgress?.({ kind: "structural_image", image: structuralImage });
 
-  // Vision extraction + Arrow vectorization in parallel
-  const [structure, structuralSvg] = await Promise.all([
-    extractStructure(structuralImage, spec),
-    vectorizeSafe(structuralImage),
-  ]);
-  const tVisionEnd = Date.now();
-
-  if (structure.issues.length > 0) {
-    issues.push(...structure.issues);
+  onProgress?.({ kind: "stage", label: "Vetorizando com Arrow 1.1..." });
+  const tVecA0 = Date.now();
+  let structuralSvg: string | undefined;
+  try {
+    structuralSvg = await vectorizeImage({
+      image: structuralImage,
+      model: "arrow-1.1-max",
+    });
+    onProgress?.({ kind: "structural_svg", svg: structuralSvg });
+  } catch (e) {
+    issues.push(
+      `Arrow falhou na fase estrutural: ${e instanceof Error ? e.message : "erro desconhecido"}.`,
+    );
   }
+  const tVecA1 = Date.now();
 
-  // Reconstruct FloorPlan from extracted data
-  const tReconStart = Date.now();
-  let plan = reconstructFloorPlan(structure);
-  const tReconEnd = Date.now();
-
-  // ---- Phase B: furniture (optional) ----
+  // ---------- Phase B: Móveis (opcional) ----------
   let furnitureImage: Buffer | undefined;
   let furnitureSvg: string | undefined;
-  let tFurnitureEnd: number | undefined;
+  let tImgB0: number | undefined;
+  let tImgB1: number | undefined;
+  let tVecB0: number | undefined;
+  let tVecB1: number | undefined;
 
-  if (spec.includeFurniture && plan.rooms.length > 0) {
-    const tFurnStart = Date.now();
-    const roomNames = plan.rooms.map((r) => r.name);
-    const furnPrompt = buildFurniturePrompt(spec, roomNames);
+  if (spec.includeFurniture) {
+    onProgress?.({ kind: "stage", label: "Gerando layout de móveis com GPT Image..." });
+    const furniturePrompt = buildFurniturePrompt(spec, []); // sem rooms — GPT Image se vira
 
+    tImgB0 = Date.now();
     try {
       furnitureImage = await generateFurnitureLayout({
-        prompt: furnPrompt,
+        prompt: furniturePrompt,
         referenceImage: structuralImage,
       });
-
-      const [furnitureData, furnSvg] = await Promise.all([
-        extractFurniture(furnitureImage, plan),
-        vectorizeSafe(furnitureImage),
-      ]);
-
-      furnitureSvg = furnSvg ?? undefined;
-
-      if (furnitureData.items.length > 0) {
-        plan = reconstructFloorPlan(structure, furnitureData);
-      }
-
-      if (furnitureData.unrecognized.length > 0) {
-        issues.push(
-          `${furnitureData.unrecognized.length} móvel(is) não reconhecido(s).`,
-        );
-      }
+      onProgress?.({ kind: "furniture_image", image: furnitureImage });
     } catch (e) {
       issues.push(
-        `Falha na geração de móveis: ${e instanceof Error ? e.message : "erro desconhecido"}. Estrutura mantida.`,
+        `GPT Image falhou na fase de móveis: ${e instanceof Error ? e.message : "erro desconhecido"}.`,
       );
     }
-    tFurnitureEnd = Date.now();
+    tImgB1 = Date.now();
+
+    if (furnitureImage) {
+      onProgress?.({ kind: "stage", label: "Vetorizando móveis com Arrow 1.1..." });
+      tVecB0 = Date.now();
+      try {
+        furnitureSvg = await vectorizeImage({
+          image: furnitureImage,
+          model: "arrow-1.1-max",
+        });
+        onProgress?.({ kind: "furniture_svg", svg: furnitureSvg });
+      } catch (e) {
+        issues.push(
+          `Arrow falhou nos móveis: ${e instanceof Error ? e.message : "erro desconhecido"}.`,
+        );
+      }
+      tVecB1 = Date.now();
+    }
   }
 
-  const tTotal = Date.now();
+  const tEnd = Date.now();
 
   return {
-    plan,
-    structuralImage,
-    structuralSvg: structuralSvg ?? undefined,
-    furnitureImage,
-    furnitureSvg,
-    confidence: structure.confidence,
+    hybridLayers: {
+      structuralImageDataUrl: bufferToDataUrl(structuralImage),
+      structuralSvg,
+      furnitureImageDataUrl: furnitureImage ? bufferToDataUrl(furnitureImage) : undefined,
+      furnitureSvg,
+      worldFit: { widthMeters: 20, heightMeters: 12 },
+    },
     issues,
     timings: {
-      imageGen: tImageEnd - tImageStart,
-      vectorize: tVisionEnd - tImageEnd,
-      visionExtract: tVisionEnd - tImageEnd,
-      reconstruct: tReconEnd - tReconStart,
-      furnitureGen: tFurnitureEnd ? tFurnitureEnd - tReconEnd : undefined,
-      total: tTotal - t0,
+      structuralImage: tImgA1 - tImgA0,
+      structuralVectorize: tVecA1 - tVecA0,
+      furnitureImage: tImgB0 != null && tImgB1 != null ? tImgB1 - tImgB0 : undefined,
+      furnitureVectorize: tVecB0 != null && tVecB1 != null ? tVecB1 - tVecB0 : undefined,
+      total: tEnd - t0,
     },
   };
 }
 
-async function vectorizeSafe(image: Buffer): Promise<string | null> {
-  if (!process.env.QUIVER_API_KEY) return null;
-  try {
-    return await vectorizeImage({ image, model: "arrow-1.1-max" });
-  } catch (e) {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn("[hybrid] Arrow vectorization failed:", e);
-    }
-    return null;
-  }
+function bufferToDataUrl(buf: Buffer): string {
+  return `data:image/png;base64,${buf.toString("base64")}`;
 }

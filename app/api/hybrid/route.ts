@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         error:
-          "Pipeline híbrido desabilitado. Configure OPENAI_API_KEY, ANTHROPIC_API_KEY e HYBRID_PIPELINE_ENABLED=true em .env.local.",
+          "Pipeline híbrido desabilitado. Configure OPENAI_API_KEY e HYBRID_PIPELINE_ENABLED=true em .env.local.",
       },
       { status: 503 },
     );
@@ -35,14 +35,9 @@ export async function POST(req: Request) {
 
     return Response.json({
       ok: true,
-      plan: result.plan,
-      confidence: result.confidence,
+      hybridLayers: result.hybridLayers,
       issues: result.issues,
       timings: result.timings,
-      structuralImage: result.structuralImage.toString("base64"),
-      structuralSvg: result.structuralSvg ?? null,
-      furnitureImage: result.furnitureImage?.toString("base64") ?? null,
-      furnitureSvg: result.furnitureSvg ?? null,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Erro desconhecido.";

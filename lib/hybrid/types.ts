@@ -1,6 +1,45 @@
-import type { FloorPlan, FurnitureType, FloorMaterial, Wall } from "../types";
+import type { HybridLayers } from "../types";
 
-// ---- Parsed structure from Claude Vision ----
+// ---- Pipeline inputs ----
+
+export interface HybridPipelineSpec {
+  totalArea: number;
+  numBedrooms: number;
+  numBathrooms: number;
+  style?: "modern" | "classic" | "compact" | "luxury";
+  includeFurniture?: boolean;
+  additionalNotes?: string;
+}
+
+// ---- Progress events emitted during pipeline execution ----
+
+export type PipelineProgressEvent =
+  | { kind: "structural_image"; image: Buffer }
+  | { kind: "structural_svg"; svg: string }
+  | { kind: "furniture_image"; image: Buffer }
+  | { kind: "furniture_svg"; svg: string }
+  | { kind: "stage"; label: string };
+
+// ---- Pipeline result ----
+
+export interface HybridPipelineResult {
+  hybridLayers: HybridLayers;
+  issues: string[];
+  timings: {
+    structuralImage: number;
+    structuralVectorize: number;
+    furnitureImage?: number;
+    furnitureVectorize?: number;
+    total: number;
+  };
+}
+
+// ============================================================================
+// LEGACY (V1) — não usado pela pipeline atual.
+// Mantido para referência caso V2 reintroduza extração estrutural.
+// ============================================================================
+
+import type { FloorMaterial, FurnitureType, Wall } from "../types";
 
 export interface ParsedRoom {
   name: string;
@@ -16,9 +55,7 @@ export interface ParsedRoom {
 export interface ParsedDoor {
   roomName: string;
   wall: Wall;
-  /** 0..1 along the wall */
   position: number;
-  /** meters */
   size: number;
 }
 
@@ -33,7 +70,6 @@ export interface ParsedStructure {
   rooms: ParsedRoom[];
   doors: ParsedDoor[];
   windows: ParsedWindow[];
-  /** 0..1 overall confidence from Claude Vision */
   confidence: number;
   issues: string[];
 }
@@ -41,7 +77,6 @@ export interface ParsedStructure {
 export interface ParsedFurnitureItem {
   type: FurnitureType;
   roomName: string;
-  /** Relative position within the room (0..1) */
   relativeX: number;
   relativeY: number;
   rotation?: number;
@@ -53,33 +88,4 @@ export interface ParsedFurniture {
   items: ParsedFurnitureItem[];
   unrecognized: Array<{ roomName: string; description: string }>;
   confidence: number;
-}
-
-// ---- Pipeline inputs/outputs ----
-
-export interface HybridPipelineSpec {
-  totalArea: number;
-  numBedrooms: number;
-  numBathrooms: number;
-  style?: "modern" | "classic" | "compact" | "luxury";
-  includeFurniture?: boolean;
-  additionalNotes?: string;
-}
-
-export interface HybridPipelineResult {
-  plan: FloorPlan;
-  structuralImage: Buffer;
-  structuralSvg?: string;
-  furnitureImage?: Buffer;
-  furnitureSvg?: string;
-  confidence: number;
-  issues: string[];
-  timings: {
-    imageGen: number;
-    vectorize: number;
-    visionExtract: number;
-    reconstruct: number;
-    furnitureGen?: number;
-    total: number;
-  };
 }

@@ -226,40 +226,77 @@ export async function POST(req: Request) {
                   message = "Pipeline híbrido desabilitado. Use create_apartment_layout como fallback.";
                 } else {
                   try {
-                    send({ type: "text_delta", text: "Gerando planta profissional com IA generativa..." });
                     const hi = input as ToolInputs["generate_plan_hybrid"];
-                    const result = await runHybridPipeline({
-                      totalArea: hi.total_area,
-                      numBedrooms: hi.num_bedrooms,
-                      numBathrooms: hi.num_bathrooms,
-                      style: hi.style,
-                      includeFurniture: hi.include_furniture,
-                      additionalNotes: hi.additional_notes,
-                    });
-                    localPlan.rooms = result.plan.rooms;
-                    localPlan.doors = result.plan.doors;
-                    localPlan.windows = result.plan.windows;
-                    localPlan.furniture = result.plan.furniture;
-                    localPlan.stairs = result.plan.stairs ?? [];
-                    localPlan.columns = result.plan.columns ?? [];
-                    localPlan.annotations = result.plan.annotations ?? [];
-                    localPlan.northArrow = result.plan.northArrow ?? null;
-                    localPlan.millworkRuns = result.plan.millworkRuns ?? [];
+                    const result = await runHybridPipeline(
+                      {
+                        totalArea: hi.total_area,
+                        numBedrooms: hi.num_bedrooms,
+                        numBathrooms: hi.num_bathrooms,
+                        style: hi.style,
+                        includeFurniture: hi.include_furniture,
+                        additionalNotes: hi.additional_notes,
+                      },
+                      (ev) => {
+                        // Stream debug artifacts to the chat as they arrive.
+                        if (ev.kind === "stage") {
+                          send({ type: "text_delta", text: `\n_${ev.label}_\n` });
+                        } else if (ev.kind === "structural_image") {
+                          send({
+                            type: "debug_image",
+                            mediaType: "image/png",
+                            dataUrl: `data:image/png;base64,${ev.image.toString("base64")}`,
+                            label: "GPT Image — planta estrutural",
+                            phase: "structural",
+                          });
+                        } else if (ev.kind === "structural_svg") {
+                          send({
+                            type: "debug_svg",
+                            svg: ev.svg,
+                            label: "Arrow 1.1 — vetorização estrutural",
+                            phase: "structural",
+                          });
+                        } else if (ev.kind === "furniture_image") {
+                          send({
+                            type: "debug_image",
+                            mediaType: "image/png",
+                            dataUrl: `data:image/png;base64,${ev.image.toString("base64")}`,
+                            label: "GPT Image — layout de móveis",
+                            phase: "furniture",
+                          });
+                        } else if (ev.kind === "furniture_svg") {
+                          send({
+                            type: "debug_svg",
+                            svg: ev.svg,
+                            label: "Arrow 1.1 — vetorização de móveis",
+                            phase: "furniture",
+                          });
+                        }
+                      },
+                    );
+
+                    // Hybrid v2: NÃO reconstrói rooms/doors. A planta é puramente
+                    // visual (SVG do Arrow), exibida no canvas como background layer.
+                    localPlan.rooms = [];
+                    localPlan.doors = [];
+                    localPlan.windows = [];
+                    localPlan.furniture = [];
+                    localPlan.stairs = [];
+                    localPlan.columns = [];
+                    localPlan.annotations = [];
+                    localPlan.northArrow = null;
+                    localPlan.millworkRuns = [];
+                    localPlan.hybridLayers = result.hybridLayers;
+
                     ok = true;
-                    const pct = Math.round(result.confidence * 100);
+                    const layerInfo: string[] = [];
+                    if (result.hybridLayers.structuralSvg) layerInfo.push("estrutura vetorizada");
+                    if (result.hybridLayers.furnitureSvg) layerInfo.push("móveis vetorizados");
                     message =
-                      `Planta gerada com ${pct}% de confiança. ` +
-                      `${result.plan.rooms.length} cômodos, ${result.plan.doors.length} portas, ` +
-                      `${result.plan.windows.length} janelas` +
-                      (result.plan.furniture.length > 0 ? `, ${result.plan.furniture.length} móveis` : "") +
-                      `. Tempo: ${(result.timings.total / 1000).toFixed(1)}s.` +
+                      `Planta híbrida gerada (${(result.timings.total / 1000).toFixed(1)}s). ` +
+                      `Camadas: ${layerInfo.join(", ") || "nenhuma"}.` +
                       (result.issues.length > 0 ? ` Avisos: ${result.issues.join("; ")}` : "");
                     mutationsHappened = true;
-                    pendingVisualReview = true;
-                    // Sync the new plan to the client. The hybrid pipeline does NOT
-                    // go through the legacy applyTool path on the client (which
-                    // mirrors mutations from tool_input), so we must explicitly
-                    // push the full plan via plan_replace for the canvas to render.
+                    // Sync the new plan to the client.
                     send({ type: "plan_replace", plan: localPlan });
                   } catch (e) {
                     ok = false;
