@@ -129,6 +129,33 @@ export type FurnitureType =
   | "power_outlet"
   | "switch";
 
+/** Placement intent / constraints for a piece of furniture. Drives engine
+ *  validators (rejects placements that violate the constraints) and the
+ *  generative solver (computes a valid x/y from a high-level anchor like
+ *  "wall:north@mid" or "corner:NE"). */
+export interface FurniturePlacement {
+  /** Where the piece must be anchored relative to the room polygon.
+   *  - "wall": at least one face must touch a wall.
+   *  - "corner": two adjacent faces must touch walls.
+   *  - "wall-or-corner": prefers corner, falls back to wall.
+   *  - "free": no anchoring required (e.g. dining table). */
+  anchorTo: "wall" | "corner" | "wall-or-corner" | "free";
+  /** Required free space on each side, in meters. The engine checks the
+   *  rectangle (side × clearance) is empty of non-rug furniture and is
+   *  inside the room polygon. */
+  clearance: { front: number; back: number; left: number; right: number };
+  /** When `anchorTo === "wall"`, which face goes against the wall. The
+   *  rotation defaults so this face is on the wall side. */
+  wallFace: "back" | "left" | "right" | "any";
+  /** Ergonomic relations to other furniture types (kitchen triangle,
+   *  sofa↔TV viewing distance, etc.). Engine validates min/max distance
+   *  between geometric centers. `hint` shows up in error messages. */
+  relations?: Array<{ withType: FurnitureType; minDist: number; maxDist: number; hint: string }>;
+  /** Zoning category — feeds future combination validators (e.g. "bed
+   *  must coexist with at least one nightstand in bedrooms"). */
+  category: "anchor" | "filler" | "rug" | "decor" | "appliance" | "sanitary";
+}
+
 /** Optional sub-zone of a room with a different floor material. */
 export interface FloorZone {
   /** relative offset within the room, 0..1 */

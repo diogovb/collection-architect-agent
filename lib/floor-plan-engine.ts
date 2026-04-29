@@ -17,6 +17,7 @@ import type {
   Window as PlanWindow,
 } from "./types";
 import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furniture-svgs";
+import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
 
 // ---------- ID + helpers ----------
 
@@ -587,6 +588,29 @@ function doAddFurniture(
   const ry = clamp01(input.relative_y ?? 0.5);
   const fx = room.x + rx * Math.max(0, room.width - size.w);
   const fy = room.y + ry * Math.max(0, room.height - size.h);
+
+  // Rich placement validators (Phase C). Every furniture type carries
+  // metadata in lib/furniture-placement.ts: anchor (wall/corner/free),
+  // clearance per side, ergonomic relations (kitchen triangle, sofa-TV).
+  // These run BEFORE the legacy AABB overlap so we surface the most
+  // diagnostic error first — "geladeira precisa canto" beats "geladeira
+  // sobrepõe ar". Skipped for `add_furniture_group` calls (which use
+  // hand-curated layouts that already mostly respect the rules).
+  if (!opts?.skipOverlapCheck) {
+    const placementCheck = validatePlacement(
+      { type: t, x: fx, y: fy, width: size.w, height: size.h, label: input.label ?? def.label },
+      room,
+      plan,
+    );
+    if (!placementCheck.ok) {
+      return {
+        ok: false,
+        message:
+          `${def.label} em (rx=${rx.toFixed(2)}, ry=${ry.toFixed(2)}) ${placementCheck.reason} ` +
+          `${summarizeRoomLayout(room, plan)}`,
+      };
+    }
+  }
 
   // Overlap check (Bug "agente cria coisas em cima da outra"). Rejects
   // the placement if it intersects an existing furniture in the same

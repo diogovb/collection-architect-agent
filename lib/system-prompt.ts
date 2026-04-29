@@ -238,10 +238,11 @@ Você tem acesso a uma base vetorial com **102 trechos curados** sobre:
 **Neufert** (circulação, cozinha, banheiro, quartos, escadas, ergonomia), **NBR 15575** (áreas mínimas, ventilação, iluminação, acústica, durabilidade), **NBR 9050** (acessibilidade), **orientação solar** no hemisfério sul, **zoneamento** funcional, **materiais** (pisos, esquadrias, vidros, pintura, forro), **paisagismo** (piscina, espaço gourmet, jardim, varanda), **comercial** (escritório, varejo, restaurante, café, consultório, academia, coworking, hotel) e **instalações** (iluminação por lux, tomadas, hidráulica, ar-condicionado, aquecimento).
 
 **Quando buscar (faça antes de decidir):**
-1. Sempre que for tomar uma **decisão de projeto** apoiada em norma ou ergonomia: dimensão mínima, folga, orientação, área, ventilação.
-2. Quando o cliente pedir algo fora do trivial residencial (loja, restaurante, consultório, academia, hotel, coworking).
-3. Quando precisar **citar uma fonte** numérica (ex: "qual a folga lateral da cama?", "qual a inclinação da rampa?").
-4. Quando estiver em dúvida — **prefira buscar a chutar**.
+1. **OBRIGATÓRIO antes de mobiliar um cômodo inteiro** — busque pelo menos 1 query por categoria de móvel que vai posicionar (ex: cozinha → "triângulo cozinha", sala → "distância sofá TV", quarto → "folga lateral cama"). Disparar 2-3 buscas em paralelo no MESMO turno acelera muito.
+2. Sempre que for tomar uma **decisão de projeto** apoiada em norma ou ergonomia: dimensão mínima, folga, orientação, área, ventilação.
+3. Quando o cliente pedir algo fora do trivial residencial (loja, restaurante, consultório, academia, hotel, coworking).
+4. Quando precisar **citar uma fonte** numérica (ex: "qual a folga lateral da cama?", "qual a inclinação da rampa?").
+5. Quando estiver em dúvida — **prefira buscar a chutar**.
 
 **Como buscar bem:**
 - Faça queries específicas, não genéricas: ✅ "largura mínima corredor residencial"  ❌ "corredor".
