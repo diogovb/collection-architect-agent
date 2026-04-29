@@ -37,6 +37,18 @@ function getSupabase(): SupabaseClient | null {
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Exponential backoff with optional Retry-After honor. Voyage's free
+ *  tier returns 429 at 3 RPM (no payment) or briefly during the
+ *  propagation window after adding a payment method. The seed used to
+ *  abort on the first 429 — now we retry up to MAX_RETRIES with growing
+ *  delays (and respect Retry-After if the API sends it). */
+const MAX_RETRIES = 6;
+const BASE_BACKOFF_MS = 22_000; // safely above 60 / 3 RPM = 20s
+
 async function callVoyage(
   inputs: string[],
   inputType: "query" | "document"
@@ -45,27 +57,43 @@ async function callVoyage(
   if (!apiKey) {
     throw new Error("VOYAGE_API_KEY ausente.");
   }
-  const res = await fetch(VOYAGE_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      input: inputs,
-      model: VOYAGE_MODEL,
-      input_type: inputType,
-      output_dimension: VOYAGE_DIMENSIONS,
-    }),
-  });
-  if (!res.ok) {
+  let attempt = 0;
+  while (true) {
+    const res = await fetch(VOYAGE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        input: inputs,
+        model: VOYAGE_MODEL,
+        input_type: inputType,
+        output_dimension: VOYAGE_DIMENSIONS,
+      }),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as VoyageResponse;
+      return data.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+    }
+    // Retryable: 429 (rate limit) or 5xx (transient server error).
+    const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
     const txt = await res.text();
-    throw new Error(`Voyage API ${res.status}: ${txt}`);
+    if (!retryable || attempt >= MAX_RETRIES - 1) {
+      throw new Error(`Voyage API ${res.status}: ${txt}`);
+    }
+    // Honor Retry-After header if present (seconds), otherwise exponential backoff.
+    const ra = res.headers.get("retry-after");
+    const raSec = ra ? Math.max(0, Number(ra)) : NaN;
+    const wait = !Number.isNaN(raSec) && raSec > 0
+      ? raSec * 1000
+      : BASE_BACKOFF_MS * Math.pow(1.5, attempt);
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(`[voyage] ${res.status} — retry em ${Math.round(wait / 1000)}s (tentativa ${attempt + 1}/${MAX_RETRIES})`);
+    }
+    await sleep(wait);
+    attempt += 1;
   }
-  const data = (await res.json()) as VoyageResponse;
-  return data.data
-    .sort((a, b) => a.index - b.index)
-    .map((d) => d.embedding);
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
@@ -120,6 +148,13 @@ export async function seedKnowledgeBase(): Promise<SeedResult> {
   let inserted = 0;
   let batches = 0;
 
+  // Spacing between batches so we don't burst right against the 3 RPM
+  // ceiling that Voyage applies in free tier or during the post-billing
+  // propagation window. callVoyage retries on 429 anyway (with proper
+  // Retry-After honor), but baseline spacing avoids forcing the retries
+  // to happen at all in the common case.
+  const INTER_BATCH_MS = 1_500;
+
   for (let i = 0; i < chunks.length; i += BATCH) {
     const slice = chunks.slice(i, i + BATCH);
     const inputs = slice.map((c) => `${c.title}\n\n${c.content}`);
@@ -138,6 +173,7 @@ export async function seedKnowledgeBase(): Promise<SeedResult> {
     }
     inserted += rows.length;
     batches += 1;
+    if (i + BATCH < chunks.length) await sleep(INTER_BATCH_MS);
   }
 
   return { total: chunks.length, inserted, batches };
