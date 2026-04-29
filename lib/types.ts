@@ -295,6 +295,7 @@ export type ToolName =
   | "add_door"
   | "add_window"
   | "add_furniture"
+  | "place_furniture_intent"
   | "remove_furniture"
   | "set_floor_material"
   | "set_railing_material"
@@ -376,6 +377,19 @@ export interface ToolInputs {
     label?: string;
     relative_x?: number;
     relative_y?: number;
+  };
+  place_furniture_intent: {
+    room_name: string;
+    items: Array<{
+      type: FurnitureType;
+      label?: string;
+      anchor:
+        | "wall:north" | "wall:south" | "wall:east" | "wall:west"
+        | "corner:NW" | "corner:NE" | "corner:SW" | "corner:SE"
+        | "center" | "free";
+      position?: "start" | "mid" | "end";
+      rotation?: number;
+    }>;
   };
   remove_furniture: { furniture_id?: string; label?: string };
   set_floor_material: { room_name: string; material: FloorMaterial };

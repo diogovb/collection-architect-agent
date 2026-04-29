@@ -276,7 +276,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_furniture",
     description:
-      "Adiciona um móvel num cômodo. relative_x/relative_y são 0..1 dentro do cômodo (0,0 = canto superior-esquerdo).",
+      "Adiciona UM ÚNICO móvel num cômodo. relative_x/relative_y são 0..1 dentro do cômodo (0,0 = canto superior-esquerdo). PREFIRA `place_furniture_intent` quando for mobiliar um cômodo INTEIRO — ele aceita âncoras semânticas (wall:north@mid, corner:NE) e o solver calcula coords respeitando clearances + relações ergonômicas.",
     input_schema: {
       type: "object",
       properties: {
@@ -287,6 +287,46 @@ export const tools: Anthropic.Tool[] = [
         relative_y: { type: "number", default: 0.5 },
       },
       required: ["room_name", "furniture_type"],
+    },
+  },
+  {
+    name: "place_furniture_intent",
+    description:
+      "Posiciona MÚLTIPLOS móveis num cômodo declarando INTENÇÃO em vez de coordenadas. Para cada item, escolha um âncora semântico (`wall:north`, `wall:south`, `wall:east`, `wall:west`, `corner:NW`, `corner:NE`, `corner:SW`, `corner:SE`, `center`, `free`) e opcionalmente position (start/mid/end ao longo da parede). O solver calcula coords absolutos respeitando: encosto-de-parede, clearance frontal/lateral, arco da porta, distância de janela, triângulo de cozinha, distância sofá-TV. Use isto para mobiliação completa de um cômodo. Múltiplos itens no MESMO âncora são distribuídos automaticamente ao longo da parede.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", enum: FURNITURE_TYPES },
+              label: { type: "string" },
+              anchor: {
+                type: "string",
+                enum: [
+                  "wall:north", "wall:south", "wall:east", "wall:west",
+                  "corner:NW", "corner:NE", "corner:SW", "corner:SE",
+                  "center", "free",
+                ],
+              },
+              position: {
+                type: "string",
+                enum: ["start", "mid", "end"],
+                description: "Posição ao longo da parede ancorada. Default 'mid'.",
+              },
+              rotation: {
+                type: "number",
+                description: "Rotação opcional em graus (múltiplos de 90).",
+              },
+            },
+            required: ["type", "anchor"],
+          },
+        },
+      },
+      required: ["room_name", "items"],
     },
   },
   {

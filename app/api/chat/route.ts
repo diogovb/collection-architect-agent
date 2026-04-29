@@ -17,6 +17,7 @@ import { renderPlanPng } from "@/lib/canvas/render-png";
 const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
   "add_furniture",
   "add_furniture_group",
+  "place_furniture_intent",
   "furnish_room",
   "move_furniture",
   "swap_furniture",

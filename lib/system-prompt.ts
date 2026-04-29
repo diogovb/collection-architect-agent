@@ -173,17 +173,26 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 - **mirror_layout** (axis: x|y), **rotate_layout** (90/180/270). Útil pra ajustar orientação solar.
 
 ## Móveis
-- **add_furniture** (atômico), **add_furniture_group** (atalho), **swap_furniture** (troca tipo).
-- **remove_furniture**, **move_furniture**.
 
-### REGRA DE OURO — POSICIONAMENTO SEM SOBREPOSIÇÃO
-Todo \`add_furniture\` chega com \`relative_x\` e \`relative_y\` (0 a 1, fração da posição dentro do cômodo). Antes de chamar a tool:
+### REGRA DE OURO — USE place_furniture_intent PARA MOBILIAR CÔMODOS INTEIROS
+A ferramenta **place_furniture_intent** é a forma certa de mobiliar um cômodo — você declara INTENÇÃO semântica (parede norte, canto NE, centro) e o solver determinístico calcula coords absolutos respeitando todas as regras: encosto-de-parede, clearance frontal/lateral, arco de porta, distância de janela, triângulo de cozinha, distância sofá-TV.
 
-1. **Sempre comece pelas peças "âncora"** que ficam encostadas em paredes (cama no fundo, sofá em uma das paredes, fogão na bancada). Use rx/ry nos extremos: 0.0 / 1.0 / 0.5.
-2. **Mentalize o cômodo como uma grade** — para um quarto 3×4m com cama 1.6×2m colocada em rx=0.5, ry=0.0, sobra 0.7m de cada lado e 2m abaixo. NÃO coloque uma cômoda em rx=0.5/ry=0.5: vai sobrepor a cama. Use rx=0.0/ry=0.6 ou rx=1.0/ry=0.6.
-3. **Distribua AO LONGO de uma parede** quando o cômodo é estreito: sequência de móveis em ry=0 com rx=0.0, 0.3, 0.6, 0.9 — cada um em sua faixa, sem se sobrepor.
-4. **Se a tool retornar erro de sobreposição**, a mensagem listará TODOS os móveis já colocados com rx/ry e dimensões. Use isso para escolher um espaço livre na próxima chamada — NÃO tente o mesmo rx/ry.
-5. **NUNCA** chame \`remove_furniture\` + \`add_furniture\` em sequência só para reposicionar — use \`move_furniture\` que é mais barato e o user vê uma só ação.
+**Quando usar place_furniture_intent (SEMPRE que possível):**
+- Mobiliar um cômodo recém-criado.
+- Reorganizar layout de um cômodo existente.
+- Quando o user pede "mobília a sala", "põe os móveis da cozinha", etc.
+
+**Estrutura típica de um cômodo:**
+- **Cozinha (4-12m²)**: \`fogão@wall:east@mid\`, \`pia@wall:east@end\` (ou wall:south), \`geladeira@corner:NE\` (ou corner:SE). Triângulo de trabalho fluido. Microondas opcional em outra parede.
+- **Sala (15-30m²)**: \`sofa_3seat@wall:south@mid\` (ou parede com mais comprimento livre), \`tv_console@wall:north@mid\` (oposta ao sofá), opcional \`armchair@corner:NW\` ou \`coffee_table@center\`, \`rug_rect@center\`.
+- **Quarto casal (10-16m²)**: \`bed_double@wall:north@mid\` ou \`bed_king@wall:north@mid\`, \`nightstand@wall:north@start\` e \`nightstand@wall:north@end\` (laterais à cama), \`wardrobe@wall:south@mid\`, opcional \`dresser@wall:east\`.
+- **Banheiro (3-7m²)**: \`shower_square@corner:NW\` (ou outro canto), \`toilet@wall:south\`, \`sink_pedestal@wall:east\` (ou sink_vanity).
+
+**add_furniture (legacy)** — só use para AJUSTES de UM ÚNICO item depois (ex: "adiciona uma poltrona no canto"). Para mobiliação completa prefira sempre place_furniture_intent.
+
+**add_furniture_group / furnish_room** — atalhos para layouts pré-fabricados. Use somente quando place_furniture_intent não couber.
+
+**remove_furniture, move_furniture, swap_furniture** — operações pontuais.
 
 ## Anotações (qualidade arquitetônica)
 - **add_dimension** — cota entre dois pontos (x1,y1 → x2,y2).

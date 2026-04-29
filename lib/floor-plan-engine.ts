@@ -18,6 +18,7 @@ import type {
 } from "./types";
 import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furniture-svgs";
 import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
+import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
 
 // ---------- ID + helpers ----------
 
@@ -129,6 +130,8 @@ export function applyTool<T extends ToolName>(
         return doSplitFloor(plan, input as ToolInputs["split_floor"]);
       case "add_furniture":
         return doAddFurniture(plan, input as ToolInputs["add_furniture"]);
+      case "place_furniture_intent":
+        return doPlaceFurnitureIntent(plan, input as ToolInputs["place_furniture_intent"]);
       case "add_furniture_group":
         return doAddFurnitureGroup(plan, input as ToolInputs["add_furniture_group"]);
       case "swap_furniture":
@@ -683,6 +686,42 @@ function findFurnitureOverlap(
     if (overlap) return f;
   }
   return null;
+}
+
+/** DSL handler for `place_furniture_intent` — multi-item generative
+ *  placement. The solver computes coords from semantic anchors (wall:N,
+ *  corner:NE, etc.), validates each piece, then commits the survivors
+ *  via direct push (skipping doAddFurniture's per-item validators since
+ *  the solver already ran them with full sibling awareness). */
+function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furniture_intent"]): ApplyResult {
+  const room = findRoom(plan, input.room_name);
+  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    return { ok: false, message: "place_furniture_intent: lista 'items' vazia." };
+  }
+  const result = solvePlacement({ room, items: input.items, plan });
+  for (const s of result.solved) {
+    const def = FURN_DEFS[s.intent.type];
+    if (!def) continue;
+    const item: Furniture = {
+      id: nextId("furn"),
+      roomId: room.id,
+      type: s.intent.type,
+      label: s.intent.label ?? def.label,
+      x: s.x,
+      y: s.y,
+      width: s.width,
+      height: s.height,
+      ...(s.intent.rotation ? { rotation: s.intent.rotation } : {}),
+    };
+    plan.furniture.push(item);
+  }
+  const message = formatSolverResult(room, plan, result);
+  // Partial success is treated as ok = true with a descriptive message
+  // so the agent sees what landed and what didn't, and can retry the
+  // failed items with different anchors. Total failure (0 placed) is
+  // treated as ok = false.
+  return { ok: result.solved.length > 0, message };
 }
 
 function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): ApplyResult {
