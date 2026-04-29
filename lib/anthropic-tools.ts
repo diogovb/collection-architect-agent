@@ -643,4 +643,38 @@ export const tools: Anthropic.Tool[] = [
       required: ["query"],
     },
   },
+
+  // ============ HYBRID PIPELINE ============
+  {
+    name: "generate_plan_hybrid",
+    description:
+      "Gera uma planta profissional usando IA generativa (GPT Image + Arrow). " +
+      "Produz layout realista com paredes, portas, janelas e dimensões em qualidade visual superior. " +
+      "O resultado é editável como qualquer planta (drag, resize, chat). " +
+      "Mais lento que create_apartment_layout (~15-30s). " +
+      "Use quando o cliente pedir qualidade visual profissional, layout complexo ou resultado de alta fidelidade. " +
+      "Requer OPENAI_API_KEY e HYBRID_PIPELINE_ENABLED=true.",
+    input_schema: {
+      type: "object",
+      properties: {
+        total_area: { type: "number", description: "Área total em m²." },
+        num_bedrooms: { type: "number", description: "Número de quartos." },
+        num_bathrooms: { type: "number", description: "Número de banheiros." },
+        style: {
+          type: "string",
+          enum: ["modern", "classic", "compact", "luxury"],
+          description: "Estilo do apartamento.",
+        },
+        include_furniture: {
+          type: "boolean",
+          description: "Se true, gera também o layout de móveis.",
+        },
+        additional_notes: {
+          type: "string",
+          description: "Notas adicionais do cliente sobre o projeto.",
+        },
+      },
+      required: ["total_area", "num_bedrooms", "num_bathrooms"],
+    },
+  },
 ];

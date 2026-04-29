@@ -325,9 +325,15 @@ Ajustes em run existente: trocar uma porta de armário, mudar cooktop 4 bocas pr
 - **add_north_arrow** — rosa-dos-ventos. **Sempre adicione uma** quando finalizar um projeto novo.
 
 ## High-level
-- **create_apartment_layout** — apartamento completo com corredor automático.
+- **create_apartment_layout** — apartamento completo com corredor automático. Rápido (~1s), bom para iteração e esboços.
+- **generate_plan_hybrid** — gera planta profissional usando IA generativa (GPT Image + Arrow). Qualidade visual superior, mais lento (~15-30s). Use quando o cliente pedir qualidade alta, layout complexo ou resultado de alta fidelidade. O resultado é totalmente editável. Requer OPENAI_API_KEY configurada.
 - **furnish_room** — mobiliário automático por cômodo.
 - **clear_all** — confirme antes.
+
+### Quando usar generate_plan_hybrid vs create_apartment_layout
+- Use **generate_plan_hybrid** quando o cliente pedir "qualidade profissional", "planta realista", "projeto de alta fidelidade", layout complexo, ou quando quiser surpreender com resultado visual.
+- Use **create_apartment_layout** para esboços rápidos, iteração ágil, ou quando o cliente quer resultado imediato.
+- Se generate_plan_hybrid falhar, use create_apartment_layout como fallback automático.
 
 # ====================================
 # PRINCÍPIOS DE PROJETO
