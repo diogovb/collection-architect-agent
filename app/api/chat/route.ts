@@ -44,6 +44,9 @@ const tools = legacyTools as Anthropic.Tool[];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Hybrid pipeline com thinking mode pode levar até ~60s (2× ~30s).
+// Sem isso o Vercel mata a função em 10s no plano free.
+export const maxDuration = 120;
 
 const DEFAULT_MODEL = "claude-opus-4-7";
 const ALLOWED_MODELS = new Set(["claude-opus-4-7", "claude-sonnet-4-6"]);
