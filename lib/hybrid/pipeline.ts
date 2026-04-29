@@ -37,8 +37,9 @@ export async function runHybridPipeline(
   const tImgA0 = Date.now();
   const structuralImage = await generateFloorPlanImage({
     prompt: structuralPrompt,
-    size: "1536x1024",
+    size: "2048x2048",
     quality: "high",
+    qualityMode: "thinking",
   });
   const tImgA1 = Date.now();
   onProgress?.({ kind: "structural_image", image: structuralImage });
@@ -76,6 +77,9 @@ export async function runHybridPipeline(
       furnitureImage = await generateFurnitureLayout({
         prompt: furniturePrompt,
         referenceImage: structuralImage,
+        size: "2048x2048",
+        quality: "high",
+        qualityMode: "thinking",
       });
       onProgress?.({ kind: "furniture_image", image: furnitureImage });
     } catch (e) {
