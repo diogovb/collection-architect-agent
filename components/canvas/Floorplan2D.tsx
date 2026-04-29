@@ -155,6 +155,17 @@ export function Floorplan2D({ onLoadExample }: Props) {
     () => Object.values(nodes).filter((n): n is FurnitureNode => n.type === "furniture"),
     [nodes]
   );
+  // Runs that have a bancada_continuous — used pelo MillworkModulePiece
+  // pra esconder lower cabinets/drawers/oven_built_in/etc. abaixo da
+  // bancada (regra arquitetônica de planta baixa: o plano de corte a
+  // ~1m não pega o que está sob a bancada).
+  const runsWithBancada = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of furniture) {
+      if (f.catalogId === "bancada_continuous" && f.runId) set.add(f.runId);
+    }
+    return set;
+  }, [furniture]);
   // Style Guide §8 — auto-dimensions need to reflect the LIVE wall positions
   // during drag, not the committed ones. We re-run computeEnvelopeDimensions
   // on the effective walls (with liveTransforms applied) and overlay the
@@ -983,7 +994,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
                   onClick={(e) => { e.stopPropagation(); toggleSelection(f.id, e.shiftKey); }}
                   style={{ cursor: tool === "select" ? "grab" : "pointer" }}
                 >
-                  <FurniturePiece w={w} d={d} style={fStyle} stroke={stroke} selected={isSel} catalogId={f.catalogId} furnitureNode={f} />
+                  <FurniturePiece w={w} d={d} style={fStyle} stroke={stroke} selected={isSel} catalogId={f.catalogId} furnitureNode={f} runsWithBancada={runsWithBancada} />
                 </g>
               );
             })}
@@ -1556,9 +1567,35 @@ interface MillworkModulePieceProps {
   node?: FurnitureNode;
   stroke: string;
   selected: boolean;
+  /** Set of runIds that have a bancada_continuous. Modules belonging to
+   *  one of those runs AND classified as "hidden under counter" render
+   *  as a faint dashed outline only — architectural plan-cut convention
+   *  (lower cabinets sit below the countertop and aren't visible from
+   *  above; only cooktop/sink pierce the slab). */
+  runsWithBancada?: Set<string>;
 }
 
-function MillworkModulePiece({ w, d, kind, catalogId, node, stroke, selected }: MillworkModulePieceProps) {
+/** Modules that disappear under a continuous bancada in plan view. The
+ *  cooktop and sink puncture the slab so they DO show; everything else
+ *  in this set is hidden by the countertop above. Architectural CAD
+ *  convention. */
+const HIDDEN_UNDER_BANCADA = new Set<string>([
+  "module_cabinet_door",
+  "module_cabinet_door_double",
+  "module_cabinet_drawer_3",
+  "module_cabinet_drawer_4",
+  "module_cabinet_open",
+  "module_cabinet_glass",
+  "module_gap_filler",
+  "module_corner_carrousel",
+  "module_oven_built_in",
+  "module_dishwasher_niche",
+  "module_microwave_niche",
+  "module_wine_cellar",
+  "module_vanity_drawer_3",
+]);
+
+function MillworkModulePiece({ w, d, kind, catalogId, node, stroke, selected, runsWithBancada }: MillworkModulePieceProps) {
   // Bancada: special render with material hatch + cutouts.
   if (kind === "millwork-countertop") {
     const material =
@@ -1624,6 +1661,36 @@ function MillworkModulePiece({ w, d, kind, catalogId, node, stroke, selected }: 
         <line x1={-w / 2} y1={-d / 2} x2={w / 2} y2={d / 2} stroke={PALETTE.ink} strokeOpacity={0.3} strokeWidth={0.3} strokeDasharray="0.05 0.04" vectorEffect="non-scaling-stroke" />
         <line x1={w / 2} y1={-d / 2} x2={-w / 2} y2={d / 2} stroke={PALETTE.ink} strokeOpacity={0.3} strokeWidth={0.3} strokeDasharray="0.05 0.04" vectorEffect="non-scaling-stroke" />
       </g>
+    );
+  }
+
+  // Architectural plan-cut: lower cabinets / drawers / built-in oven /
+  // dishwasher / microwave niche que ficam SOB uma bancada contínua
+  // somem da vista (estão abaixo do plano de corte horizontal a ~1m).
+  // Apenas o que perfura ou ultrapassa a bancada é visível: cooktop com
+  // bocas, pia com cubas, geladeira/torre forno full-height. Os modules
+  // escondidos viram apenas um contorno fino tracejado — o user e o
+  // agente sabem que tem armário ali, mas o detalhe de gavetas/portas
+  // só apareceria em vista de elevação, não em planta.
+  const isHiddenUnderBancada =
+    catalogId &&
+    HIDDEN_UNDER_BANCADA.has(catalogId) &&
+    node?.runId &&
+    runsWithBancada?.has(node.runId);
+  if (isHiddenUnderBancada) {
+    return (
+      <rect
+        x={-w / 2}
+        y={-d / 2}
+        width={w}
+        height={d}
+        fill="none"
+        stroke={selected ? PALETTE.accent : PALETTE.ink}
+        strokeOpacity={selected ? 0.9 : 0.25}
+        strokeWidth={selected ? 1.0 : 0.4}
+        strokeDasharray="0.06 0.06"
+        vectorEffect="non-scaling-stroke"
+      />
     );
   }
 
@@ -1713,9 +1780,10 @@ interface FurniturePieceProps {
   selected: boolean;
   catalogId?: string;
   furnitureNode?: FurnitureNode;
+  runsWithBancada?: Set<string>;
 }
 
-function FurniturePiece({ w, d, style, stroke, selected, catalogId, furnitureNode }: FurniturePieceProps) {
+function FurniturePiece({ w, d, style, stroke, selected, catalogId, furnitureNode, runsWithBancada }: FurniturePieceProps) {
   const halfW = w / 2;
   const halfD = d / 2;
   const baseRx = Math.min(style.radius, Math.min(halfW, halfD) * 0.4);
@@ -1742,6 +1810,7 @@ function FurniturePiece({ w, d, style, stroke, selected, catalogId, furnitureNod
         node={furnitureNode}
         stroke={stroke}
         selected={selected}
+        runsWithBancada={runsWithBancada}
       />
     );
   }
