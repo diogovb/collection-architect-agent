@@ -127,7 +127,70 @@ export type FurnitureType =
   | "light_ceiling"
   | "light_spot"
   | "power_outlet"
-  | "switch";
+  | "switch"
+  // =========================================================
+  // MARCENARIA MODULAR (Fase A — building blocks for runs)
+  // Each ModuleKind below also exists as a FurnitureType so the engine
+  // can render module instances as Furniture entries with metadata
+  // (runId + cutouts). See lib/millwork-modules.ts for defaults.
+  // =========================================================
+  // ---- Storage genérico (qualquer cômodo) ----
+  | "module_cabinet_door"        // armário 1 porta (40-60cm)
+  | "module_cabinet_door_double" // armário 2 portas (80-120cm)
+  | "module_cabinet_drawer_3"    // 3 gavetas
+  | "module_cabinet_drawer_4"    // 4 gavetas
+  | "module_cabinet_open"        // nicho aberto / prateleiras
+  | "module_cabinet_glass"       // porta de vidro / vitrine
+  | "module_corner_carrousel"    // canto giratório
+  | "module_gap_filler"          // preenchimento
+  // ---- Cozinha ----
+  | "module_cooktop_4"           // cooktop 4 bocas (60cm)
+  | "module_cooktop_5"           // cooktop 5 bocas (75cm)
+  | "module_cooktop_induction"   // cooktop indução (60cm)
+  | "module_oven_built_in"       // forno embutido base (60cm)
+  | "module_oven_tower"          // torre forno+microondas (60cm full-height)
+  | "module_microwave_niche"     // nicho microondas (60cm em altura)
+  | "module_fridge_niche"        // geladeira inverter single (70cm)
+  | "module_fridge_niche_double" // geladeira side-by-side (90cm)
+  | "module_fridge_french_door"  // french door (90cm)
+  | "module_sink_single"         // pia simples embutida (60cm)
+  | "module_sink_double"         // pia dupla embutida (120cm)
+  | "module_dishwasher_niche"    // lava-louças (60cm)
+  | "module_wine_cellar"         // adega (60cm)
+  | "module_pantry_tall"         // despensa full-height (60cm)
+  // ---- Banheiro ----
+  | "module_vanity_sink_single"
+  | "module_vanity_sink_double"
+  | "module_vanity_drawer_3"
+  | "module_wall_hung_toilet"    // vaso suspenso com caixa embutida
+  // ---- Closet ----
+  | "module_closet_hanging_full"
+  | "module_closet_hanging_double"
+  | "module_closet_drawer_4"
+  | "module_closet_drawer_6"
+  | "module_closet_shoe"
+  | "module_closet_shelves"
+  | "module_closet_jewelry"
+  // ---- Lavanderia ----
+  | "module_washer_niche"
+  | "module_dryer_niche"
+  | "module_washer_dryer_stack"
+  | "module_laundry_tank"
+  | "module_drying_rack_built_in"
+  // ---- Churrasqueira / gourmet ----
+  | "module_bbq_built_in"
+  | "module_pizza_oven"
+  | "module_outdoor_cooktop"
+  | "module_outdoor_sink"
+  | "module_wine_fridge_outdoor"
+  // ---- Sala / TV wall ----
+  | "module_tv_console"
+  | "module_tv_panel_built_in"
+  // ---- Composição (criados pelo engine, não pelo agente) ----
+  | "bancada_continuous"         // countertop spanning the run
+  | "module_upper_cabinet"       // armário superior tracejado
+  | "module_upper_glass"         // armário superior vidro
+  | "hood_built_in";             // exaustor sobre cooktop
 
 /** Placement intent / constraints for a piece of furniture. Drives engine
  *  validators (rejects placements that violate the constraints) and the
@@ -225,6 +288,107 @@ export interface Furniture {
   width: number;
   height: number;
   rotation?: number;
+  /** Optional: when this furniture is a module that belongs to a
+   *  millwork run (kitchen counter, vanity, closet wall, BBQ counter…),
+   *  this points back to the parent run so we can group/remove together
+   *  and keep semantic context. Set by `add_millwork_run`. */
+  runId?: string;
+  /** Optional: only meaningful for type === "bancada_continuous". Lists
+   *  cutouts in the slab where sinks / cooktops break the surface. Each
+   *  entry is in metres along the run's length. */
+  cutouts?: Array<{ offset: number; width: number; kind: "sink" | "cooktop" | "other" }>;
+  /** Optional: per-furniture material/finish overrides. Set by the run
+   *  engine when materializing modules so the renderer picks the right
+   *  hatch / colour / texture. */
+  finish?: {
+    bodyMaterial?: BodyMaterial;
+    countertopMaterial?: CountertopMaterial;
+    doorStyle?: DoorStyle;
+    handleStyle?: HandleStyle;
+  };
+}
+
+/** ------------ Marcenaria modular (Fase A) ------------ */
+
+export type ModuleKind =
+  // storage genérico
+  | "cabinet_door" | "cabinet_door_double"
+  | "cabinet_drawer_3" | "cabinet_drawer_4"
+  | "cabinet_open" | "cabinet_glass"
+  | "corner_carrousel" | "gap_filler"
+  // cozinha
+  | "cooktop_4" | "cooktop_5" | "cooktop_induction"
+  | "oven_built_in" | "oven_tower" | "microwave_niche"
+  | "fridge_niche" | "fridge_niche_double" | "fridge_french_door"
+  | "sink_single" | "sink_double"
+  | "dishwasher_niche" | "wine_cellar" | "pantry_tall"
+  // banheiro
+  | "vanity_sink_single" | "vanity_sink_double" | "vanity_drawer_3"
+  | "wall_hung_toilet"
+  // closet
+  | "closet_hanging_full" | "closet_hanging_double"
+  | "closet_drawer_4" | "closet_drawer_6"
+  | "closet_shoe" | "closet_shelves" | "closet_jewelry"
+  // lavanderia
+  | "washer_niche" | "dryer_niche" | "washer_dryer_stack"
+  | "laundry_tank" | "drying_rack_built_in"
+  // churrasqueira / gourmet
+  | "bbq_built_in" | "pizza_oven" | "outdoor_cooktop"
+  | "outdoor_sink" | "wine_fridge_outdoor"
+  // sala
+  | "tv_console" | "tv_panel_built_in";
+
+export type CountertopMaterial =
+  | "granito_preto" | "granito_branco"
+  | "marmore_carrara" | "marmore_travertino"
+  | "quartzo_branco" | "quartzo_preto"
+  | "porcelanato" | "madeira_macica" | "inox";
+
+export type BodyMaterial =
+  | "MDF_branco" | "MDF_amadeirado"
+  | "laca_branca" | "laca_preta"
+  | "freijo" | "carvalho" | "ipe";
+
+export type DoorStyle = "shaker" | "flat" | "panel" | "glass" | "ripado";
+export type HandleStyle = "knob" | "bar_horizontal" | "bar_vertical" | "integrated" | "none";
+
+export type RunType =
+  | "kitchen_counter" | "bathroom_vanity" | "closet"
+  | "laundry_counter" | "bbq_counter" | "tv_wall"
+  | "library" | "custom";
+
+export interface MillworkModule {
+  kind: ModuleKind;
+  width: number; // metres
+  label?: string;
+  hood_above?: boolean;     // só pra cooktop_*
+  window_above?: boolean;   // info informativa
+}
+
+export interface MillworkRun {
+  id: string;
+  roomId: string;
+  /** "freestanding" runs have position + orientation instead of wall. */
+  wall: Wall | "freestanding";
+  position?: { x: number; y: number };
+  orientation?: Wall; // qual face fica "atrás" quando freestanding
+  startOffset: number;
+  type: RunType;
+  modules: MillworkModule[];
+  countertop?: {
+    material: CountertopMaterial;
+    overhangFront: number;
+    hasBacksplash: boolean;
+  };
+  upperCabinets: "auto" | "none" | { skipModules: number[] };
+  lowerHeight: number;
+  upperOffset: number;
+  upperHeight: number;
+  finish: {
+    bodyMaterial: BodyMaterial;
+    doorStyle: DoorStyle;
+    handleStyle: HandleStyle;
+  };
 }
 
 export type StairsShape = "straight" | "L" | "U" | "spiral";
@@ -285,6 +449,11 @@ export interface FloorPlan {
   columns?: Column[];
   annotations?: Annotation[];
   northArrow?: NorthArrow | null;
+  /** Marcenaria runs (Fase A). Each run is a continuous millwork
+   *  installation along a wall (kitchen counter, bathroom vanity, closet,
+   *  laundry, BBQ, TV wall). The Furniture entries with `runId === r.id`
+   *  are the materialized modules + countertop + uppers. */
+  millworkRuns?: MillworkRun[];
 }
 
 // ----- Tool input shapes (mirror anthropic-tools.ts) -----

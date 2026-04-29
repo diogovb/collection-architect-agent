@@ -1183,6 +1183,69 @@ export const FURN_DEFS: Record<FurnitureType, FurnitureDef> = {
       { d: "M5 9L7 11L11 5", stroke: STROKE, strokeWidth: 1.0, fill: null },
     ],
   },
+
+  // =========================================================
+  // MARCENARIA MODULAR (Fase A) — paths placeholder, full
+  // arquitetônico CAD vem na Fase C. Aqui só registramos
+  // sizeM/label pra engine + back-compat.
+  // =========================================================
+  // Storage genérico
+  module_cabinet_door:        { sizeM: { w: 0.5, h: 0.6 }, label: "Armário 1 porta", category: "Marcenaria", paths: [] },
+  module_cabinet_door_double: { sizeM: { w: 0.9, h: 0.6 }, label: "Armário 2 portas", category: "Marcenaria", paths: [] },
+  module_cabinet_drawer_3:    { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 3", category: "Marcenaria", paths: [] },
+  module_cabinet_drawer_4:    { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro 4", category: "Marcenaria", paths: [] },
+  module_cabinet_open:        { sizeM: { w: 0.6, h: 0.6 }, label: "Nicho aberto", category: "Marcenaria", paths: [] },
+  module_cabinet_glass:       { sizeM: { w: 0.6, h: 0.4 }, label: "Vitrine vidro", category: "Marcenaria", paths: [] },
+  module_corner_carrousel:    { sizeM: { w: 0.9, h: 0.9 }, label: "Canto giratório", category: "Marcenaria", paths: [] },
+  module_gap_filler:          { sizeM: { w: 0.1, h: 0.6 }, label: "Preenchimento", category: "Marcenaria", paths: [] },
+  // Cozinha
+  module_cooktop_4:           { sizeM: { w: 0.6, h: 0.6 }, label: "Cooktop 4", category: "Marcenaria", paths: [] },
+  module_cooktop_5:           { sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop 5", category: "Marcenaria", paths: [] },
+  module_cooktop_induction:   { sizeM: { w: 0.6, h: 0.6 }, label: "Cooktop indução", category: "Marcenaria", paths: [] },
+  module_oven_built_in:       { sizeM: { w: 0.6, h: 0.6 }, label: "Forno embutido", category: "Marcenaria", paths: [] },
+  module_oven_tower:          { sizeM: { w: 0.6, h: 0.6 }, label: "Torre forno", category: "Marcenaria", paths: [] },
+  module_microwave_niche:     { sizeM: { w: 0.6, h: 0.6 }, label: "Microondas nicho", category: "Marcenaria", paths: [] },
+  module_fridge_niche:        { sizeM: { w: 0.7, h: 0.7 }, label: "Geladeira", category: "Marcenaria", paths: [] },
+  module_fridge_niche_double: { sizeM: { w: 0.9, h: 0.7 }, label: "Geladeira duplex", category: "Marcenaria", paths: [] },
+  module_fridge_french_door:  { sizeM: { w: 0.9, h: 0.7 }, label: "Geladeira french door", category: "Marcenaria", paths: [] },
+  module_sink_single:         { sizeM: { w: 0.6, h: 0.6 }, label: "Pia simples", category: "Marcenaria", paths: [] },
+  module_sink_double:         { sizeM: { w: 1.2, h: 0.6 }, label: "Pia dupla", category: "Marcenaria", paths: [] },
+  module_dishwasher_niche:    { sizeM: { w: 0.6, h: 0.6 }, label: "Lava-louças", category: "Marcenaria", paths: [] },
+  module_wine_cellar:         { sizeM: { w: 0.6, h: 0.6 }, label: "Adega", category: "Marcenaria", paths: [] },
+  module_pantry_tall:         { sizeM: { w: 0.6, h: 0.6 }, label: "Despensa", category: "Marcenaria", paths: [] },
+  // Banheiro
+  module_vanity_sink_single:  { sizeM: { w: 0.7, h: 0.5 }, label: "Vanity 1 cuba", category: "Marcenaria", paths: [] },
+  module_vanity_sink_double:  { sizeM: { w: 1.4, h: 0.5 }, label: "Vanity 2 cubas", category: "Marcenaria", paths: [] },
+  module_vanity_drawer_3:     { sizeM: { w: 0.5, h: 0.5 }, label: "Gaveteiro banh.", category: "Marcenaria", paths: [] },
+  module_wall_hung_toilet:    { sizeM: { w: 0.4, h: 0.65 }, label: "Vaso suspenso", category: "Marcenaria", paths: [] },
+  // Closet
+  module_closet_hanging_full:   { sizeM: { w: 0.9, h: 0.6 }, label: "Cabide longo", category: "Marcenaria", paths: [] },
+  module_closet_hanging_double: { sizeM: { w: 0.9, h: 0.6 }, label: "Cabide duplo", category: "Marcenaria", paths: [] },
+  module_closet_drawer_4:       { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro closet 4", category: "Marcenaria", paths: [] },
+  module_closet_drawer_6:       { sizeM: { w: 0.6, h: 0.6 }, label: "Gaveteiro closet 6", category: "Marcenaria", paths: [] },
+  module_closet_shoe:           { sizeM: { w: 0.6, h: 0.4 }, label: "Sapateira", category: "Marcenaria", paths: [] },
+  module_closet_shelves:        { sizeM: { w: 0.6, h: 0.4 }, label: "Prateleiras", category: "Marcenaria", paths: [] },
+  module_closet_jewelry:        { sizeM: { w: 0.45, h: 0.5 }, label: "Gaveta joias", category: "Marcenaria", paths: [] },
+  // Lavanderia
+  module_washer_niche:         { sizeM: { w: 0.65, h: 0.65 }, label: "Lavadora", category: "Marcenaria", paths: [] },
+  module_dryer_niche:          { sizeM: { w: 0.65, h: 0.65 }, label: "Secadora", category: "Marcenaria", paths: [] },
+  module_washer_dryer_stack:   { sizeM: { w: 0.65, h: 0.65 }, label: "Lav+sec vert", category: "Marcenaria", paths: [] },
+  module_laundry_tank:         { sizeM: { w: 0.6, h: 0.55 }, label: "Tanque", category: "Marcenaria", paths: [] },
+  module_drying_rack_built_in: { sizeM: { w: 1.0, h: 0.5 }, label: "Varal embutido", category: "Marcenaria", paths: [] },
+  // Churrasqueira
+  module_bbq_built_in:        { sizeM: { w: 0.8, h: 0.7 }, label: "Churrasqueira", category: "Marcenaria", paths: [] },
+  module_pizza_oven:          { sizeM: { w: 0.7, h: 0.7 }, label: "Forno pizza", category: "Marcenaria", paths: [] },
+  module_outdoor_cooktop:     { sizeM: { w: 0.75, h: 0.6 }, label: "Cooktop ext.", category: "Marcenaria", paths: [] },
+  module_outdoor_sink:        { sizeM: { w: 0.6, h: 0.6 }, label: "Cuba ext.", category: "Marcenaria", paths: [] },
+  module_wine_fridge_outdoor: { sizeM: { w: 0.6, h: 0.6 }, label: "Frigobar ext.", category: "Marcenaria", paths: [] },
+  // Sala
+  module_tv_console:          { sizeM: { w: 1.8, h: 0.4 }, label: "Console TV", category: "Marcenaria", paths: [] },
+  module_tv_panel_built_in:   { sizeM: { w: 2.4, h: 0.2 }, label: "Painel TV embutido", category: "Marcenaria", paths: [] },
+  // Composição (geradas pela engine)
+  bancada_continuous:    { sizeM: { w: 1.0, h: 0.04 }, label: "Bancada", category: "Marcenaria", paths: [] },
+  module_upper_cabinet:  { sizeM: { w: 0.6, h: 0.35 }, label: "Armário superior", category: "Marcenaria", paths: [] },
+  module_upper_glass:    { sizeM: { w: 0.6, h: 0.35 }, label: "Sup. vidro", category: "Marcenaria", paths: [] },
+  hood_built_in:         { sizeM: { w: 0.6, h: 0.5 }, label: "Exaustor", category: "Marcenaria", paths: [] },
 };
 
 // ---------- Utilities ----------
