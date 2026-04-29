@@ -290,6 +290,115 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "add_millwork_run",
+    description:
+      "Cria uma instalação de marcenaria CONTÍNUA ao longo de uma parede (ou freestanding) — bancada de fora a fora com módulos colados. ESSA É A FORMA CORRETA DE MOBILIAR cozinha, banheiro, closet, lavanderia, espaço gourmet, parede de TV. NÃO use add_furniture com fogão/pia/geladeira soltos — use os módulos correspondentes (cooktop_4, sink_double, fridge_niche) dentro de um único `add_millwork_run`. O engine gera bancada contínua com cutouts onde tem cooktop/sink + armários superiores tracejados acima dos módulos não-tall + exaustor sobre cooktop quando hood_above=true. Pode chamar 2-3 vezes pra cozinhas em L/U (1 run por parede).",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west", "freestanding"] },
+        start_offset: { type: "number", description: "Offset em metros desde o início da parede. Default 0 (encostado no canto)." },
+        type: {
+          type: "string",
+          enum: ["kitchen_counter", "bathroom_vanity", "closet", "laundry_counter", "bbq_counter", "tv_wall", "library", "custom"],
+          description: "Tipo do run — drives defaults de altura, profundidade, política de uppers.",
+        },
+        modules: {
+          type: "array",
+          description: "Sequência ordenada de módulos. Cada módulo é colado ao próximo, sem gap. Use larguras realistas Brastemp/Todeschini (0.4, 0.45, 0.6, 0.7, 0.9, 1.2m são padrões).",
+          items: {
+            type: "object",
+            properties: {
+              kind: {
+                type: "string",
+                enum: [
+                  "cabinet_door", "cabinet_door_double", "cabinet_drawer_3", "cabinet_drawer_4",
+                  "cabinet_open", "cabinet_glass", "corner_carrousel", "gap_filler",
+                  "cooktop_4", "cooktop_5", "cooktop_induction",
+                  "oven_built_in", "oven_tower", "microwave_niche",
+                  "fridge_niche", "fridge_niche_double", "fridge_french_door",
+                  "sink_single", "sink_double",
+                  "dishwasher_niche", "wine_cellar", "pantry_tall",
+                  "vanity_sink_single", "vanity_sink_double", "vanity_drawer_3", "wall_hung_toilet",
+                  "closet_hanging_full", "closet_hanging_double",
+                  "closet_drawer_4", "closet_drawer_6",
+                  "closet_shoe", "closet_shelves", "closet_jewelry",
+                  "washer_niche", "dryer_niche", "washer_dryer_stack",
+                  "laundry_tank", "drying_rack_built_in",
+                  "bbq_built_in", "pizza_oven", "outdoor_cooktop",
+                  "outdoor_sink", "wine_fridge_outdoor",
+                  "tv_console", "tv_panel_built_in",
+                ],
+              },
+              width: { type: "number", description: "Largura em metros." },
+              label: { type: "string" },
+              hood_above: { type: "boolean", description: "Coloca exaustor sobre o módulo (válido para cooktop_*)." },
+              window_above: { type: "boolean", description: "Informativo — sinaliza que há janela acima (sink under window OK)." },
+            },
+            required: ["kind", "width"],
+          },
+        },
+        countertop: {
+          type: "object",
+          properties: {
+            material: {
+              type: "string",
+              enum: ["granito_preto", "granito_branco", "marmore_carrara", "marmore_travertino", "quartzo_branco", "quartzo_preto", "porcelanato", "madeira_macica", "inox"],
+            },
+            overhang_front: { type: "number", description: "Extensão da bancada além dos módulos (default 0.02)." },
+            has_backsplash: { type: "boolean", description: "Default true." },
+          },
+        },
+        upper_cabinets: {
+          oneOf: [
+            { type: "string", enum: ["auto", "none"] },
+            { type: "object", properties: { skipModules: { type: "array", items: { type: "number" } } } },
+          ],
+          description: "auto = gera armários superiores acima de cada módulo não-tall que não seja sink/cooktop. none = sem uppers. Default auto pra kitchen_counter.",
+        },
+        lower_height: { type: "number" },
+        upper_offset: { type: "number" },
+        upper_height: { type: "number" },
+        finish: {
+          type: "object",
+          properties: {
+            body_material: {
+              type: "string",
+              enum: ["MDF_branco", "MDF_amadeirado", "laca_branca", "laca_preta", "freijo", "carvalho", "ipe"],
+            },
+            door_style: { type: "string", enum: ["shaker", "flat", "panel", "glass", "ripado"] },
+            handle_style: { type: "string", enum: ["knob", "bar_horizontal", "bar_vertical", "integrated", "none"] },
+          },
+        },
+      },
+      required: ["room_name", "wall", "type", "modules"],
+    },
+  },
+  {
+    name: "remove_millwork_run",
+    description: "Remove um run de marcenaria + todos os módulos materializados (incluindo bancada, uppers, exaustor).",
+    input_schema: {
+      type: "object",
+      properties: { run_id: { type: "string" } },
+      required: ["run_id"],
+    },
+  },
+  {
+    name: "update_millwork_module",
+    description: "Modifica um módulo específico de um run existente (troca kind ou width). O engine re-materializa o run inteiro pra manter cutouts/uppers/hood consistentes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        run_id: { type: "string" },
+        module_index: { type: "number" },
+        kind: { type: "string" },
+        width: { type: "number" },
+      },
+      required: ["run_id", "module_index"],
+    },
+  },
+  {
     name: "place_furniture_intent",
     description:
       "Posiciona MÚLTIPLOS móveis num cômodo declarando INTENÇÃO em vez de coordenadas. Para cada item, escolha um âncora semântico (`wall:north`, `wall:south`, `wall:east`, `wall:west`, `corner:NW`, `corner:NE`, `corner:SW`, `corner:SE`, `center`, `free`) e opcionalmente position (start/mid/end ao longo da parede). O solver calcula coords absolutos respeitando: encosto-de-parede, clearance frontal/lateral, arco da porta, distância de janela, triângulo de cozinha, distância sofá-TV. Use isto para mobiliação completa de um cômodo. Múltiplos itens no MESMO âncora são distribuídos automaticamente ao longo da parede.",

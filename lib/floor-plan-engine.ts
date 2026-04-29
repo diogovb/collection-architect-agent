@@ -19,6 +19,7 @@ import type {
 import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furniture-svgs";
 import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
 import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
+import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
 
 // ---------- ID + helpers ----------
 
@@ -132,6 +133,12 @@ export function applyTool<T extends ToolName>(
         return doAddFurniture(plan, input as ToolInputs["add_furniture"]);
       case "place_furniture_intent":
         return doPlaceFurnitureIntent(plan, input as ToolInputs["place_furniture_intent"]);
+      case "add_millwork_run":
+        return doAddMillworkRun(plan, input as ToolInputs["add_millwork_run"]);
+      case "remove_millwork_run":
+        return doRemoveMillworkRun(plan, input as ToolInputs["remove_millwork_run"]);
+      case "update_millwork_module":
+        return doUpdateMillworkModule(plan, input as ToolInputs["update_millwork_module"]);
       case "add_furniture_group":
         return doAddFurnitureGroup(plan, input as ToolInputs["add_furniture_group"]);
       case "swap_furniture":

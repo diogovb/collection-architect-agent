@@ -380,7 +380,7 @@ export interface MillworkRun {
     overhangFront: number;
     hasBacksplash: boolean;
   };
-  upperCabinets: "auto" | "none" | { skipModules: number[] };
+  upperCabinets: "auto" | "none" | { skipModules?: number[] };
   lowerHeight: number;
   upperOffset: number;
   upperHeight: number;
@@ -465,6 +465,9 @@ export type ToolName =
   | "add_window"
   | "add_furniture"
   | "place_furniture_intent"
+  | "add_millwork_run"
+  | "remove_millwork_run"
+  | "update_millwork_module"
   | "remove_furniture"
   | "set_floor_material"
   | "set_railing_material"
@@ -559,6 +562,37 @@ export interface ToolInputs {
       position?: "start" | "mid" | "end";
       rotation?: number;
     }>;
+  };
+  add_millwork_run: {
+    room_name: string;
+    wall: Wall | "freestanding";
+    position?: { x: number; y: number };
+    orientation?: Wall;
+    start_offset?: number;
+    end_offset?: number;
+    type: RunType;
+    modules: MillworkModule[];
+    countertop?: {
+      material?: CountertopMaterial;
+      overhang_front?: number;
+      has_backsplash?: boolean;
+    };
+    upper_cabinets?: "auto" | "none" | { skipModules?: number[] };
+    lower_height?: number;
+    upper_offset?: number;
+    upper_height?: number;
+    finish?: {
+      body_material?: BodyMaterial;
+      door_style?: DoorStyle;
+      handle_style?: HandleStyle;
+    };
+  };
+  remove_millwork_run: { run_id: string };
+  update_millwork_module: {
+    run_id: string;
+    module_index: number;
+    kind?: ModuleKind;
+    width?: number;
   };
   remove_furniture: { furniture_id?: string; label?: string };
   set_floor_material: { room_name: string; material: FloorMaterial };
