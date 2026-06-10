@@ -40,6 +40,7 @@ import {
   type PlanRect,
 } from "../plan-geometry";
 import { TOL_CONTACT_M } from "./tolerances";
+import { backWallOf, satellitePoseCandidates } from "./satellites";
 
 export type Anchor =
   | "wall:north"
@@ -193,71 +194,6 @@ function autoRotationFor(wall: WallKey | undefined): number | undefined {
     case "west": return 270;
     default: return undefined;
   }
-}
-
-const OPP_WALL: Record<WallKey, WallKey> = {
-  north: "south",
-  south: "north",
-  east: "west",
-  west: "east",
-};
-
-/** Parede de "costas" de um móvel pelo bbox VISUAL: o lado tocado com maior
- *  comprimento de contato; sem contato, o lado mais próximo. */
-export function backWallOf(bb: PlanRect, usable: PlanRect): WallKey {
-  const t = touchedWalls({ x: bb.x, y: bb.y, w: bb.w, h: bb.h }, usable, 0.1);
-  const touched = WALLS.filter((w) => t[w]);
-  const contactLen = (w: WallKey) => (w === "north" || w === "south" ? bb.w : bb.h);
-  if (touched.length > 0) {
-    let back = touched[0];
-    for (const w of touched) if (contactLen(w) > contactLen(back)) back = w;
-    return back;
-  }
-  const d: Record<WallKey, number> = {
-    north: bb.y - usable.y,
-    south: usable.y + usable.h - (bb.y + bb.h),
-    west: bb.x - usable.x,
-    east: usable.x + usable.w - (bb.x + bb.w),
-  };
-  return WALLS.reduce((a, b) => (d[b] < d[a] ? b : a));
-}
-
-/** Encaixe da cadeira sob o tampo (m). Visível no desenho de propósito —
- *  é como planta de arquiteto representa cadeira em mesa. */
-export const SATELLITE_TUCK_M = 0.15;
-
-/** Poses candidatas de um satélite na frente do parceiro: centrado na face
- *  frontal, costas para fora, encaixado SATELLITE_TUCK_M sob o tampo;
- *  desliza ao longo da frente quando o centro está bloqueado. Recebe o
- *  tamanho do GLIFO e devolve bbox VISUAL + rotação. */
-export function satellitePoseCandidates(
-  partnerBB: PlanRect,
-  backWall: WallKey,
-  glyphSize: { w: number; h: number },
-): Array<{ x: number; y: number; width: number; height: number; rotation: number }> {
-  const rot = autoRotationFor(OPP_WALL[backWall])!;
-  const size = visualSize(glyphSize, rot);
-  const slides = [0, -0.15, 0.15, -0.3, 0.3];
-  const out: Array<{ x: number; y: number; width: number; height: number; rotation: number }> = [];
-  for (const s of slides) {
-    let x: number;
-    let y: number;
-    if (backWall === "north") {
-      x = partnerBB.x + partnerBB.w / 2 - size.w / 2 + s;
-      y = partnerBB.y + partnerBB.h - SATELLITE_TUCK_M;
-    } else if (backWall === "south") {
-      x = partnerBB.x + partnerBB.w / 2 - size.w / 2 + s;
-      y = partnerBB.y - size.h + SATELLITE_TUCK_M;
-    } else if (backWall === "west") {
-      x = partnerBB.x + partnerBB.w - SATELLITE_TUCK_M;
-      y = partnerBB.y + partnerBB.h / 2 - size.h / 2 + s;
-    } else {
-      x = partnerBB.x - size.w + SATELLITE_TUCK_M;
-      y = partnerBB.y + partnerBB.h / 2 - size.h / 2 + s;
-    }
-    out.push({ x, y, width: size.w, height: size.h, rotation: rot });
-  }
-  return out;
 }
 
 /** Intent que resolve por DERIVAÇÃO do parceiro, não por busca pontuada.

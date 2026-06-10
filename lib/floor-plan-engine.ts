@@ -17,7 +17,12 @@ import type {
   Window as PlanWindow,
 } from "./types";
 import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furniture-svgs";
-import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
+import {
+  freeWallSpans,
+  summarizeRoomLayout,
+  touchedWalls,
+  validatePlacement,
+} from "./scene/placement-validators";
 import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
 import { ROOM_TEMPLATES, solveRoomTemplate } from "./room-templates";
 import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
@@ -36,7 +41,7 @@ import {
 } from "./plan-geometry";
 import { chooseDoorSwing } from "./scene/door-swing";
 import { getPlacement, isSatellitePair, SATELLITES } from "./furniture-placement";
-import { backWallOf, satellitePoseCandidates } from "./scene/placement-solver";
+import { backWallOf, satellitePoseCandidates } from "./scene/satellites";
 import { estimatedHeightM } from "./scene/furniture-heights";
 import { DOOR_DEDUP_RADIUS_M, TOL_CONTACT_M } from "./scene/tolerances";
 
@@ -1921,36 +1926,85 @@ function doAddFurnitureGroup(plan: FloorPlan, input: ToolInputs["add_furniture_g
 
 // ---------- Plan summary for prompts ----------
 
+/** Direção da FRENTE de um móvel a partir da rotação armazenada (glifo
+ *  default tem frente para o sul). Mesma tabela do place_items. */
+function facingLabel(rotation: number | undefined): string {
+  const r = (((rotation ?? 0) % 360) + 360) % 360;
+  return r === 0 ? "sul" : r === 90 ? "oeste" : r === 180 ? "norte" : r === 270 ? "leste" : `${r}°`;
+}
+
+const fm = (n: number): string => n.toFixed(2);
+
+/** Estado da planta como NÚMEROS que o modelo consegue compor em cima:
+ *  coords de mundo, faces internas, vãos livres por parede, móveis com
+ *  CENTRO + frente + encostos. É a prancheta em texto. */
 export function summarizePlan(plan: FloorPlan): string {
   if (plan.rooms.length === 0) return "Planta vazia (nenhum cômodo).";
   const parts: string[] = [];
-  parts.push(`${plan.rooms.length} cômodo(s):`);
+  parts.push(
+    `${plan.rooms.length} cômodo(s). Coords em METROS (mundo): x cresce p/ leste, y cresce p/ SUL. Móveis: posição = CENTRO; frente = p/ onde a peça olha.`
+  );
   for (const r of plan.rooms) {
     const area = (r.width * r.height).toFixed(1);
-    // Coordenadas, ids e posições nas paredes: sem isso o agente não
-    // conseguia avaliar "há área disponível?" nem parametrizar
-    // move_furniture/update_door (os ids não apareciam em lugar nenhum).
-    const doors = plan.doors
-      .filter((d) => d.roomId === r.id)
-      .map((d) => `${WALL_PT[d.wall]}@${d.position.toFixed(2)} ${d.size.toFixed(2)}m${d.swing === "out" ? " (abre p/ fora)" : ""}`)
-      .join("; ");
-    const wins = plan.windows
-      .filter((w) => w.roomId === r.id)
-      .map((w) => `${WALL_PT[w.wall]}@${w.position.toFixed(2)} ${w.size.toFixed(2)}m`)
-      .join("; ");
-    const furn = plan.furniture
-      .filter((f) => f.roomId === r.id)
-      .map((f) => `${f.label}[id=${f.id}]@(${f.x.toFixed(1)},${f.y.toFixed(1)})${f.rotation ? ` rot${f.rotation}` : ""}`)
-      .join(", ");
+    const u = usableRect(plan, r);
     parts.push(
-      `- ${r.name} em (${r.x.toFixed(1)},${r.y.toFixed(1)}): ${r.width}x${r.height}m (${area}m²), piso ${r.floor}` +
-        `${doors ? `, portas: ${doors}` : ", sem portas"}` +
-        `${wins ? `, janelas: ${wins}` : ""}` +
-        `${furn ? `, móveis: ${furn}` : ""}`
+      `\n## ${r.name} — rect (${fm(r.x)},${fm(r.y)})–(${fm(r.x + r.width)},${fm(r.y + r.height)}), ` +
+        `útil (${fm(u.x)},${fm(u.y)})–(${fm(u.x + u.w)},${fm(u.y + u.h)}) [${fm(u.w)}×${fm(u.h)}m, ${area}m²], piso ${r.floor}` +
+        `${r.openWalls?.length ? `, paredes abertas: ${r.openWalls.map((w) => WALL_PT[w]).join("/")}` : ""}`
     );
+    // Paredes: aberturas com intervalos de mundo + vãos livres para móveis.
+    for (const wall of ["north", "east", "south", "west"] as const) {
+      if (r.openWalls?.includes(wall)) continue;
+      const horizontal = wall === "north" || wall === "south";
+      const face =
+        wall === "north" ? u.y : wall === "south" ? u.y + u.h : wall === "west" ? u.x : u.x + u.w;
+      const bits: string[] = [];
+      for (const d of plan.doors) {
+        const owner = plan.rooms.find((rr) => rr.id === d.roomId);
+        if (!owner || d.silent) continue;
+        const iv = openingInterval(owner, d.wall, d.position, d.size);
+        const lineFixed =
+          wall === "north" ? r.y : wall === "south" ? r.y + r.height : wall === "west" ? r.x : r.x + r.width;
+        if ((iv.axis === "h") !== horizontal || Math.abs(iv.fixed - lineFixed) > 0.075) continue;
+        const lo = Math.max(iv.start, horizontal ? r.x : r.y);
+        const hi = Math.min(iv.end, horizontal ? r.x + r.width : r.y + r.height);
+        if (hi - lo <= 0.01) continue;
+        const neighbor = owner.id === r.id ? neighborAcrossWall(plan, r, wall, ((lo + hi) / 2 - (horizontal ? r.x : r.y)) / (horizontal ? r.width : r.height)) : owner;
+        // "Abre p/ cá" é relativo a ESTE cômodo: swing "in" abre para o
+        // cômodo DONO; visto do vizinho, é o lado de lá.
+        const opensHere = (owner.id === r.id) === (d.swing !== "out");
+        bits.push(
+          `porta [${fm(lo)}..${fm(hi)}]${neighbor && neighbor.id !== r.id ? ` p/ ${neighbor.name}` : ""}${opensHere ? " (folha gira AQUI)" : " (folha gira do outro lado)"} — chegada livre nos 2 lados`
+        );
+      }
+      for (const w of plan.windows.filter((w) => w.roomId === r.id && w.wall === wall)) {
+        const iv = openingInterval(r, w.wall, w.position, w.size);
+        bits.push(`janela [${fm(iv.start)}..${fm(iv.end)}]`);
+      }
+      const spans = freeWallSpans(plan, r, wall)
+        .filter((s) => s.hi - s.lo > 0.3)
+        .map((s) => `[${fm(s.lo)}..${fm(s.hi)}]`)
+        .join(", ");
+      const axisLabel = horizontal ? `y=${fm(face)}` : `x=${fm(face)}`;
+      parts.push(
+        `  ${WALL_PT[wall]} (face ${axisLabel}): ${bits.length ? bits.join("; ") : "sem vãos"}${spans ? `; livre p/ móveis: ${spans}` : "; sem trecho livre"}`
+      );
+    }
+    const furn = plan.furniture.filter((f) => f.roomId === r.id);
+    if (furn.length > 0) {
+      parts.push(`  móveis:`);
+      for (const f of furn) {
+        const bb = worldAABB(f);
+        const t = touchedWalls(bb, u);
+        const touched = (["north", "south", "east", "west"] as const).filter((k) => t[k]).map((k) => WALL_PT[k]);
+        parts.push(
+          `    ${f.label} [id=${f.id}]${f.runId ? ` (marcenaria ${f.runId})` : ""} centro (${fm(bb.x + bb.w / 2)},${fm(bb.y + bb.h / 2)}) ${fm(bb.w)}×${fm(bb.h)} frente=${facingLabel(f.rotation)}${touched.length ? ` encostado=${touched.join("/")}` : " SOLTO"}`
+        );
+      }
+    }
   }
   const totalArea = plan.rooms.reduce((s, r) => s + r.width * r.height, 0);
-  parts.push(`Área total: ${totalArea.toFixed(1)}m².`);
+  parts.push(`\nÁrea total: ${totalArea.toFixed(1)}m².`);
   if (plan.millworkRuns?.length) {
     parts.push(`Runs de marcenaria: ${plan.millworkRuns.map((m) => `${m.id} (${m.type})`).join(", ")}.`);
   }

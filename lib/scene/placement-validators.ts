@@ -15,6 +15,7 @@ import { getPlacement } from "../furniture-placement";
 import {
   doorApproachRects,
   doorCoverageFraction,
+  openingInterval,
   relationDistance,
   usableRect,
   wallSideLabel,
@@ -393,6 +394,55 @@ export function validatePlacement(
   if (!r5.ok) return r5;
 
   return { ok: true, ...(r5.advisories ? { advisories: r5.advisories } : {}) };
+}
+
+/** Vãos LIVRES de uma parede (coordenada ao longo dela, em mundo): vão útil
+ *  − portas na mesma linha (próprias OU do vizinho) − móveis já encostados.
+ *  Alimenta o estado legível do agente e as sugestões do place_items.
+ *  Janelas NÃO bloqueiam (móvel baixo sob janela é clássico). */
+export function freeWallSpans(
+  plan: FloorPlan,
+  room: Room,
+  wall: "north" | "south" | "east" | "west",
+): Array<{ lo: number; hi: number }> {
+  const usable = usableRect(plan, room);
+  const horizontal = wall === "north" || wall === "south";
+  const lo = horizontal ? usable.x : usable.y;
+  const hi = horizontal ? usable.x + usable.w : usable.y + usable.h;
+  const lineFixed =
+    wall === "north" ? room.y :
+    wall === "south" ? room.y + room.height :
+    wall === "west" ? room.x :
+    room.x + room.width;
+  const blocked: Array<{ lo: number; hi: number }> = [];
+  for (const d of plan.doors ?? []) {
+    if (d.silent) continue;
+    const owner = plan.rooms.find((r) => r.id === d.roomId);
+    if (!owner) continue;
+    const iv = openingInterval(owner, d.wall, d.position ?? 0.5, d.size ?? 0.8);
+    if ((iv.axis === "h") !== horizontal) continue;
+    if (Math.abs(iv.fixed - lineFixed) > 0.075) continue;
+    blocked.push({ lo: iv.start - 0.05, hi: iv.end + 0.05 });
+  }
+  for (const f of plan.furniture ?? []) {
+    if (f.roomId !== room.id) continue;
+    const p = getPlacement(f.type);
+    if (p.category === "rug" || p.category === "decor") continue;
+    const bb = worldAABB(f);
+    const t = touchedWalls(bb, usable);
+    if (!t[wall]) continue;
+    blocked.push(horizontal ? { lo: bb.x, hi: bb.x + bb.w } : { lo: bb.y, hi: bb.y + bb.h });
+  }
+  blocked.sort((a, b) => a.lo - b.lo);
+  const spans: Array<{ lo: number; hi: number }> = [];
+  let cursor = lo;
+  for (const b of blocked) {
+    if (b.lo > cursor + TOL_CONTACT_M) spans.push({ lo: cursor, hi: Math.min(b.lo, hi) });
+    cursor = Math.max(cursor, b.hi);
+    if (cursor >= hi) break;
+  }
+  if (cursor < hi - TOL_CONTACT_M) spans.push({ lo: cursor, hi });
+  return spans;
 }
 
 /** Build a one-line summary of the room's free space + occupied corners
