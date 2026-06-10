@@ -21,6 +21,7 @@ import {
   freeWallSpans,
   summarizeRoomLayout,
   touchedWalls,
+  validateDoorClearance,
   validatePlacement,
 } from "./scene/placement-validators";
 import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
@@ -41,7 +42,12 @@ import {
 } from "./plan-geometry";
 import { chooseDoorSwing } from "./scene/door-swing";
 import { getPlacement, isSatellitePair, SATELLITES } from "./furniture-placement";
-import { backWallOf, satellitePoseCandidates } from "./scene/satellites";
+import {
+  backWallOf,
+  rotationForBackWall,
+  satellitePoseCandidates,
+  visualSizeFor,
+} from "./scene/satellites";
 import { estimatedHeightM } from "./scene/furniture-heights";
 import { DOOR_DEDUP_RADIUS_M, TOL_CONTACT_M } from "./scene/tolerances";
 
@@ -165,6 +171,8 @@ export function applyTool<T extends ToolName>(
         return doAddFurniture(plan, input as ToolInputs["add_furniture"]);
       case "place_furniture_intent":
         return doPlaceFurnitureIntent(plan, input as ToolInputs["place_furniture_intent"]);
+      case "place_items":
+        return doPlaceItems(plan, input as ToolInputs["place_items"]);
       case "add_millwork_run":
         return doAddMillworkRun(plan, input as ToolInputs["add_millwork_run"]);
       case "remove_millwork_run":
@@ -1204,6 +1212,249 @@ function findFurnitureOverlap(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// place_items — composição direta pelo modelo; o motor é FÍSICA, não decisor.
+//
+// O modelo dá CENTRO em metros (mundo) + frente (norte/sul/leste/oeste), ou
+// usa snap como régua-T (parede → flush na face interna, só falta o `along`;
+// "junto_de:" → tuck no parceiro). O motor checa fatos (área útil, colisão,
+// chegada/giro de porta) e rejeita com NÚMEROS + sugestões — nunca escolhe
+// posição sozinho.
+// ---------------------------------------------------------------------------
+
+const CARDINAL_TO_WALL: Record<string, Wall> = {
+  norte: "north", north: "north",
+  sul: "south", south: "south",
+  leste: "east", east: "east",
+  oeste: "west", west: "west",
+};
+
+/** frente → rotação do glifo (frente default do glifo = sul). */
+const FACING_TO_ROTATION: Record<string, number> = {
+  sul: 0, south: 0,
+  oeste: 90, west: 90,
+  norte: 180, north: 180,
+  leste: 270, east: 270,
+};
+
+function doPlaceItems(plan: FloorPlan, input: ToolInputs["place_items"]): ApplyResult {
+  const room = findRoom(plan, input.room_name);
+  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    return { ok: false, message: "place_items: lista 'items' vazia." };
+  }
+  const usable = usableRect(plan, room);
+  const lines: string[] = [];
+  let applied = 0;
+  const movedPartners: Furniture[] = [];
+
+  for (const item of input.items) {
+    const def = FURN_DEFS[item.type];
+    if (!def) {
+      lines.push(`✗ ${item.type}: tipo desconhecido.`);
+      continue;
+    }
+    const placement = getPlacement(item.type);
+    const label = item.label ?? def.label;
+
+    // Mover peça existente?
+    let existing: Furniture | undefined;
+    if (item.furniture_id) {
+      existing = plan.furniture.find((f) => f.id === item.furniture_id);
+      if (!existing) {
+        lines.push(`✗ ${label}: furniture_id '${item.furniture_id}' não encontrado.`);
+        continue;
+      }
+      if (existing.runId) {
+        lines.push(`✗ ${existing.label}: é módulo de marcenaria (${existing.runId}) — use update_millwork_module/remove_millwork_run.`);
+        continue;
+      }
+    }
+
+    // ---- resolve a pose (bbox VISUAL + rotação) ----
+    let vx: number, vy: number, vw: number, vh: number, rotation: number;
+    const snap = item.snap?.trim().toLowerCase();
+
+    if (snap && snap.startsWith("junto_de:")) {
+      // Tuck satélite: pose derivada do parceiro.
+      const key = snap.slice("junto_de:".length).trim();
+      const partner = plan.furniture.find(
+        (f) =>
+          f.roomId === room.id &&
+          f.id !== existing?.id &&
+          (f.id === key || f.label.trim().toLowerCase() === key)
+      );
+      if (!partner) {
+        lines.push(`✗ ${label}: parceiro '${key}' não encontrado em '${room.name}'.`);
+        continue;
+      }
+      const pBB = worldAABB(partner);
+      const back = backWallOf(pBB, usable);
+      const pose = satellitePoseCandidates(pBB, back, def.sizeM).find((p) => {
+        if (
+          p.x < usable.x - TOL_CONTACT_M || p.y < usable.y - TOL_CONTACT_M ||
+          p.x + p.width > usable.x + usable.w + TOL_CONTACT_M ||
+          p.y + p.height > usable.y + usable.h + TOL_CONTACT_M
+        ) return false;
+        if (findFurnitureOverlap(plan, room.id, p.x, p.y, p.width, p.height, existing?.id ?? partner.id, item.type)) return false;
+        return validateDoorClearance({ x: p.x, y: p.y, w: p.width, h: p.height }, room, plan.doors, plan.rooms, placement).ok;
+      });
+      if (!pose) {
+        lines.push(`✗ ${label}: sem vaga válida na frente de ${partner.label} (frente bloqueada ou encostada na parede).`);
+        continue;
+      }
+      ({ x: vx, y: vy, width: vw, height: vh, rotation } = pose);
+    } else if (snap && CARDINAL_TO_WALL[snap]) {
+      // Régua-T: flush na face interna; o modelo dá só o `along`.
+      const wall = CARDINAL_TO_WALL[snap];
+      const horizontal = wall === "north" || wall === "south";
+      rotation = item.facing !== undefined
+        ? FACING_TO_ROTATION[item.facing] ?? 0
+        : rotationForBackWall(wall); // default: costas na parede do snap
+      const size = visualSizeFor(def.sizeM, rotation);
+      vw = size.w; vh = size.h;
+      const along = item.along ?? (horizontal ? item.center_x : item.center_y);
+      if (along === undefined) {
+        lines.push(`✗ ${label}: snap '${snap}' precisa de 'along' (centro AO LONGO da parede, em metros do mundo).`);
+        continue;
+      }
+      const lo = horizontal ? usable.x : usable.y;
+      const hi = horizontal ? usable.x + usable.w : usable.y + usable.h;
+      const half = (horizontal ? vw : vh) / 2;
+      let c = along;
+      if (c - half < lo - TOL_CONTACT_M || c + half > hi + TOL_CONTACT_M) {
+        const cMin = lo + half;
+        const cMax = hi - half;
+        if (cMax < cMin) {
+          lines.push(`✗ ${label}: não cabe na parede ${wallSideLabel(wall)} (peça ${(2 * half).toFixed(2)}m > vão útil ${(hi - lo).toFixed(2)}m).`);
+          continue;
+        }
+        if (Math.abs(c - Math.max(cMin, Math.min(cMax, c))) <= 0.05) {
+          c = Math.max(cMin, Math.min(cMax, c)); // nudge ≤5cm, tolerado
+        } else {
+          lines.push(`✗ ${label}: along=${along.toFixed(2)} estoura a parede ${wallSideLabel(wall)} — com essa peça, centro válido ∈ [${cMin.toFixed(2)}..${cMax.toFixed(2)}].`);
+          continue;
+        }
+      }
+      if (horizontal) {
+        vx = c - vw / 2;
+        vy = wall === "north" ? usable.y : usable.y + usable.h - vh;
+      } else {
+        vy = c - vh / 2;
+        vx = wall === "west" ? usable.x : usable.x + usable.w - vw;
+      }
+    } else if (snap) {
+      lines.push(`✗ ${label}: snap '${item.snap}' inválido — use norte|sul|leste|oeste ou "junto_de:<id|label>".`);
+      continue;
+    } else {
+      // Posição livre: centro explícito + frente.
+      if (item.center_x === undefined || item.center_y === undefined) {
+        lines.push(`✗ ${label}: sem snap, informe center_x E center_y (metros, mundo).`);
+        continue;
+      }
+      rotation = FACING_TO_ROTATION[item.facing ?? "sul"] ?? 0;
+      const size = visualSizeFor(def.sizeM, rotation);
+      vw = size.w; vh = size.h;
+      vx = item.center_x - vw / 2;
+      vy = item.center_y - vh / 2;
+    }
+
+    // ---- física ----
+    // 1) área útil (nudge ≤5cm; acima disso, rejeita com faixa válida)
+    const overL = usable.x - vx;
+    const overT = usable.y - vy;
+    const overR = vx + vw - (usable.x + usable.w);
+    const overB = vy + vh - (usable.y + usable.h);
+    const worst = Math.max(overL, overT, overR, overB);
+    if (worst > 0.05) {
+      const cxMin = usable.x + vw / 2;
+      const cxMax = usable.x + usable.w - vw / 2;
+      const cyMin = usable.y + vh / 2;
+      const cyMax = usable.y + usable.h - vh / 2;
+      if (cxMax < cxMin || cyMax < cyMin) {
+        lines.push(`✗ ${label}: ${vw.toFixed(2)}×${vh.toFixed(2)}m não cabe na área útil de '${room.name}' (${usable.w.toFixed(2)}×${usable.h.toFixed(2)}m).`);
+      } else {
+        lines.push(`✗ ${label}: estoura ${worst.toFixed(2)}m para fora da área útil — centro válido: x ∈ [${cxMin.toFixed(2)}..${cxMax.toFixed(2)}], y ∈ [${cyMin.toFixed(2)}..${cyMax.toFixed(2)}].`);
+      }
+      continue;
+    }
+    if (worst > 0) {
+      vx = Math.max(usable.x, Math.min(usable.x + usable.w - vw, vx));
+      vy = Math.max(usable.y, Math.min(usable.y + usable.h - vh, vy));
+    }
+    // 2) colisão (peça candidata rug/decor passa por baixo/cima)
+    if (placement.category !== "rug" && placement.category !== "decor") {
+      const conflict = findFurnitureOverlap(plan, room.id, vx, vy, vw, vh, existing?.id, item.type);
+      if (conflict) {
+        const cb = worldAABB(conflict);
+        lines.push(
+          `✗ ${label}: colide com ${conflict.label} [id=${conflict.id}] (ocupa x ${cb.x.toFixed(2)}..${(cb.x + cb.w).toFixed(2)}, y ${cb.y.toFixed(2)}..${(cb.y + cb.h).toFixed(2)}). Escolha centro fora desse retângulo ou mova o vizinho.`
+        );
+        continue;
+      }
+    }
+    // 3) porta: giro + chegada (regra graduada de 50%)
+    const doorCheck = validateDoorClearance({ x: vx, y: vy, w: vw, h: vh }, room, plan.doors, plan.rooms, placement);
+    if (!doorCheck.ok) {
+      lines.push(`✗ ${label}: ${doorCheck.reason}`);
+      continue;
+    }
+
+    // ---- aplica (bbox armazenado = dims do glifo preservando o centro) ----
+    const rotated = ((rotation % 180) + 180) % 180 === 90;
+    const sw = rotated ? vh : vw;
+    const sh = rotated ? vw : vh;
+    const sx = vx + (vw - sw) / 2;
+    const sy = vy + (vh - sh) / 2;
+    if (existing) {
+      existing.type = item.type;
+      existing.x = sx;
+      existing.y = sy;
+      existing.width = sw;
+      existing.height = sh;
+      if (rotation !== 0) existing.rotation = rotation; else delete existing.rotation;
+      if (item.label) existing.label = item.label;
+      if (existing.roomId !== room.id) existing.roomId = room.id;
+      movedPartners.push(existing);
+      applied += 1;
+      lines.push(`✓ ${existing.label} movido — centro (${(vx + vw / 2).toFixed(2)},${(vy + vh / 2).toFixed(2)}), frente=${facingLabel(rotation)}.`);
+    } else {
+      const f: Furniture = {
+        id: nextId("furn"),
+        roomId: room.id,
+        type: item.type,
+        label,
+        x: sx,
+        y: sy,
+        width: sw,
+        height: sh,
+        ...(rotation !== 0 ? { rotation } : {}),
+      };
+      plan.furniture.push(f);
+      movedPartners.push(f);
+      applied += 1;
+      lines.push(`✓ ${label} [id=${f.id}] — centro (${(vx + vw / 2).toFixed(2)},${(vy + vh / 2).toFixed(2)}), frente=${facingLabel(rotation)}${snap && CARDINAL_TO_WALL[snap] ? `, encostado ${snap}` : ""}.`);
+    }
+  }
+
+  // Parceiro movido → satélites acompanham.
+  const satNotes: string[] = [];
+  for (const p of movedPartners) {
+    if (Object.values(SATELLITES).some((list) => list?.includes(p.type))) {
+      satNotes.push(...reposeSatellites(plan, p));
+    }
+  }
+  if (satNotes.length > 0) lines.push(...satNotes.map((n) => `· ${n}`));
+
+  const failedCount = input.items.length - applied;
+  return {
+    ok: applied > 0,
+    message:
+      `${applied}/${input.items.length} item(ns) aplicado(s) em '${room.name}':\n${lines.join("\n")}` +
+      (failedCount > 0 ? `\n\n${summarizeRoomLayout(room, plan)}` : ""),
+  };
+}
+
 /** Re-deriva a pose dos satélites (cadeira↔mesa) quando o PARCEIRO muda de
  *  lugar/tipo — sem isso o bug da cadeira órfã renascia no primeiro
  *  move_furniture da mesa. Devolve notas para a mensagem da tool. */
@@ -1435,8 +1686,10 @@ function doSplitFloor(plan: FloorPlan, input: ToolInputs["split_floor"]): ApplyR
   };
 }
 
+/** Atalho de place_items para UMA peça: novo CENTRO (mundo) + frente
+ *  opcional. Mesma física — área útil, colisões, chegada/giro de porta. */
 function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): ApplyResult {
-  const f = plan.furniture.find((f) => f.id === input.furniture_id);
+  const f = plan.furniture.find((ff) => ff.id === input.furniture_id);
   if (!f) return { ok: false, message: "Móvel não encontrado." };
   if (f.runId) {
     return {
@@ -1444,55 +1697,32 @@ function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): 
       message: `${f.label} faz parte de um run de marcenaria (${f.runId}) — módulos não se movem individualmente. Use update_millwork_module ou remove_millwork_run + add_millwork_run.`,
     };
   }
-
-  // Destination room = the one containing the new visual-bbox center.
-  const bb = worldAABB({ ...f, x: input.new_x, y: input.new_y });
-  const cx = bb.x + bb.w / 2;
-  const cy = bb.y + bb.h / 2;
   const destRoom = plan.rooms.find(
-    (r) => cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
+    (r) =>
+      input.center_x >= r.x && input.center_x <= r.x + r.width &&
+      input.center_y >= r.y && input.center_y <= r.y + r.height
   );
   if (!destRoom) {
     return {
       ok: false,
-      message: `Posição (${input.new_x},${input.new_y}) de ${f.label} fica fora de qualquer cômodo. Cômodos: ${plan.rooms.map((r) => `${r.name}(${r.x},${r.y},${r.width}×${r.height})`).join(", ")}.`,
+      message: `Centro (${input.center_x},${input.center_y}) fica fora de qualquer cômodo. Cômodos: ${plan.rooms.map((r) => `${r.name}(${r.x},${r.y},${r.width}×${r.height})`).join(", ")}.`,
     };
   }
-
-  // Hard checks no destino: overlap com outros móveis e arco de porta.
-  // Âncora/clearance viram avisos (o pedido de mover é explícito do
-  // agente/cliente; bloquear a intenção declarada cria loop de correção).
-  const conflict = findFurnitureOverlap(plan, destRoom.id, bb.x, bb.y, bb.w, bb.h, f.id, f.type);
-  if (conflict) {
-    return {
-      ok: false,
-      message: `Mover ${f.label} para (${input.new_x},${input.new_y}) sobrepõe '${conflict.label}'. ${summarizeRoomLayout(destRoom, plan)}`,
-    };
-  }
-  const othersPlan: FloorPlan = { ...plan, furniture: plan.furniture.filter((ff) => ff.id !== f.id) };
-  const check = validatePlacement(
-    { type: f.type, x: bb.x, y: bb.y, width: bb.w, height: bb.h, label: f.label },
-    destRoom,
-    othersPlan,
-  );
-  // Arco de giro E corredor de chegada são duros: um "ajuste" que deixa a
-  // porta inutilizável nunca é a intenção (era assim que o bug renascia).
-  if (!check.ok && /arco de abertura|arco da porta|chegada da porta/.test(check.reason ?? "")) {
-    return {
-      ok: false,
-      message: `Mover ${f.label}: ${check.reason} ${summarizeRoomLayout(destRoom, plan)}`,
-    };
-  }
-
-  f.x = input.new_x;
-  f.y = input.new_y;
-  if (f.roomId !== destRoom.id) f.roomId = destRoom.id;
-  // Mesa movida → cadeira satélite acompanha (senão a órfã renasce).
-  const moveNotes = reposeSatellites(plan, f);
-  const warn = !check.ok && check.reason ? ` Aviso: ${check.reason}` : "";
-  const adv = check.ok && check.advisories?.length ? ` ${check.advisories.join(" ")}` : "";
-  const satNote = moveNotes.length > 0 ? ` ${moveNotes.join("; ")}.` : "";
-  return { ok: true, message: `${f.label} movido para '${destRoom.name}'.${warn}${adv}${satNote}` };
+  const facing = input.facing ?? facingLabel(f.rotation);
+  return doPlaceItems(plan, {
+    room_name: destRoom.name,
+    items: [
+      {
+        type: f.type,
+        furniture_id: f.id,
+        center_x: input.center_x,
+        center_y: input.center_y,
+        ...(facing === "norte" || facing === "sul" || facing === "leste" || facing === "oeste"
+          ? { facing }
+          : {}),
+      },
+    ],
+  });
 }
 
 // ---------- Layout transformations ----------

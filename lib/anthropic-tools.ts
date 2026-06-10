@@ -537,15 +537,17 @@ export const tools: Anthropic.Tool[] = [
   },
   {
     name: "move_furniture",
-    description: "Move um móvel para uma posição absoluta (em metros) na planta.",
+    description:
+      "Move um móvel existente: novo CENTRO em metros (mundo) + opcionalmente nova frente. Atalho de place_items para uma peça (mesma física: área útil, colisões, portas). Para mover várias peças, prefira um único place_items com furniture_id em cada item.",
     input_schema: {
       type: "object",
       properties: {
         furniture_id: { type: "string" },
-        new_x: { type: "number" },
-        new_y: { type: "number" },
+        center_x: { type: "number", description: "Novo centro X em metros (mundo)." },
+        center_y: { type: "number", description: "Novo centro Y em metros (mundo; y cresce para o sul)." },
+        facing: { type: "string", enum: ["norte", "sul", "leste", "oeste"], description: "Nova frente (opcional — mantém a atual se omitido)." },
       },
-      required: ["furniture_id", "new_x", "new_y"],
+      required: ["furniture_id", "center_x", "center_y"],
     },
   },
 
@@ -706,6 +708,45 @@ export const tools: Anthropic.Tool[] = [
         },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "place_items",
+    description:
+      "COMPONHA a mobília: posicione uma ou várias peças com coordenadas do MUNDO em metros — você decide onde cada coisa fica, o motor só aplica física (área útil, colisões, chegada/giro de portas) e rejeita com números exatos quando algo é impossível. Posição = CENTRO da peça (invariante à rotação); `facing` = para onde a FRENTE aponta. Atalhos de régua-T: `snap: \"norte|sul|leste|oeste\"` encosta a peça na face interna da parede (você dá só `along`, o centro AO LONGO da parede) com as costas para ela; `snap: \"junto_de:<id ou label>\"` encaixa cadeira/banco na frente do parceiro (tuck). Para MOVER uma peça existente, inclua `furniture_id`. Envie o cômodo INTEIRO num lote — o resultado volta com a imagem para você revisar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string", description: "Tipo do móvel (catálogo FURN_DEFS)." },
+              label: { type: "string" },
+              center_x: { type: "number", description: "Centro X em metros (mundo)." },
+              center_y: { type: "number", description: "Centro Y em metros (mundo; y cresce para o SUL)." },
+              facing: {
+                type: "string",
+                enum: ["norte", "sul", "leste", "oeste"],
+                description: "Para onde a FRENTE da peça aponta. Default: sul (ou oposto da parede do snap).",
+              },
+              snap: {
+                type: "string",
+                description: "Régua-T: \"norte|sul|leste|oeste\" (flush na face interna; informe `along`) ou \"junto_de:<id|label>\" (tuck no parceiro).",
+              },
+              along: {
+                type: "number",
+                description: "Com snap de parede: centro da peça AO LONGO da parede, em metros do mundo.",
+              },
+              furniture_id: { type: "string", description: "Presente = MOVE esta peça existente." },
+            },
+            required: ["type"],
+          },
+        },
+      },
+      required: ["room_name", "items"],
     },
   },
   {

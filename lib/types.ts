@@ -519,7 +519,31 @@ export type ToolName =
   // ---- knowledge base (RAG) ----
   | "search_knowledge_base"
   // ---- visão (render sob demanda para o agente) ----
-  | "preview_plan";
+  | "preview_plan"
+  // ---- composição direta pelo modelo (motor = física) ----
+  | "place_items";
+
+/** Direção cardinal em PT-BR (frente da peça / parede de snap). */
+export type CardinalPT = "norte" | "sul" | "leste" | "oeste";
+
+/** Um item do place_items: o MODELO compõe (centro em metros no mundo +
+ *  frente), o motor só aplica física. `snap` é régua-T: encosta na face
+ *  interna da parede (dando só `along`) ou no parceiro ("junto_de:..."). */
+export interface PlaceItem {
+  type: FurnitureType;
+  label?: string;
+  /** Centro da peça em coords de MUNDO (metros). Invariante à rotação. */
+  center_x?: number;
+  center_y?: number;
+  /** Para onde a FRENTE aponta. Default: sul (ou oposto da parede do snap). */
+  facing?: CardinalPT;
+  /** Régua-T: parede ("norte"...) ou "junto_de:<id|label>" (tuck satélite). */
+  snap?: string;
+  /** Com snap de parede: coordenada do CENTRO ao longo dela (mundo). */
+  along?: number;
+  /** Presente = MOVE a peça existente (place = criar OU mover). */
+  furniture_id?: string;
+}
 
 export type FurnitureGroup =
   | "dining_set_4"
@@ -645,7 +669,12 @@ export interface ToolInputs {
   remove_furniture: { furniture_id?: string; label?: string };
   set_floor_material: { room_name: string; material: FloorMaterial };
   set_railing_material: { room_name: string; material: "concrete" | "glass" | "metal" };
-  move_furniture: { furniture_id: string; new_x: number; new_y: number };
+  move_furniture: {
+    furniture_id: string;
+    center_x: number;
+    center_y: number;
+    facing?: CardinalPT;
+  };
   create_apartment_layout: {
     total_area: number;
     num_bedrooms: number;
@@ -746,6 +775,7 @@ export interface ToolInputs {
   };
   search_knowledge_base: { query: string; category?: string };
   preview_plan: { room_name?: string };
+  place_items: { room_name: string; items: PlaceItem[] };
 }
 
 // ----- Selection -----

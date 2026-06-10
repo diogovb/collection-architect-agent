@@ -467,7 +467,7 @@ console.log("\n[22] DOOR_APPROACH_BLOCKED graduado: ≥50% erro, <50% sem erro, 
   check("sofá ao sul ok", sofa22.ok, sofa22.message);
   const sofaF22 = p22d.furniture.find((f) => f.type === "sofa_3seat");
   const mv = applyTool(p22d, "move_furniture", {
-    furniture_id: sofaF22!.id, new_x: 1.0, new_y: 0.1,
+    furniture_id: sofaF22!.id, center_x: 2.0, center_y: 0.5,
   });
   check("mover para a boca da porta REJEITADO", !mv.ok, mv.message);
   check("motivo cita chegada/arco da porta", /chegada da porta|arco/.test(mv.message), mv.message);
@@ -512,7 +512,12 @@ console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; 
 
     // move_furniture da cadeira para a pose tucked NÃO pode ser rejeitado
     // (regressão da isenção em findFurnitureOverlap).
-    const mv23 = applyTool(p23, "move_furniture", { furniture_id: chair23.id, new_x: chair23.x + 0.05, new_y: chair23.y });
+    const chairBB23 = worldAABB(chair23);
+    const mv23 = applyTool(p23, "move_furniture", {
+      furniture_id: chair23.id,
+      center_x: chairBB23.x + chairBB23.w / 2 + 0.05,
+      center_y: chairBB23.y + chairBB23.h / 2,
+    });
     check("mover cadeira dentro do encaixe PASSA", mv23.ok, mv23.message);
 
     // Mesa movida → cadeira acompanha (re-pose).
@@ -520,8 +525,8 @@ console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; 
     const deskBB = worldAABB(desk23);
     const mvDesk = applyTool(p23, "move_furniture", {
       furniture_id: desk23.id,
-      new_x: usable23.x + usable23.w - deskBB.w - 0.6,
-      new_y: desk23.y,
+      center_x: usable23.x + usable23.w - deskBB.w / 2 - 0.6,
+      center_y: deskBB.y + deskBB.h / 2,
     });
     if (mvDesk.ok) {
       const gap2 = (() => {
@@ -555,6 +560,113 @@ console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; 
   } as Furniture);
   const c23b = codes(p23b);
   check("órfã no centro → FURNITURE_FLOATING", c23b.includes("warning:FURNITURE_FLOATING"), c23b.join(", "));
+}
+
+// ---------- Cenário 24: place_items — física da composição direta ----------
+console.log("\n[24] place_items: snap flush, facing↔rotação, colisão numérica, corredor, batch parcial");
+{
+  const p24 = emptyPlan();
+  applyTool(p24, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+  applyTool(p24, "add_door", { room_name: "Sala", wall: "north", position: 0.5, size: 0.8 });
+  const u24 = usableRect(p24, p24.rooms[0]);
+
+  // snap sul: flush na face interna, costas ao sul (frente norte = rot 180)
+  const r1 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [{ type: "sofa_3seat", snap: "sul", along: 2.0 }],
+  });
+  check("snap sul aplicado", r1.ok, r1.message);
+  const sofa24 = p24.furniture.find((f) => f.type === "sofa_3seat")!;
+  const sbb = worldAABB(sofa24);
+  check("flush na face interna sul", Math.abs(sbb.y + sbb.h - (u24.y + u24.h)) <= 0.011, `gap=${(u24.y + u24.h - sbb.y - sbb.h).toFixed(3)}`);
+  check("costas ao sul (rot 180)", (sofa24.rotation ?? 0) === 180, `rot=${sofa24.rotation}`);
+
+  // snap leste: rotação 90 e flush na face leste
+  const r2 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [{ type: "desk_study", snap: "leste", along: 1.2 }],
+  });
+  check("snap leste aplicado", r2.ok, r2.message);
+  const desk24 = p24.furniture.find((f) => f.type === "desk_study")!;
+  const dbb = worldAABB(desk24);
+  check("flush na face interna leste", Math.abs(dbb.x + dbb.w - (u24.x + u24.w)) <= 0.011, `gap=${(u24.x + u24.w - dbb.x - dbb.w).toFixed(3)}`);
+  check("costas ao leste (rot 90)", (desk24.rotation ?? 0) === 90, `rot=${desk24.rotation}`);
+
+  // colisão: rejeição cita a peça e o retângulo dela
+  const r3 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [{ type: "armchair", center_x: sbb.x + sbb.w / 2, center_y: sbb.y + sbb.h / 2 }],
+  });
+  check("colisão rejeitada", !r3.ok, r3.message);
+  check("mensagem cita peça e ocupação numérica", /colide com .*ocupa x .*y /.test(r3.message), r3.message);
+
+  // corredor de porta: armário na boca do vão norte
+  const r4 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [{ type: "wardrobe_hinged", snap: "norte", along: 2.0 }],
+  });
+  check("boca da porta rejeitada", !r4.ok, r4.message);
+  // A porta abre para CÁ: o disco de giro pega antes do corredor — ambos
+  // são física de porta e qualquer um justifica a rejeição.
+  check("motivo cita física da porta (giro ou chegada)", /chegada da porta|arco de abertura/.test(r4.message), r4.message);
+
+  // estouro de parede: faixa válida na mensagem
+  const r5 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [{ type: "bed_double", snap: "oeste", along: u24.y + 0.1 }],
+  });
+  check("estouro rejeitado com faixa válida", !r5.ok && /centro válido|não cabe/.test(r5.message), r5.message);
+
+  // batch parcial: 1 ok + 1 colisão → aplica o válido e relata o resto
+  const r6 = applyTool(p24, "place_items", {
+    room_name: "Sala",
+    items: [
+      { type: "rug_rect", center_x: 2.0, center_y: 1.8 },
+      { type: "toy_shelf", center_x: sbb.x + sbb.w / 2, center_y: sbb.y + sbb.h / 2 },
+    ],
+  });
+  check("batch parcial: ok com 1/2", r6.ok && /1\/2/.test(r6.message), r6.message);
+}
+
+// ---------- Cenário 25: place_items — junto_de + move com re-pose ----------
+console.log("\n[25] place_items: junto_de (tuck) e mover a mesa leva a cadeira junto");
+{
+  const p25 = emptyPlan();
+  applyTool(p25, "create_room", { name: "Escritório", width: 4.0, height: 4.0, x: 0, y: 0 });
+  applyTool(p25, "add_door", { room_name: "Escritório", wall: "south", position: 0.5 });
+  const rDesk = applyTool(p25, "place_items", {
+    room_name: "Escritório",
+    items: [{ type: "desk_study", snap: "norte", along: 2.0 }],
+  });
+  check("mesa ao norte", rDesk.ok, rDesk.message);
+  const rChair = applyTool(p25, "place_items", {
+    room_name: "Escritório",
+    items: [{ type: "desk_chair", snap: "junto_de:Escrivaninha" }],
+  });
+  check("cadeira junto_de aplicada", rChair.ok, rChair.message);
+  const desk25 = p25.furniture.find((f) => f.type === "desk_study")!;
+  const chair25 = p25.furniture.find((f) => f.type === "desk_chair")!;
+  const gapOf = (a: Furniture, b: Furniture) => {
+    const A = worldAABB(a); const B = worldAABB(b);
+    const dx = Math.max(0, Math.max(A.x - (B.x + B.w), B.x - (A.x + A.w)));
+    const dy = Math.max(0, Math.max(A.y - (B.y + B.h), B.y - (A.y + A.h)));
+    return Math.hypot(dx, dy);
+  };
+  check("cadeira encaixada (tuck)", gapOf(desk25, chair25) <= 0.01, `gap=${gapOf(desk25, chair25).toFixed(3)}`);
+  check("cadeira de frente p/ a mesa (rot 180)", (chair25.rotation ?? 0) === 180, `rot=${chair25.rotation}`);
+
+  // Mover a mesa via place_items (furniture_id + snap leste) → cadeira acompanha
+  const rMove = applyTool(p25, "place_items", {
+    room_name: "Escritório",
+    items: [{ type: "desk_study", furniture_id: desk25.id, snap: "leste", along: 2.0 }],
+  });
+  check("mesa movida p/ leste", rMove.ok, rMove.message);
+  check("cadeira acompanhou (tuck preservado)", gapOf(
+    p25.furniture.find((f) => f.id === desk25.id)!,
+    p25.furniture.find((f) => f.id === chair25.id)!
+  ) <= 0.01, rMove.message);
+  check("cadeira reorientada (rot 270)", (p25.furniture.find((f) => f.id === chair25.id)!.rotation ?? 0) === 270,
+    `rot=${p25.furniture.find((f) => f.id === chair25.id)!.rotation}`);
 }
 
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);

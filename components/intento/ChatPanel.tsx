@@ -40,6 +40,8 @@ const PROJECT_PROMPTS = [
 const TOOL_LABEL_PT: Partial<Record<ToolName, string>> = {
   create_room: "Criando cômodo",
   add_furniture: "Posicionando mobiliário",
+  place_items: "Compondo mobiliário",
+  preview_plan: "Olhando a planta",
   add_door: "Inserindo porta",
   add_window: "Inserindo janela",
   set_floor_material: "Aplicando piso",
