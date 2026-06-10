@@ -356,7 +356,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_millwork_run",
     description:
-      "Cria uma instalação de marcenaria CONTÍNUA ao longo de uma parede (ou freestanding) — bancada de fora a fora com módulos colados. ESSA É A FORMA CORRETA DE MOBILIAR cozinha, banheiro, closet, lavanderia, espaço gourmet, parede de TV. NÃO use add_furniture com fogão/pia/geladeira soltos — use os módulos correspondentes (cooktop_4, sink_double, fridge_niche) dentro de um único `add_millwork_run`. O engine gera bancada contínua com cutouts onde tem cooktop/sink + armários superiores tracejados acima dos módulos não-tall + exaustor sobre cooktop quando hood_above=true. Pode chamar 2-3 vezes pra cozinhas em L/U (1 run por parede).",
+      "Cria uma instalação de marcenaria CONTÍNUA ao longo de uma parede (ou freestanding) — bancada de fora a fora com módulos colados. ESSA É A FORMA CORRETA DE MOBILIAR cozinha, banheiro, closet, lavanderia, espaço gourmet, parede de TV. NÃO use add_furniture com fogão/pia/geladeira soltos — use os módulos correspondentes (cooktop_4, sink_double, fridge_niche) dentro de um único `add_millwork_run`. O engine gera bancada contínua com cutouts onde tem cooktop/sink + armários superiores tracejados acima dos módulos não-tall + exaustor sobre cooktop quando hood_above=true. Pode chamar 2-3 vezes pra cozinhas em L/U (1 run por parede). O resultado volta com a IMAGEM do cômodo — REVISE-a antes de prosseguir.",
     input_schema: {
       type: "object",
       properties: {
@@ -505,7 +505,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_furniture_group",
     description:
-      "Adiciona um conjunto pré-definido de móveis num cômodo via template profissional resolvido pelo solver pontuado (lê portas/janelas, zoneia como arquiteto, valida tudo). Ex: 'dining_set_6', 'bedroom_couple_basic', 'kids_room_basic'. Itens que não couberem são omitidos com explicação.",
+      "Adiciona um conjunto pré-definido de móveis num cômodo via template profissional resolvido pelo solver pontuado (lê portas/janelas, zoneia como arquiteto, valida tudo). Ex: 'dining_set_6', 'bedroom_couple_basic', 'kids_room_basic'. Itens que não couberem são omitidos com explicação. O resultado volta com a IMAGEM do cômodo — REVISE-a antes de seguir para o próximo (porta alcançável? nada solto no meio? nada sobre parede?).",
     input_schema: {
       type: "object",
       properties: {
@@ -672,7 +672,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "furnish_room",
     description:
-      "Mobilia automaticamente um cômodo com o template profissional do tipo dele (cama em parede sólida, escrivaninha perto da janela, centro livre — o solver pontuado lê portas/janelas e valida tudo). Chame quando o cliente pedir para mobiliar um cômodo (ou vários) sem especificar peças; quando ele pedir controle fino, use place_furniture_intent peça a peça.",
+      "Mobilia automaticamente um cômodo com o template profissional do tipo dele (cama em parede sólida, escrivaninha perto da janela, cadeira encaixada na mesa, centro livre — o solver pontuado lê portas/janelas e valida tudo). Chame quando o cliente pedir para mobiliar um cômodo (ou vários) sem especificar peças; quando ele pedir controle fino, use place_furniture_intent peça a peça. IMPORTANTE: só mobilie depois do shell completo (todas as portas e janelas do cômodo já criadas). O resultado volta com a IMAGEM do cômodo — REVISE-a antes de seguir para o próximo.",
     input_schema: {
       type: "object",
       properties: {
