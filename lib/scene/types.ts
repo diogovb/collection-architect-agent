@@ -239,9 +239,6 @@ export interface Transform {
 /** Editor tool currently active in the toolbar. */
 export type Tool = "select" | "move" | "wall" | "dimension" | "door" | "window";
 
-/** View mode for the canvas. */
-export type ViewMode = "2d" | "3d";
-
 export interface DiagnosticIssue {
   code: string;
   severity: "error" | "warning" | "info";
@@ -272,8 +269,6 @@ export interface SceneState {
   diagnostics: DiagnosticIssue[];
   /** Active tool. */
   tool: Tool;
-  /** Current view mode. */
-  viewMode: ViewMode;
   /** When true, drags snap to a 10 cm grid + wall endpoints. The user can
    *  toggle this via the toolbar magnet button or by pressing S. */
   snapEnabled: boolean;

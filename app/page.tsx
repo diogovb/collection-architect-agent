@@ -16,7 +16,6 @@ const Canvas = dynamic(
   () => import("@/components/canvas/Canvas").then((m) => m.Canvas),
   { ssr: false, loading: () => <div className="w-full h-full" style={{ background: "#FAF7F0" }} /> }
 );
-import { RenderMode } from "@/components/intento/RenderMode";
 import { PresentationMode } from "@/components/intento/PresentationMode";
 import { ShoppingMode } from "@/components/intento/ShoppingMode";
 import { CommandPalette } from "@/components/intento/CommandPalette";
@@ -213,9 +212,6 @@ export default function Page() {
               plan={v.plan}
               selected={v.selected}
               onSelect={v.setSelected}
-              cameras={v.cameras}
-              activeCameraId={v.activeCameraId}
-              onSelectCamera={v.setActiveCameraId}
               lang={v.lang}
             />
             <section className="flex-1 min-w-0 min-h-0 relative bg-bg overflow-hidden flex items-center justify-center">
@@ -252,17 +248,6 @@ export default function Page() {
           </>
         )}
 
-        {v.mode === "render" && (
-          <RenderMode
-            cameras={v.cameras}
-            setCameras={v.setCameras}
-            activeCameraId={v.activeCameraId}
-            setActiveCameraId={v.setActiveCameraId}
-            generateCamera={v.generateCamera}
-            lang={v.lang}
-          />
-        )}
-
         {v.mode === "presentation" && (
           <PresentationMode
             slides={v.slides}
@@ -270,7 +255,6 @@ export default function Page() {
             activeSlideId={v.activeSlideId}
             setActiveSlideId={v.setActiveSlideId}
             plan={v.plan}
-            cameras={v.cameras}
             lang={v.lang}
           />
         )}

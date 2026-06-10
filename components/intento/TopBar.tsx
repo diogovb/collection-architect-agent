@@ -15,7 +15,7 @@ interface Props {
   versionLabel?: string;
 }
 
-const MODES: Mode[] = ["plan", "render", "presentation", "shopping"];
+const MODES: Mode[] = ["plan", "presentation", "shopping"];
 
 export function TopBar({ mode, setMode, lang, setLang, onCommandPalette, plan, versionLabel }: Props) {
   const totalArea = plan.rooms.reduce((s, r) => s + r.width * r.height, 0);

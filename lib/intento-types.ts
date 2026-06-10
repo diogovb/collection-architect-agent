@@ -1,35 +1,8 @@
 // Intento Project specific types — UI state, mock entities, modes.
 
-export type Mode = "plan" | "render" | "presentation" | "shopping";
+export type Mode = "plan" | "presentation" | "shopping";
 
 export type RightTab = "chat" | "refs" | "collection" | "versions";
-
-export type CameraStatus = "ready" | "outdated" | "empty" | "generating";
-
-export interface Camera {
-  id: string;
-  name: string;
-  /** position in meters on plan */
-  x: number;
-  y: number;
-  /** facing angle in degrees, 0 = east, 90 = south */
-  angle: number;
-  /** field of view in degrees */
-  fov: number;
-  /** vision range in meters */
-  range: number;
-  status: CameraStatus;
-  /** placeholder render seed, optional URL or null */
-  renderUrl?: string | null;
-  /** time of last render generation */
-  lastGeneratedAt?: string;
-  /** lighting/atmosphere knobs */
-  atmosphere?: {
-    lightHour: number; // 0-24
-    warmth: number; // 0-100
-    materialIntensity: number; // 0-100
-  };
-}
 
 export interface ReferenceImage {
   id: string;
@@ -111,7 +84,6 @@ export type SlideKind =
   | "cover"
   | "concept"
   | "plan"
-  | "render"
   | "materials"
   | "products"
   | "list"
@@ -124,7 +96,7 @@ export interface Slide {
   title?: string;
   subtitle?: string;
   body?: string;
-  /** Reference id (camera id for render slides, etc) */
+  /** Reference id for slides that point at another entity. */
   refId?: string;
 }
 

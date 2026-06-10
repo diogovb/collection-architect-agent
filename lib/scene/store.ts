@@ -15,7 +15,6 @@ import type {
   Tool,
   Vec2,
   Vec3,
-  ViewMode,
 } from "./types";
 
 const ROOT_ID = "building:root";
@@ -46,7 +45,6 @@ function emptyScene(): SceneState {
     liveTransforms: new Map(),
     diagnostics: [],
     tool: "select",
-    viewMode: "2d",
     snapEnabled: readSnapPreference(),
   };
 }
@@ -85,7 +83,6 @@ interface SceneStore extends SceneState {
   toggleSelection: (id: NodeId, additive: boolean) => void;
   setHover: (id: NodeId | null) => void;
   setTool: (tool: Tool) => void;
-  setViewMode: (mode: ViewMode) => void;
   setSnapEnabled: (enabled: boolean) => void;
 
   // Ephemeral transforms (drag previews)
@@ -201,7 +198,6 @@ export const useSceneStore = create<SceneStore>((set, get) => ({
     }),
   setHover: (id) => set({ hovered: id }),
   setTool: (tool) => set({ tool }),
-  setViewMode: (mode) => set({ viewMode: mode }),
   setSnapEnabled: (enabled) => {
     writeSnapPreference(enabled);
     set({ snapEnabled: enabled });

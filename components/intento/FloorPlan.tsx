@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Door, FloorPlan, Furniture, Room, SelectedElement, Wall, Window as PlanWindow } from "@/lib/types";
-import type { Camera } from "@/lib/intento-types";
 
 const M_TO_PX = 50; // 1 meter = 50px
 const SNAP_M = 0.1; // 10cm grid for furniture/walls
@@ -12,9 +11,6 @@ interface Props {
   plan: FloorPlan;
   selected: SelectedElement | null;
   onSelect: (s: SelectedElement | null) => void;
-  cameras: Camera[];
-  activeCameraId?: string;
-  onSelectCamera?: (id: string) => void;
   showDiff?: boolean;
   diffTargetId?: string | null;
   /** light/clean style for presentation. */
@@ -162,9 +158,6 @@ export function FloorPlan({
   plan,
   selected,
   onSelect,
-  cameras,
-  activeCameraId,
-  onSelectCamera,
   showDiff,
   diffTargetId,
   variant = "editor",
@@ -618,13 +611,6 @@ export function FloorPlan({
           <DivisorDiff plan={plan} toX={toX} toY={toY} />
         )}
 
-        {/* Cameras */}
-        {isEditor && cameras.map((c) => (
-          <CameraPin key={c.id} cam={c} toX={toX} toY={toY}
-                     active={activeCameraId === c.id}
-                     onSelect={() => onSelectCamera?.(c.id)} />
-        ))}
-
         {/* Dimensions for living room (illustrative) */}
         {isEditor && (
           <Dimensions plan={plan} toX={toX} toY={toY} />
@@ -1072,38 +1058,6 @@ function DivisorDiff({ plan, toX, toY }: { plan: FloorPlan; toX: (m: number) => 
         <text x="30" y="12" textAnchor="middle" fontSize="10" fill="#fff"
               style={{ fontFamily: "var(--font-jetbrains-mono)", letterSpacing: "0.08em" }}>+50 CM</text>
       </g>
-    </g>
-  );
-}
-
-function CameraPin({ cam, toX, toY, active, onSelect }:
-  { cam: Camera; toX: (m: number) => number; toY: (m: number) => number; active?: boolean; onSelect: () => void; }) {
-  const cx = toX(cam.x);
-  const cy = toY(cam.y);
-  const range = cam.range * M_TO_PX;
-  const halfFov = cam.fov / 2;
-  const a1 = ((cam.angle - halfFov) * Math.PI) / 180;
-  const a2 = ((cam.angle + halfFov) * Math.PI) / 180;
-  const x1 = cx + range * Math.cos(a1);
-  const y1 = cy + range * Math.sin(a1);
-  const x2 = cx + range * Math.cos(a2);
-  const y2 = cy + range * Math.sin(a2);
-  const largeArc = halfFov > 90 ? 1 : 0;
-
-  const statusColor =
-    cam.status === "ready" ? "#3a8a48" :
-    cam.status === "outdated" ? "#a85c2e" :
-    cam.status === "generating" ? "#B8552E" : "#8C8478";
-
-  return (
-    <g onClick={(e) => { e.stopPropagation(); onSelect(); }} style={{ cursor: "pointer" }}>
-      <path
-        d={`M ${cx} ${cy} L ${x1} ${y1} A ${range} ${range} 0 ${largeArc} 1 ${x2} ${y2} Z`}
-        fill={active ? "rgba(184,85,46,0.16)" : "rgba(184,85,46,0.07)"}
-        stroke="rgba(184,85,46,0.4)" strokeWidth="0.6"
-      />
-      <circle cx={cx} cy={cy} r={active ? 8 : 6} fill="#fff" stroke={statusColor} strokeWidth="2" />
-      <circle cx={cx} cy={cy} r="2" fill={statusColor} />
     </g>
   );
 }

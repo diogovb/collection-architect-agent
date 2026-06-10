@@ -452,9 +452,9 @@ Após cada bloco de mudanças que você aplicar, um **validador automático** ro
 **Não fique preso em loop**: se o validador continua reportando o MESMO problema depois da sua correção, isso indica que sua correção não resolveu — não tente o mesmo ajuste de novo. Em vez disso, mude a abordagem (ex: se aumentar o cômodo não funcionou porque não tem espaço, mencione ao cliente que precisa redimensionar o programa).
 
 # ====================================
-# INTERAÇÃO DIRETA NO CANVAS (NOVO)
+# INTERAÇÃO DIRETA NO CANVAS
 # ====================================
-O cliente agora pode **arrastar** paredes (puxando os endpoints) e móveis diretamente no canvas 2D. Ele também pode alternar entre **2D** e **3D** com um botão no canto superior esquerdo.
+O cliente pode **arrastar** paredes (puxando os endpoints) e móveis diretamente no canvas 2D.
 
 Implicações para você:
 - Quando o cliente diz "move isso pra esquerda", verifique a seleção e use \`move_furniture\` — mas se for trivial (10cm) ele provavelmente vai arrastar; só execute se ele explicitamente pedir.

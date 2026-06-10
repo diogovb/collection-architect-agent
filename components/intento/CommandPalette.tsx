@@ -16,7 +16,6 @@ export function CommandPalette({ open, setOpen, setMode }: Props) {
 
   const cmds: Cmd[] = [
     { id: "mode-plan", group: "Modo", label: "Ir para Planta", run: () => setMode("plan") },
-    { id: "mode-render", group: "Modo", label: "Ir para Render", run: () => setMode("render") },
     { id: "mode-presentation", group: "Modo", label: "Ir para Apresentação", run: () => setMode("presentation") },
     { id: "mode-shopping", group: "Modo", label: "Ir para Lista de Compras", run: () => setMode("shopping") },
     { id: "ai-suggest", group: "IA", label: "Sugerir melhorias para a planta atual", run: () => setMode("plan") },

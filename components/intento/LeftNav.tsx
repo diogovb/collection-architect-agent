@@ -1,7 +1,6 @@
 "use client";
 
 import type { FloorPlan, SelectedElement } from "@/lib/types";
-import type { Camera, CameraStatus } from "@/lib/intento-types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 
@@ -9,13 +8,10 @@ interface Props {
   plan: FloorPlan;
   selected: SelectedElement | null;
   onSelect: (s: SelectedElement | null) => void;
-  cameras: Camera[];
-  activeCameraId: string;
-  onSelectCamera: (id: string) => void;
   lang: Lang;
 }
 
-export function LeftNav({ plan, selected, onSelect, cameras, activeCameraId, onSelectCamera, lang }: Props) {
+export function LeftNav({ plan, selected, onSelect, lang }: Props) {
   return (
     <aside className="w-[220px] shrink-0 border-r border-line bg-panel flex flex-col h-full">
       {/* Environments */}
@@ -34,30 +30,6 @@ export function LeftNav({ plan, selected, onSelect, cameras, activeCameraId, onS
                 >
                   <span className="text-[12.5px] truncate">{r.name}</span>
                   <span className="font-mono text-[10px] text-muted ml-2">{area}m²</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      </Section>
-
-      <div className="divider mx-3" />
-
-      {/* Cameras */}
-      <Section label={t(lang, "nav.cameras")}>
-        <ul className="space-y-0.5">
-          {cameras.map((c) => {
-            const isSel = activeCameraId === c.id;
-            return (
-              <li key={c.id}>
-                <button
-                  onClick={() => onSelectCamera(c.id)}
-                  className={`w-full text-left px-3 py-1.5 rounded-[5px] flex items-center gap-2 transition-colors ${
-                    isSel ? "bg-accent-soft text-ink" : "hover:bg-panel-alt"
-                  }`}
-                >
-                  <CameraStatusDot status={c.status} />
-                  <span className="text-[12.5px] truncate flex-1">{c.name}</span>
                 </button>
               </li>
             );
@@ -89,24 +61,5 @@ function Section({ label, children }: { label: string; children: React.ReactNode
       <div className="label-mono px-2 mb-2">{label}</div>
       {children}
     </div>
-  );
-}
-
-function CameraStatusDot({ status }: { status: CameraStatus }) {
-  const cfg: Record<CameraStatus, { color: string; label: string }> = {
-    ready: { color: "var(--status-ready)", label: "PRONTA" },
-    outdated: { color: "var(--status-outdated)", label: "REVER" },
-    empty: { color: "#8C8478", label: "VAZIA" },
-    generating: { color: "var(--accent)", label: "RENDER" },
-  };
-  const c = cfg[status];
-  return (
-    <span
-      className="inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.5 rounded-sm"
-      style={{ background: "rgba(0,0,0,0.025)", color: c.color, letterSpacing: "0.08em" }}
-    >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: c.color }} />
-      {c.label}
-    </span>
   );
 }

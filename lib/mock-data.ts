@@ -1,5 +1,4 @@
 import type {
-  Camera,
   CollectionItem,
   ReferenceImage,
   ShoppingRow,
@@ -77,42 +76,6 @@ export function seedPlan(): FloorPlan {
     ],
   };
 }
-
-/* -------------------- Cameras -------------------- */
-export const SEED_CAMERAS: Camera[] = [
-  {
-    id: "cam-1",
-    name: "Estar — vista do entrada",
-    x: 2.8, y: 0.6, angle: 75, fov: 60, range: 4.5,
-    status: "ready",
-    renderUrl: null,
-    lastGeneratedAt: "2026-04-26T14:20:00Z",
-    atmosphere: { lightHour: 16, warmth: 65, materialIntensity: 55 },
-  },
-  {
-    id: "cam-2",
-    name: "Cozinha — ilha frontal",
-    x: 8.6, y: 7.6, angle: -90, fov: 65, range: 4.0,
-    status: "outdated",
-    renderUrl: null,
-    lastGeneratedAt: "2026-04-22T10:00:00Z",
-    atmosphere: { lightHour: 11, warmth: 50, materialIntensity: 70 },
-  },
-  {
-    id: "cam-3",
-    name: "Suíte — cabeceira",
-    x: 4.0, y: 8.0, angle: -90, fov: 55, range: 3.8,
-    status: "empty",
-    atmosphere: { lightHour: 19, warmth: 75, materialIntensity: 50 },
-  },
-  {
-    id: "cam-4",
-    name: "Escritório — bancada",
-    x: 11.0, y: 0.6, angle: 180, fov: 55, range: 3.5,
-    status: "empty",
-    atmosphere: { lightHour: 14, warmth: 45, materialIntensity: 60 },
-  },
-];
 
 /* -------------------- References -------------------- */
 export const SEED_REFS: ReferenceImage[] = [
@@ -194,8 +157,6 @@ export const SEED_SLIDES: Slide[] = [
   { id: "sl-1", kind: "cover", title: "Loft Atelier", subtitle: "Projeto residencial / 168m²" },
   { id: "sl-2", kind: "concept", title: "Conceito", body: "Materialidade quente, terracota e madeira clara, com pontos de pedra natural escura como contraponto." },
   { id: "sl-3", kind: "plan", title: "Planta humanizada" },
-  { id: "sl-4", kind: "render", title: "Sala de Estar", refId: "cam-1" },
-  { id: "sl-5", kind: "render", title: "Cozinha", refId: "cam-2" },
   { id: "sl-6", kind: "materials", title: "Paleta de materiais" },
   { id: "sl-7", kind: "products", title: "Produtos selecionados" },
   { id: "sl-8", kind: "list", title: "Lista de compras" },

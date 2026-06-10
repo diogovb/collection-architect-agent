@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { FloorPlan } from "@/lib/types";
-import type { Camera, Slide, SlideKind } from "@/lib/intento-types";
+import type { Slide, SlideKind } from "@/lib/intento-types";
 import type { Lang } from "@/lib/i18n";
 import { t } from "@/lib/i18n";
 import { FloorPlan as FloorPlanSvg } from "./FloorPlan";
@@ -13,7 +13,6 @@ interface Props {
   activeSlideId: string;
   setActiveSlideId: (id: string) => void;
   plan: FloorPlan;
-  cameras: Camera[];
   lang: Lang;
 }
 
@@ -27,7 +26,6 @@ const KIND_LABEL: Record<SlideKind, string> = {
   cover: "CAPA",
   concept: "CONCEITO",
   plan: "PLANTA",
-  render: "RENDER",
   materials: "MATERIAIS",
   products: "PRODUTOS",
   list: "LISTA",
@@ -35,7 +33,7 @@ const KIND_LABEL: Record<SlideKind, string> = {
   section: "SEÇÃO",
 };
 
-export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSlideId, plan, cameras, lang }: Props) {
+export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSlideId, plan, lang }: Props) {
   const [fullscreen, setFullscreen] = useState(false);
   const [tone, setTone] = useState("client");
 
@@ -63,7 +61,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
           <div className="label-mono mb-2">APRESENTAÇÃO</div>
           <div className="editorial text-[20px] mb-2">Nenhum slide ainda</div>
           <p className="text-[12.5px] text-muted leading-relaxed">
-            Conforme o projeto evolui, peça ao seu agente para gerar uma apresentação a partir das câmeras e materiais.
+            Conforme o projeto evolui, peça ao seu agente para gerar uma apresentação a partir da planta e dos materiais.
           </p>
         </div>
       </div>
@@ -81,7 +79,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
     return (
       <div className="fixed inset-0 z-50 bg-ink flex items-center justify-center">
         <div className="aspect-[16/9] w-[90vw] max-w-[1600px] bg-bg shadow-2xl">
-          <SlideContent slide={slide} plan={plan} cameras={cameras} editable={false} onChange={() => {}} />
+          <SlideContent slide={slide} plan={plan} editable={false} onChange={() => {}} />
         </div>
         <div className="absolute top-4 right-4 flex items-center gap-2">
           <span className="font-mono text-[11px] text-white/60">{idx + 1} / {slides.length}</span>
@@ -139,7 +137,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
           </div>
 
           <div className="aspect-[16/9] bg-panel border border-line rounded-md overflow-hidden">
-            <SlideContent slide={slide} plan={plan} cameras={cameras} editable onChange={updateSlide} />
+            <SlideContent slide={slide} plan={plan} editable onChange={updateSlide} />
           </div>
         </div>
       </section>
@@ -172,7 +170,7 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
               </li>
               <li className="card-alt p-2.5">
                 <span className="text-accent text-[11px] mr-1">✶</span>
-                Mover slide de materiais para antes dos renders
+                Mover slide de materiais para logo após a planta
               </li>
             </ul>
           </div>
@@ -202,14 +200,13 @@ export function PresentationMode({ slides, setSlides, activeSlideId, setActiveSl
 
 function SlideThumb({ slide }: { slide: Slide }) {
   if (slide.kind === "cover") return <div className="w-full h-full" style={{ background: "linear-gradient(135deg,#FAF7F0,#E6DFD2)" }} />;
-  if (slide.kind === "render") return <div className="w-full h-full" style={{ background: "linear-gradient(135deg,#E8C794,#B8804E)" }} />;
   if (slide.kind === "plan") return <div className="w-full h-full bg-bg" />;
   if (slide.kind === "materials") return <div className="w-full h-full grid grid-cols-3"><div style={{ background: "#A8967A" }} /><div style={{ background: "#3F362A" }} /><div style={{ background: "#D9CFB8" }} /></div>;
   return <div className="w-full h-full bg-panel-alt" />;
 }
 
-function SlideContent({ slide, plan, cameras, editable, onChange }:
-  { slide: Slide; plan: FloorPlan; cameras: Camera[]; editable: boolean; onChange: (p: Partial<Slide>) => void; }) {
+function SlideContent({ slide, plan, editable, onChange }:
+  { slide: Slide; plan: FloorPlan; editable: boolean; onChange: (p: Partial<Slide>) => void; }) {
   if (slide.kind === "cover") {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center p-12 text-center" style={{ background: "linear-gradient(135deg,#FAF7F0,#E6DFD2)" }}>
@@ -258,22 +255,8 @@ function SlideContent({ slide, plan, cameras, editable, onChange }:
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <FloorPlanSvg
             plan={plan} selected={null} onSelect={() => {}}
-            cameras={[]} variant="presentation"
+            variant="presentation"
           />
-        </div>
-      </div>
-    );
-  }
-  if (slide.kind === "render") {
-    const cam = cameras.find((c) => c.id === slide.refId);
-    return (
-      <div className="w-full h-full relative" style={{ background: "linear-gradient(135deg,#E8C794,#B8804E 50%,#5C3D1E)" }}>
-        <div className="absolute inset-x-12 bottom-12">
-          <div className="label-mono text-white/80 mb-2">RENDER</div>
-          <h2 className="font-serif italic text-[48px] leading-tight text-white drop-shadow"
-              contentEditable={editable} suppressContentEditableWarning
-              onBlur={(e) => onChange({ title: e.currentTarget.innerText })}>{slide.title}</h2>
-          {cam && <div className="font-mono text-[11px] uppercase tracking-wider text-white/70 mt-2">{cam.name}</div>}
         </div>
       </div>
     );

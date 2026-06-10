@@ -1,6 +1,4 @@
-// Editorial palette + texture helpers for the canvas renderer.
-
-import * as THREE from "three";
+// Editorial palette for the canvas renderer.
 
 export const PALETTE = {
   paper: "#F4EFE6",
@@ -13,19 +11,6 @@ export const PALETTE = {
   accentSoft: "#F2DDD0",
   wallFill: "#E6DFD2",
   wallEdge: "#1F1B16",
-  // Boundary edge tags for 3D walls (Pascal pattern, full 6-face split):
-  // - top    = upper surface, slightly cooler/lighter so it catches light.
-  // - bottom = floor-facing, slightly darker for SSAO contrast.
-  // - left   = +perp side ("interior" face) — main wall fill.
-  // - right  = -perp side ("exterior" face) — a touch warmer.
-  // - start / end = endpoint caps. Visible on free wall ends; tinted slightly
-  //   darker to read as joinery.
-  wallTop: "#DED7C9",
-  wallBottom: "#BBB5A8",
-  wallLeft: "#E6DFD2",
-  wallRight: "#E0D9CB",
-  wallStart: "#D2CBBE",
-  wallEnd: "#D2CBBE",
   // Furniture palette — calibrated terra pigments (Style Guide §2.3).
   // Each piece uses ONE token; internal details are stroke-on-fill.
   furnUpholstery: "#D9CFB8",     // sofá principal
@@ -65,115 +50,5 @@ export function floorColor(material: string): string {
     case "deck": return PALETTE.floorDeck;
     case "cimento": return "#D6CFC1";
     default: return PALETTE.floorWood;
-  }
-}
-
-/** Generate a small CanvasTexture for repeating floor patterns. */
-function makePatternCanvas(
-  size: number,
-  draw: (ctx: CanvasRenderingContext2D, s: number) => void
-): HTMLCanvasElement {
-  const c = typeof document !== "undefined" ? document.createElement("canvas") : null;
-  if (!c) {
-    return null as unknown as HTMLCanvasElement; // SSR fallback (not rendered)
-  }
-  c.width = size;
-  c.height = size;
-  const ctx = c.getContext("2d")!;
-  draw(ctx, size);
-  return c;
-}
-
-const _textureCache = new Map<string, THREE.Texture>();
-
-export function woodgrainTexture(): THREE.Texture {
-  const key = "woodgrain";
-  if (_textureCache.has(key)) return _textureCache.get(key)!;
-  const canvas = makePatternCanvas(80, (ctx, s) => {
-    ctx.fillStyle = PALETTE.floorWood;
-    ctx.fillRect(0, 0, s, s);
-    ctx.strokeStyle = PALETTE.ink;
-    ctx.globalAlpha = 0.06;
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(0, s / 2);
-    ctx.lineTo(s, s / 2);
-    ctx.stroke();
-    ctx.globalAlpha = 0.04;
-    ctx.beginPath();
-    ctx.moveTo(0, s / 4);
-    ctx.lineTo(s, s / 4);
-    ctx.moveTo(0, (3 * s) / 4);
-    ctx.lineTo(s, (3 * s) / 4);
-    ctx.stroke();
-  });
-  if (!canvas) return new THREE.Texture();
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.anisotropy = 4;
-  // Each tile = 0.8m of plank. Caller should set repeat.
-  _textureCache.set(key, tex);
-  return tex;
-}
-
-export function tileTexture(): THREE.Texture {
-  const key = "tile";
-  if (_textureCache.has(key)) return _textureCache.get(key)!;
-  const canvas = makePatternCanvas(64, (ctx, s) => {
-    ctx.fillStyle = PALETTE.floorTile;
-    ctx.fillRect(0, 0, s, s);
-    ctx.strokeStyle = PALETTE.ink;
-    ctx.globalAlpha = 0.07;
-    ctx.lineWidth = 0.8;
-    ctx.strokeRect(0.5, 0.5, s - 1, s - 1);
-  });
-  if (!canvas) return new THREE.Texture();
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  _textureCache.set(key, tex);
-  return tex;
-}
-
-export function carpetTexture(): THREE.Texture {
-  const key = "carpet";
-  if (_textureCache.has(key)) return _textureCache.get(key)!;
-  const canvas = makePatternCanvas(48, (ctx, s) => {
-    ctx.fillStyle = PALETTE.floorCarpet;
-    ctx.fillRect(0, 0, s, s);
-    ctx.fillStyle = PALETTE.ink;
-    ctx.globalAlpha = 0.15;
-    for (let i = 0; i < 16; i++) {
-      const x = ((i * 7) % s) + 1.5;
-      const y = ((i * 11) % s) + 1.5;
-      ctx.beginPath();
-      ctx.arc(x, y, 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  });
-  if (!canvas) return new THREE.Texture();
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  _textureCache.set(key, tex);
-  return tex;
-}
-
-/** Grams-per-meter scale: each texture tile covers `tileM` meters of floor. */
-export function floorTextureFor(material: string): { tex: THREE.Texture | null; tileM: number; color: string } {
-  const color = floorColor(material);
-  switch (material) {
-    case "madeira":
-      return { tex: woodgrainTexture(), tileM: 0.8, color };
-    case "porcelanato":
-    case "ceramica":
-      return { tex: tileTexture(), tileM: 0.6, color };
-    case "carpete":
-      return { tex: carpetTexture(), tileM: 0.3, color };
-    default:
-      return { tex: null, tileM: 1, color };
   }
 }

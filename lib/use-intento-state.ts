@@ -4,7 +4,6 @@ import { useCallback, useState } from "react";
 import { applyTool, emptyPlan } from "./floor-plan-engine";
 import {
   INITIAL_VERSIONS,
-  SEED_CAMERAS,
   SEED_CHAT,
   SEED_LIBRARY,
   SEED_REFS,
@@ -18,7 +17,6 @@ import {
 import type { FloorPlan, Furniture, Room, SelectedElement, ToolName } from "./types";
 import type { Lang } from "./i18n";
 import type {
-  Camera,
   CollectionItem,
   Mode,
   ReferenceImage,
@@ -52,13 +50,6 @@ export interface IntentoState {
   diffTargetId: string | null;
   setDiffTargetId: (id: string | null) => void;
 
-  // Cameras
-  cameras: Camera[];
-  setCameras: (c: Camera[]) => void;
-  activeCameraId: string;
-  setActiveCameraId: (id: string) => void;
-  generateCamera: (id: string) => void;
-
   // Refs / library / shopping / versions / slides
   refs: ReferenceImage[];
   setRefs: (r: ReferenceImage[]) => void;
@@ -91,9 +82,6 @@ export function useIntentoState(): IntentoState {
   const [showDiff, setShowDiff] = useState(false);
   const [diffTargetId, setDiffTargetId] = useState<string | null>(null);
 
-  const [cameras, setCameras] = useState<Camera[]>([]);
-  const [activeCameraId, setActiveCameraId] = useState<string>("");
-
   const [refs, setRefs] = useState<ReferenceImage[]>([]);
   const [library, setLibrary] = useState<CollectionItem[]>(SEED_LIBRARY);
   const [shopping, setShopping] = useState<ShoppingRow[]>([]);
@@ -110,9 +98,6 @@ export function useIntentoState(): IntentoState {
       applyTool(next, name, input);
       return next;
     });
-    setCameras((prev) =>
-      prev.map((c) => (c.status === "ready" ? { ...c, status: "outdated" } : c))
-    );
   }, []);
 
   const updateFurniture = useCallback((id: string, patch: Partial<Furniture>) => {
@@ -133,23 +118,8 @@ export function useIntentoState(): IntentoState {
     });
   }, []);
 
-  const generateCamera = useCallback((id: string) => {
-    setCameras((prev) => prev.map((c) => (c.id === id ? { ...c, status: "generating" } : c)));
-    setTimeout(() => {
-      setCameras((prev) =>
-        prev.map((c) =>
-          c.id === id
-            ? { ...c, status: "ready", lastGeneratedAt: new Date().toISOString() }
-            : c
-        )
-      );
-    }, 2400);
-  }, []);
-
   const loadExample = useCallback(() => {
     setPlan(seedPlan());
-    setCameras(SEED_CAMERAS);
-    setActiveCameraId(SEED_CAMERAS[0]?.id ?? "");
     setRefs(SEED_REFS);
     setLibrary(SEED_LIBRARY);
     setShopping(SEED_SHOPPING);
@@ -166,7 +136,6 @@ export function useIntentoState(): IntentoState {
     plan, setPlan, applyPlanTool, updateFurniture, updateRoom,
     selected, setSelected,
     showDiff, setShowDiff, diffTargetId, setDiffTargetId,
-    cameras, setCameras, activeCameraId, setActiveCameraId, generateCamera,
     refs, setRefs, library, shopping, versions,
     slides, setSlides, activeSlideId, setActiveSlideId,
     chatHistory, setChatHistory,

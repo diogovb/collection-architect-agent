@@ -5,7 +5,6 @@ export type Dict = Record<string, { pt: string; en: string }>;
 const DICT: Dict = {
   // Modes
   "mode.plan": { pt: "Planta", en: "Plan" },
-  "mode.render": { pt: "Render", en: "Render" },
   "mode.presentation": { pt: "Apresentação", en: "Presentation" },
   "mode.shopping": { pt: "Lista", en: "List" },
 
@@ -15,7 +14,6 @@ const DICT: Dict = {
 
   // Left nav
   "nav.environments": { pt: "Ambientes", en: "Environments" },
-  "nav.cameras": { pt: "Câmeras", en: "Cameras" },
   "nav.project": { pt: "Projeto", en: "Project" },
 
   // Tabs
@@ -35,14 +33,6 @@ const DICT: Dict = {
   "chat.apply": { pt: "Aplicar", en: "Apply" },
   "chat.discard": { pt: "Descartar", en: "Discard" },
   "chat.thinking": { pt: "Intento está pensando…", en: "Intento is thinking…" },
-
-  // Render mode
-  "render.empty": { pt: "Câmera ainda não gerada", en: "Camera not generated yet" },
-  "render.generate": { pt: "Gerar", en: "Generate" },
-  "render.regenerate": { pt: "Regenerar", en: "Regenerate" },
-  "render.refine": { pt: "Refinar", en: "Refine" },
-  "render.refineNote": { pt: "Refinamento não altera a planta", en: "Refinement does not change the plan" },
-  "render.outdated": { pt: "Planta foi alterada — render desatualizado", en: "Plan changed — render outdated" },
 
   // Shopping
   "shop.total": { pt: "Total estimado", en: "Estimated total" },

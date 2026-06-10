@@ -191,12 +191,12 @@ export function Floorplan2D({ onLoadExample }: Props) {
 
   const corners = useMemo(() => getWallCorners(walls), [walls]);
 
-  // Pixel-perfect wall outline (Fase L). Earlier we used buildWallEnvelope
-  // which offset each room polygon by HALF THE AVERAGE wall thickness; with
-  // mixed thicknesses (exterior 0.20 + interior 0.10) the resulting line
-  // visibly drifted *inside* the polygon fills. The new helper traces the
-  // exact mitered edges from `getWallCorners` so the outline coincides with
-  // the wall fills to the pixel.
+  // Pixel-perfect wall outline (Fase L). An earlier approach offset each room
+  // polygon by HALF THE AVERAGE wall thickness; with mixed thicknesses
+  // (exterior 0.20 + interior 0.10) the resulting line visibly drifted
+  // *inside* the polygon fills. The current helper traces the exact mitered
+  // edges from `getWallCorners` so the outline coincides with the wall fills
+  // to the pixel.
   // Envelope only traces opaque partitions. Railings are low parapets
   // rendered as a thin twin-line in the walls layer — including them in
   // the outline would draw a heavy ink stroke around the balcony, defeating
