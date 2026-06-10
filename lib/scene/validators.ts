@@ -29,6 +29,8 @@ import { sceneSwingGeometry, quarterDiscIntersectsRect } from "./door-swing";
 import { estimatedHeightM } from "./furniture-heights";
 import { TOL_WALL_TOUCH_M } from "./tolerances";
 import { rectIntersectsWalls } from "./collision";
+import { isSatellitePair } from "../furniture-placement";
+import type { FurnitureType } from "../types";
 
 interface SceneInput {
   nodes: Record<string, AnyNode>;
@@ -567,6 +569,8 @@ function validateFurnitureOverlap(furniture: FurnitureNode[], out: DiagnosticIss
       if (isRugLike(a.catalogId) || isRugLike(b.catalogId)) continue;
       // Skip pairs from the same millwork run — overlaps são esperados.
       if (a.runId && b.runId && a.runId === b.runId) continue;
+      // Cadeira encaixada sob o tampo da mesa é pose correta de planta.
+      if (isSatellitePair(a.catalogId as FurnitureType, b.catalogId as FurnitureType)) continue;
       const aabbA = furnitureAABB(a);
       const aabbB = furnitureAABB(b);
       if (isMillwork(a) && isMillwork(b)) {

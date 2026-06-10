@@ -16,6 +16,7 @@
 
 import type { FloorPlan, FurnitureGroup, FurnitureType, Room, ToolInputs } from "./types";
 import { FURN_DEFS } from "./furniture-svgs";
+import { SATELLITES } from "./furniture-placement";
 import {
   solvePlacement,
   formatSolverResult,
@@ -32,6 +33,9 @@ export interface TemplateItem {
   optional?: boolean;
   minArea?: number;
   fallbackType?: FurnitureType;
+  /** Item cuja razão de existir é outro móvel (mesa de centro → sofá).
+   *  Nenhum presente ao final → vira omissão EXPLICADA, mesmo obrigatório. */
+  dependsOn?: FurnitureType[];
 }
 
 export type RoomTemplate =
@@ -51,7 +55,7 @@ export const ROOM_TEMPLATES: Record<FurnitureGroup, RoomTemplate> = {
     items: [
       { type: "sofa_3seat" },
       { type: "tv_console" },
-      { type: "coffee_table", anchor: "free" },
+      { type: "coffee_table", anchor: "free", dependsOn: ["sofa_3seat", "sofa_L", "sofa"] },
       { type: "rug_rect", anchor: "center", optional: true },
     ],
   },
@@ -61,7 +65,7 @@ export const ROOM_TEMPLATES: Record<FurnitureGroup, RoomTemplate> = {
       { type: "sofa_L" },
       { type: "tv_console" },
       { type: "armchair", anchor: "free", optional: true },
-      { type: "coffee_table", anchor: "free" },
+      { type: "coffee_table", anchor: "free", dependsOn: ["sofa_3seat", "sofa_L", "sofa"] },
       { type: "rug_rect", anchor: "center", optional: true },
       { type: "side_table", anchor: "free", optional: true },
       { type: "floor_lamp", optional: true },
@@ -97,7 +101,8 @@ export const ROOM_TEMPLATES: Record<FurnitureGroup, RoomTemplate> = {
       { type: "bed_single" },
       { type: "wardrobe_hinged", fallbackType: "wardrobe_sliding" },
       { type: "desk_study", optional: true },
-      { type: "desk_chair", anchor: "free", optional: true },
+      // Satélite: deriva a pose da mesa (encaixada na frente) — sem anchor.
+      { type: "desk_chair", optional: true },
     ],
   },
   kids_room_basic: {
@@ -106,7 +111,7 @@ export const ROOM_TEMPLATES: Record<FurnitureGroup, RoomTemplate> = {
       { type: "bed_child" },
       { type: "wardrobe_hinged", fallbackType: "wardrobe_sliding" },
       { type: "desk_study", optional: true },
-      { type: "desk_chair", anchor: "free", optional: true },
+      { type: "desk_chair", optional: true },
       { type: "toy_shelf", optional: true },
       { type: "rug_rect", anchor: "center", optional: true },
       // Mesinha de brincar SÓ em quartos grandes e nunca no centro — o
@@ -186,7 +191,7 @@ export const ROOM_TEMPLATES: Record<FurnitureGroup, RoomTemplate> = {
     kind: "items",
     items: [
       { type: "desk_L" },
-      { type: "office_chair", anchor: "free" },
+      { type: "office_chair" },
       { type: "filing_cabinet", optional: true },
       { type: "bookshelf", optional: true },
     ],
@@ -304,6 +309,52 @@ export function solveRoomTemplate(
     }
     const remaining = output.failed.filter((f) => !optionalTypes.has(f.intent.type));
     finalOutput = { solved: output.solved, failed: remaining, ok: remaining.length === 0 };
+  }
+
+  // Satélite obrigatório sem parceiro (cadeira sem mesa) não é erro do
+  // grupo: é omissão explicada — uma cadeira solta seria pior que nenhuma.
+  const satFailed = finalOutput.failed.filter((f) => SATELLITES[f.intent.type]);
+  if (satFailed.length > 0) {
+    for (const f of satFailed) {
+      const def = FURN_DEFS[f.intent.type];
+      skipped.push(`${def?.label ?? f.intent.type} (${f.reason.split(".")[0]})`);
+    }
+    const rest = finalOutput.failed.filter((f) => !SATELLITES[f.intent.type]);
+    finalOutput = { solved: finalOutput.solved, failed: rest, ok: rest.length === 0 };
+  }
+
+  // dependsOn: item posicionado cujo motivo de existir (sofá da mesa de
+  // centro) acabou ausente → desfaz e explica, mesmo sendo obrigatório.
+  const depByType = new Map<FurnitureType, TemplateItem>();
+  for (const item of items) {
+    if (!item.dependsOn) continue;
+    depByType.set(item.type, item);
+    if (item.fallbackType) depByType.set(item.fallbackType, item);
+  }
+  if (depByType.size > 0) {
+    const present = new Set<FurnitureType>([
+      ...finalOutput.solved.map((s) => s.intent.type),
+      ...plan.furniture.filter((f) => f.roomId === room.id).map((f) => f.type),
+    ]);
+    const kept: typeof finalOutput.solved = [];
+    let dropped = false;
+    for (const s of finalOutput.solved) {
+      const tpl = depByType.get(s.intent.type);
+      if (tpl?.dependsOn && !tpl.dependsOn.some((d) => present.has(d))) {
+        const def = FURN_DEFS[s.intent.type];
+        const wanted = tpl.dependsOn
+          .slice(0, 2)
+          .map((d) => FURN_DEFS[d]?.label ?? d)
+          .join("/");
+        skipped.push(`${def?.label ?? s.intent.type} (sem ${wanted} para acompanhar)`);
+        dropped = true;
+        continue;
+      }
+      kept.push(s);
+    }
+    if (dropped) {
+      finalOutput = { ...finalOutput, solved: kept };
+    }
   }
 
   return { output: finalOutput, skipped };

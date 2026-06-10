@@ -23,8 +23,13 @@
 
 import type { Door, FloorPlan, Furniture, FurnitureType, Room, Window } from "../types";
 import { FURN_DEFS } from "../furniture-svgs";
-import { getPlacement } from "../furniture-placement";
-import { validatePlacement, summarizeRoomLayout, touchedWalls } from "./placement-validators";
+import { getPlacement, SATELLITES } from "../furniture-placement";
+import {
+  validatePlacement,
+  validateDoorClearance,
+  summarizeRoomLayout,
+  touchedWalls,
+} from "./placement-validators";
 import {
   openingInterval,
   openingsOverlap1D,
@@ -190,6 +195,79 @@ function autoRotationFor(wall: WallKey | undefined): number | undefined {
   }
 }
 
+const OPP_WALL: Record<WallKey, WallKey> = {
+  north: "south",
+  south: "north",
+  east: "west",
+  west: "east",
+};
+
+/** Parede de "costas" de um móvel pelo bbox VISUAL: o lado tocado com maior
+ *  comprimento de contato; sem contato, o lado mais próximo. */
+export function backWallOf(bb: PlanRect, usable: PlanRect): WallKey {
+  const t = touchedWalls({ x: bb.x, y: bb.y, w: bb.w, h: bb.h }, usable, 0.1);
+  const touched = WALLS.filter((w) => t[w]);
+  const contactLen = (w: WallKey) => (w === "north" || w === "south" ? bb.w : bb.h);
+  if (touched.length > 0) {
+    let back = touched[0];
+    for (const w of touched) if (contactLen(w) > contactLen(back)) back = w;
+    return back;
+  }
+  const d: Record<WallKey, number> = {
+    north: bb.y - usable.y,
+    south: usable.y + usable.h - (bb.y + bb.h),
+    west: bb.x - usable.x,
+    east: usable.x + usable.w - (bb.x + bb.w),
+  };
+  return WALLS.reduce((a, b) => (d[b] < d[a] ? b : a));
+}
+
+/** Encaixe da cadeira sob o tampo (m). Visível no desenho de propósito —
+ *  é como planta de arquiteto representa cadeira em mesa. */
+export const SATELLITE_TUCK_M = 0.15;
+
+/** Poses candidatas de um satélite na frente do parceiro: centrado na face
+ *  frontal, costas para fora, encaixado SATELLITE_TUCK_M sob o tampo;
+ *  desliza ao longo da frente quando o centro está bloqueado. Recebe o
+ *  tamanho do GLIFO e devolve bbox VISUAL + rotação. */
+export function satellitePoseCandidates(
+  partnerBB: PlanRect,
+  backWall: WallKey,
+  glyphSize: { w: number; h: number },
+): Array<{ x: number; y: number; width: number; height: number; rotation: number }> {
+  const rot = autoRotationFor(OPP_WALL[backWall])!;
+  const size = visualSize(glyphSize, rot);
+  const slides = [0, -0.15, 0.15, -0.3, 0.3];
+  const out: Array<{ x: number; y: number; width: number; height: number; rotation: number }> = [];
+  for (const s of slides) {
+    let x: number;
+    let y: number;
+    if (backWall === "north") {
+      x = partnerBB.x + partnerBB.w / 2 - size.w / 2 + s;
+      y = partnerBB.y + partnerBB.h - SATELLITE_TUCK_M;
+    } else if (backWall === "south") {
+      x = partnerBB.x + partnerBB.w / 2 - size.w / 2 + s;
+      y = partnerBB.y - size.h + SATELLITE_TUCK_M;
+    } else if (backWall === "west") {
+      x = partnerBB.x + partnerBB.w - SATELLITE_TUCK_M;
+      y = partnerBB.y + partnerBB.h / 2 - size.h / 2 + s;
+    } else {
+      x = partnerBB.x - size.w + SATELLITE_TUCK_M;
+      y = partnerBB.y + partnerBB.h / 2 - size.h / 2 + s;
+    }
+    out.push({ x, y, width: size.w, height: size.h, rotation: rot });
+  }
+  return out;
+}
+
+/** Intent que resolve por DERIVAÇÃO do parceiro, não por busca pontuada.
+ *  Âncora explícita de parede/canto preserva a intenção do modelo. */
+function isSatelliteIntent(it: PlacementIntent): boolean {
+  if (!SATELLITES[it.type]) return false;
+  if (it.rotation !== undefined) return false;
+  return it.anchor === undefined || it.anchor === "free";
+}
+
 /** Footprint visual para uma rotação (transpõe em 90/270). */
 function visualSize(base: { w: number; h: number }, rotation: number | undefined): { w: number; h: number } {
   const rotated = (((rotation ?? 0) % 180) + 180) % 180 === 90;
@@ -249,9 +327,14 @@ export function solvePlacement(input: SolverInput): SolverOutput {
   });
   const halfDiagonal = Math.hypot(room.width, room.height) / 2;
 
+  // Satélites (cadeira↔mesa) saem da busca pontuada: resolvem por derivação
+  // DEPOIS do loop principal, quando o parceiro já tem posição.
+  const satelliteIntents = items.filter(isSatelliteIntent);
+  const mainIntents = items.filter((it) => !isSatelliteIntent(it));
+
   // Ordena: camas primeiro, depois itens janela-dependentes, depois âncoras
   // grandes (as relações precisam do parceiro já posicionado).
-  const ordered = items
+  const ordered = mainIntents
     .map((it, idx) => ({ it, idx }))
     .sort((a, b) => {
       const ba = a.it.priorityBoost ? 0 : 1;
@@ -574,6 +657,96 @@ export function solvePlacement(input: SolverInput): SolverOutput {
     }
     if (!placedAny) {
       failed.push({ intent: original, reason: firstFailReason || "nenhuma posição válida" });
+    }
+  }
+
+  // ---------- satélites: pose derivada do parceiro ----------
+  for (const it of satelliteIntents) {
+    const def = FURN_DEFS[it.type];
+    if (!def) {
+      failed.push({ intent: it, reason: `tipo desconhecido: ${it.type}` });
+      continue;
+    }
+    const placement = getPlacement(it.type);
+    const label = it.label ?? def.label;
+    const prefs = SATELLITES[it.type] ?? [];
+    let partner: Furniture | undefined;
+    for (const pt of prefs) {
+      partner = workingPlan.furniture.find((f) => f.roomId === room.id && f.type === pt);
+      if (partner) break;
+    }
+    if (!partner) {
+      const names = prefs
+        .slice(0, 2)
+        .map((p) => FURN_DEFS[p]?.label ?? p)
+        .join("/");
+      failed.push({ intent: it, reason: `sem ${names} no cômodo para acompanhar — omitida` });
+      continue;
+    }
+    const pBB = worldAABB(partner);
+    const back = backWallOf(pBB, usable);
+    let placedSat = false;
+    let satReason = "";
+    for (const pose of satellitePoseCandidates(pBB, back, def.sizeM)) {
+      if (
+        pose.x < usable.x - TOL_CONTACT_M ||
+        pose.y < usable.y - TOL_CONTACT_M ||
+        pose.x + pose.width > usable.x + usable.w + TOL_CONTACT_M ||
+        pose.y + pose.height > usable.y + usable.h + TOL_CONTACT_M
+      ) {
+        satReason = "a frente do parceiro encosta na parede — sem espaço para o satélite";
+        continue;
+      }
+      const blocker = workingPlan.furniture.find((f) => {
+        if (f.roomId !== room.id || f.id === partner!.id) return false;
+        const fp = getPlacement(f.type);
+        if (fp.category === "rug" || fp.category === "decor") return false;
+        const fb = worldAABB(f);
+        return (
+          fb.x + fb.w - TOL_CONTACT_M > pose.x &&
+          fb.x + TOL_CONTACT_M < pose.x + pose.width &&
+          fb.y + fb.h - TOL_CONTACT_M > pose.y &&
+          fb.y + TOL_CONTACT_M < pose.y + pose.height
+        );
+      });
+      if (blocker) {
+        satReason = `frente de ${partner.label} bloqueada por ${blocker.label}`;
+        continue;
+      }
+      const doorCheck = validateDoorClearance(
+        { x: pose.x, y: pose.y, w: pose.width, h: pose.height },
+        room,
+        workingPlan.doors,
+        workingPlan.rooms,
+        placement,
+      );
+      if (!doorCheck.ok) {
+        satReason = doorCheck.reason ?? "conflito com porta";
+        continue;
+      }
+      solved.push({
+        intent: { ...it, rotation: pose.rotation },
+        x: pose.x,
+        y: pose.y,
+        width: pose.width,
+        height: pose.height,
+        rotation: pose.rotation,
+      });
+      workingPlan.furniture.push({
+        id: `solver-${solved.length}`,
+        roomId: room.id,
+        type: it.type,
+        label,
+        x: pose.x,
+        y: pose.y,
+        width: pose.width,
+        height: pose.height,
+      });
+      placedSat = true;
+      break;
+    }
+    if (!placedSat) {
+      failed.push({ intent: it, reason: satReason || `sem vaga na frente de ${partner.label}` });
     }
   }
 

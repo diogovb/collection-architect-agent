@@ -473,5 +473,89 @@ console.log("\n[22] DOOR_APPROACH_BLOCKED graduado: ≥50% erro, <50% sem erro, 
   check("motivo cita chegada/arco da porta", /chegada da porta|arco/.test(mv.message), mv.message);
 }
 
+// ---------- Cenário 23: satélite cadeira↔mesa + órfãos ----------
+console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; órfã → FURNITURE_FLOATING");
+{
+  const p23 = emptyPlan();
+  applyTool(p23, "create_room", { name: "Quarto Infantil", width: 3.2, height: 3.0, x: 0, y: 0 });
+  applyTool(p23, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
+  applyTool(p23, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.4 });
+  const furn23 = applyTool(p23, "furnish_room", { room_name: "Quarto Infantil", style: "infantil" });
+  check("furnish ok", furn23.ok, furn23.message);
+  const desk23 = p23.furniture.find((f) => f.type === "desk_study");
+  const chair23 = p23.furniture.find((f) => f.type === "desk_chair");
+  check("mesa presente", desk23 !== undefined, furn23.message);
+  if (desk23 && chair23) {
+    const gap = (() => {
+      const a = worldAABB(desk23);
+      const b = worldAABB(chair23);
+      const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
+      const dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+      return Math.hypot(dx, dy);
+    })();
+    check("cadeira ENCAIXADA na mesa (gap 0 = tucked)", gap <= 0.01, `gap=${gap.toFixed(3)}m`);
+    {
+      // Orientação: costas da cadeira viradas para FORA da mesa (rotação
+      // derivada do lado em que ela está; 0 pode ficar implícito no campo).
+      const a = worldAABB(desk23);
+      const b = worldAABB(chair23);
+      const dxc = b.x + b.w / 2 - (a.x + a.w / 2);
+      const dyc = b.y + b.h / 2 - (a.y + a.h / 2);
+      const expected =
+        Math.abs(dyc) >= Math.abs(dxc) ? (dyc < 0 ? 0 : 180) : dxc < 0 ? 270 : 90;
+      const actual = ((chair23.rotation ?? 0) % 360 + 360) % 360;
+      check("cadeira de frente para a mesa (rotação coerente)", actual === expected, `rot=${actual} esperado=${expected}`);
+    }
+    const c23 = codes(p23);
+    check("par tucked sem FURNITURE_OVERLAP", !c23.some((c) => c.includes("FURNITURE_OVERLAP")), c23.join(", "));
+    check("sem FURNITURE_FLOATING no quarto montado", !c23.some((c) => c.includes("FURNITURE_FLOATING")), c23.join(", "));
+
+    // move_furniture da cadeira para a pose tucked NÃO pode ser rejeitado
+    // (regressão da isenção em findFurnitureOverlap).
+    const mv23 = applyTool(p23, "move_furniture", { furniture_id: chair23.id, new_x: chair23.x + 0.05, new_y: chair23.y });
+    check("mover cadeira dentro do encaixe PASSA", mv23.ok, mv23.message);
+
+    // Mesa movida → cadeira acompanha (re-pose).
+    const usable23 = usableRect(p23, p23.rooms[0]);
+    const deskBB = worldAABB(desk23);
+    const mvDesk = applyTool(p23, "move_furniture", {
+      furniture_id: desk23.id,
+      new_x: usable23.x + usable23.w - deskBB.w - 0.6,
+      new_y: desk23.y,
+    });
+    if (mvDesk.ok) {
+      const gap2 = (() => {
+        const a = worldAABB(p23.furniture.find((f) => f.id === desk23.id)!);
+        const b = worldAABB(p23.furniture.find((f) => f.id === chair23.id)!);
+        const dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
+        const dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+        return Math.hypot(dx, dy);
+      })();
+      check("mesa movida → cadeira acompanhou", gap2 <= 0.01, `gap=${gap2.toFixed(3)}m — ${mvDesk.message}`);
+    } else {
+      check("mesa movida → cadeira acompanhou", true, `(movimento rejeitado: ${mvDesk.message})`);
+    }
+  }
+
+  // Cadeira sem mesa nenhuma: solver omite com explicação.
+  const p23b = emptyPlan();
+  applyTool(p23b, "create_room", { name: "Sala", width: 3.0, height: 3.0, x: 0, y: 0 });
+  applyTool(p23b, "add_door", { room_name: "Sala", wall: "south", position: 0.5 });
+  const lone = applyTool(p23b, "place_furniture_intent", {
+    room_name: "Sala",
+    items: [{ type: "desk_chair", anchor: "free" }],
+  });
+  check("cadeira sem mesa NÃO é posicionada", !lone.ok, lone.message);
+  check("motivo explica a omissão", /para acompanhar|omitida/i.test(lone.message), lone.message);
+
+  // Cadeira órfã empurrada manualmente no meio → FURNITURE_FLOATING.
+  p23b.furniture.push({
+    id: "f_chair23", roomId: p23b.rooms[0].id, type: "desk_chair",
+    label: "Cadeira de Escritório", x: 1.3, y: 1.3, width: 0.5, height: 0.5,
+  } as Furniture);
+  const c23b = codes(p23b);
+  check("órfã no centro → FURNITURE_FLOATING", c23b.includes("warning:FURNITURE_FLOATING"), c23b.join(", "));
+}
+
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

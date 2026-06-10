@@ -599,3 +599,23 @@ export function getPlacement(type: FurnitureType): FurniturePlacement {
 export function isRugByPlacement(type: FurnitureType): boolean {
   return getPlacement(type).category === "rug";
 }
+
+// ---------------------------------------------------------------------------
+// Satélites: peças que NÃO têm posição própria — derivam a pose do parceiro
+// (cadeira centrada na frente da mesa, encaixada sob o tampo). O solver
+// pontuado não gera candidato "em frente ao móvel X", então buscar por score
+// deixava a cadeira órfã no meio do cômodo. Ordem da lista = prioridade do
+// parceiro.
+// ---------------------------------------------------------------------------
+
+export const SATELLITES: Partial<Record<FurnitureType, FurnitureType[]>> = {
+  desk_chair: ["desk_study", "desk", "desk_straight", "desk_L"],
+  office_chair: ["desk_L", "desk_straight", "desk", "desk_study"],
+};
+
+/** Par cadeira↔mesa (em qualquer direção): o encaixe parcial sob o tampo é
+ *  CORRETO e não pode ser tratado como sobreposição pelos validadores nem
+ *  pelas guardas de move/swap/add. */
+export function isSatellitePair(a: FurnitureType, b: FurnitureType): boolean {
+  return (SATELLITES[a]?.includes(b) ?? false) || (SATELLITES[b]?.includes(a) ?? false);
+}

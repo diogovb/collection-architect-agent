@@ -35,7 +35,8 @@ import {
   worstDoorCoverage,
 } from "./plan-geometry";
 import { chooseDoorSwing } from "./scene/door-swing";
-import { getPlacement } from "./furniture-placement";
+import { getPlacement, isSatellitePair, SATELLITES } from "./furniture-placement";
+import { backWallOf, satellitePoseCandidates } from "./scene/placement-solver";
 import { estimatedHeightM } from "./scene/furniture-heights";
 import { DOOR_DEDUP_RADIUS_M, TOL_CONTACT_M } from "./scene/tolerances";
 
@@ -1120,7 +1121,7 @@ function doAddFurniture(
   // room. The error message lists the conflicting item AND describes
   // every occupied AABB so the agent can pick a free spot on the next
   // try without having to call list_furniture first.
-  const conflict = findFurnitureOverlap(plan, room.id, fx, fy, size.w, size.h);
+  const conflict = findFurnitureOverlap(plan, room.id, fx, fy, size.w, size.h, undefined, input.furniture_type);
   if (conflict) {
     const occupied = plan.furniture
       .filter((f) => f.roomId === room.id && !isRugLike(f.type))
@@ -1173,12 +1174,16 @@ function findFurnitureOverlap(
   w: number,
   h: number,
   excludeId?: string,
+  movingType?: FurnitureType,
 ): Furniture | null {
   const inset = TOL_CONTACT_M;
   for (const f of plan.furniture) {
     if (f.roomId !== roomId) continue;
     if (excludeId && f.id === excludeId) continue;
     if (isRugLike(f.type)) continue;
+    // Cadeira encaixada sob o tampo da mesa é pose CORRETA, não colisão —
+    // sem esta isenção, o move_furniture de correção desfazia o par.
+    if (movingType && isSatellitePair(f.type, movingType)) continue;
     const fb = worldAABB(f);
     const overlap =
       fb.x + fb.w - inset > x &&
@@ -1188,6 +1193,54 @@ function findFurnitureOverlap(
     if (overlap) return f;
   }
   return null;
+}
+
+/** Re-deriva a pose dos satélites (cadeira↔mesa) quando o PARCEIRO muda de
+ *  lugar/tipo — sem isso o bug da cadeira órfã renascia no primeiro
+ *  move_furniture da mesa. Devolve notas para a mensagem da tool. */
+function reposeSatellites(plan: FloorPlan, partner: Furniture): string[] {
+  const notes: string[] = [];
+  const room = plan.rooms.find((r) => r.id === partner.roomId);
+  if (!room) return notes;
+  const sats = plan.furniture.filter(
+    (f) =>
+      f.roomId === partner.roomId &&
+      f.id !== partner.id &&
+      (SATELLITES[f.type]?.includes(partner.type) ?? false)
+  );
+  if (sats.length === 0) return notes;
+  const usable = usableRect(plan, room);
+  const pBB = worldAABB(partner);
+  const back = backWallOf(pBB, usable);
+  for (const chair of sats) {
+    const glyph = FURN_DEFS[chair.type]?.sizeM ?? { w: chair.width, h: chair.height };
+    let done = false;
+    for (const pose of satellitePoseCandidates(pBB, back, glyph)) {
+      if (
+        pose.x < usable.x - TOL_CONTACT_M ||
+        pose.y < usable.y - TOL_CONTACT_M ||
+        pose.x + pose.width > usable.x + usable.w + TOL_CONTACT_M ||
+        pose.y + pose.height > usable.y + usable.h + TOL_CONTACT_M
+      ) continue;
+      if (findFurnitureOverlap(plan, room.id, pose.x, pose.y, pose.width, pose.height, chair.id, chair.type)) continue;
+      const apps = doorApproachRects(plan, room);
+      if (worstDoorCoverage(apps, { x: pose.x, y: pose.y, w: pose.width, h: pose.height }).fraction >= 0.5) continue;
+      // bbox armazenado = dims do glifo preservando o centro do visual.
+      const rotated = (pose.rotation % 180 + 180) % 180 === 90;
+      const w = rotated ? pose.height : pose.width;
+      const h = rotated ? pose.width : pose.height;
+      chair.x = pose.x + (pose.width - w) / 2;
+      chair.y = pose.y + (pose.height - h) / 2;
+      chair.width = w;
+      chair.height = h;
+      chair.rotation = pose.rotation;
+      notes.push(`${chair.label} reposicionada junto a ${partner.label}`);
+      done = true;
+      break;
+    }
+    if (!done) notes.push(`atenção: ${chair.label} ficou sem vaga na frente de ${partner.label} — ajuste ou remova`);
+  }
+  return notes;
 }
 
 /** DSL handler for `place_furniture_intent` — multi-item generative
@@ -1223,7 +1276,8 @@ export function commitSolvedItems(
       y,
       width: w,
       height: h,
-      ...(s.intent.rotation ? { rotation: s.intent.rotation } : {}),
+      // !== undefined, não truthy: rotação 0 explícita é informação válida.
+      ...(s.intent.rotation !== undefined ? { rotation: s.intent.rotation } : {}),
     };
     plan.furniture.push(item);
   }
@@ -1283,7 +1337,7 @@ function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): 
     const vy = Math.max(swapUsable.y, Math.min(swapUsable.y + swapUsable.h - vh, oldBB.y));
     nx = vx + (vw - newW) / 2;
     ny = vy + (vh - newH) / 2;
-    const conflict = findFurnitureOverlap(plan, room.id, vx, vy, vw, vh, f.id);
+    const conflict = findFurnitureOverlap(plan, room.id, vx, vy, vw, vh, f.id, input.new_type);
     if (conflict) {
       return {
         ok: false,
@@ -1308,7 +1362,10 @@ function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): 
   f.height = newH;
   f.x = nx;
   f.y = ny;
-  return { ok: true, message: `Móvel trocado por ${def.label}.` };
+  // Mesa trocada de tamanho → cadeira satélite acompanha.
+  const swapNotes = reposeSatellites(plan, f);
+  const swapSuffix = swapNotes.length > 0 ? ` (${swapNotes.join("; ")})` : "";
+  return { ok: true, message: `Móvel trocado por ${def.label}.${swapSuffix}` };
 }
 
 function doRemoveFurniture(plan: FloorPlan, input: ToolInputs["remove_furniture"]): ApplyResult {
@@ -1396,7 +1453,7 @@ function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): 
   // Hard checks no destino: overlap com outros móveis e arco de porta.
   // Âncora/clearance viram avisos (o pedido de mover é explícito do
   // agente/cliente; bloquear a intenção declarada cria loop de correção).
-  const conflict = findFurnitureOverlap(plan, destRoom.id, bb.x, bb.y, bb.w, bb.h, f.id);
+  const conflict = findFurnitureOverlap(plan, destRoom.id, bb.x, bb.y, bb.w, bb.h, f.id, f.type);
   if (conflict) {
     return {
       ok: false,
@@ -1421,9 +1478,12 @@ function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): 
   f.x = input.new_x;
   f.y = input.new_y;
   if (f.roomId !== destRoom.id) f.roomId = destRoom.id;
+  // Mesa movida → cadeira satélite acompanha (senão a órfã renasce).
+  const moveNotes = reposeSatellites(plan, f);
   const warn = !check.ok && check.reason ? ` Aviso: ${check.reason}` : "";
   const adv = check.ok && check.advisories?.length ? ` ${check.advisories.join(" ")}` : "";
-  return { ok: true, message: `${f.label} movido para '${destRoom.name}'.${warn}${adv}` };
+  const satNote = moveNotes.length > 0 ? ` ${moveNotes.join("; ")}.` : "";
+  return { ok: true, message: `${f.label} movido para '${destRoom.name}'.${warn}${adv}${satNote}` };
 }
 
 // ---------- Layout transformations ----------

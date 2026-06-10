@@ -9,10 +9,14 @@ import type { DiagnosticIssue } from "../scene/types";
 import {
   doorApproachRects,
   doorCoverageFraction,
+  relationDistance,
+  usableRect,
   wallSideLabel,
   worldAABB,
 } from "../plan-geometry";
 import { getPlacement } from "../furniture-placement";
+import { touchedWalls } from "../scene/placement-validators";
+import { FURN_DEFS } from "../furniture-svgs";
 
 export function validatePlan(plan: FloorPlan): DiagnosticIssue[] {
   const { scene, issues } = floorPlanToScene(plan);
@@ -23,7 +27,71 @@ export function validatePlan(plan: FloorPlan): DiagnosticIssue[] {
     ...issues,
     ...validateScene({ nodes: derived.nodes }),
     ...validateDoorApproaches(plan),
+    ...validateFurnitureFloating(plan),
   ];
+}
+
+/** Móvel solto sem função — critério por METADATA, sem lista de tipos:
+ *  (a) peça que pede parede/canto (anchorTo) longe de qualquer parede;
+ *  (b) peça com relações declaradas (cadeira↔mesa, criado↔cama) sem
+ *  NENHUMA satisfeita e sem encosto. Poltrona/ilha/mesa de jantar têm
+ *  anchorTo free/center e ficam isentas da cláusula (a) por construção. */
+export function validateFurnitureFloating(plan: FloorPlan): DiagnosticIssue[] {
+  const out: DiagnosticIssue[] = [];
+  for (const room of plan.rooms ?? []) {
+    const usable = usableRect(plan, room);
+    for (const f of plan.furniture ?? []) {
+      if (f.roomId !== room.id) continue;
+      if (f.runId) continue; // marcenaria é flush por construção
+      const p = getPlacement(f.type);
+      if (p.category === "rug" || p.category === "decor") continue;
+      if (/light|outlet|switch/.test(f.type)) continue;
+      const bb = worldAABB(f);
+      const t = touchedWalls(bb, usable, 0.1);
+      const touching = t.north || t.south || t.east || t.west;
+      const needsWall =
+        p.anchorTo === "wall" || p.anchorTo === "corner" || p.anchorTo === "wall-or-corner";
+      if (needsWall && !touching) {
+        out.push({
+          code: "FURNITURE_FLOATING",
+          severity: "warning",
+          message: `'${f.label}' deveria estar contra uma parede de '${room.name}' mas está solto no meio do cômodo. Encoste-o na face interna de uma parede (move_furniture) ou remova.`,
+          nodeIds: [`furniture:${f.id}`],
+        });
+        continue;
+      }
+      if (!touching && p.relations && p.relations.length > 0) {
+        let satisfied = false;
+        for (const rel of p.relations) {
+          const partners = plan.furniture.filter(
+            (o) => o.roomId === room.id && o.id !== f.id && o.type === rel.withType
+          );
+          for (const o of partners) {
+            const d = relationDistance(rel, bb, worldAABB(o));
+            if (d >= rel.minDist && d <= rel.maxDist) {
+              satisfied = true;
+              break;
+            }
+          }
+          if (satisfied) break;
+        }
+        if (!satisfied) {
+          const wanted = [
+            ...new Set(p.relations.map((r) => FURN_DEFS[r.withType]?.label ?? r.withType)),
+          ]
+            .slice(0, 3)
+            .join(", ");
+          out.push({
+            code: "FURNITURE_FLOATING",
+            severity: "warning",
+            message: `'${f.label}' está solto em '${room.name}', longe do móvel que o acompanha (${wanted}). Aproxime-o do parceiro, encoste numa parede ou remova.`,
+            nodeIds: [`furniture:${f.id}`],
+          });
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /** Corredor de aproximação de porta (regra GRADUADA). O quarto-de-disco já
