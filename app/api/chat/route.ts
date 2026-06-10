@@ -153,6 +153,26 @@ export async function POST(req: Request) {
         let mutationsAny = false;
         const MAX_VALIDATOR_ROUNDS = 3;
 
+        // System em 2 blocos, computado UMA vez por request: o bloco 1 é
+        // byte-estável entre turnos (tools + SYSTEM_PROMPT, custo dominante
+        // do prefixo); o bloco 2 carrega o estado da planta NO INÍCIO do
+        // request e fica CONGELADO entre iterações. System precede as
+        // mensagens no prefixo de cache — reconstruí-lo a cada iteração
+        // invalidava TODO o cache de mensagens (o breakpoint escrevia 1.25×
+        // e nunca lia). Dentro do request o estado evolui pelas mensagens
+        // das tools (+ digest/renders); a Fase V valida o plano real no stop.
+        const systemBlocks: Anthropic.TextBlockParam[] = [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+          {
+            type: "text",
+            text: "# Estado da planta no início deste pedido\n" + summarizePlan(localPlan),
+          },
+        ];
+
         // Heartbeat: adaptive thinking can go tens of seconds without
         // emitting any byte; a periodic tiny SSE event keeps proxies and
         // the browser connection alive for the whole loop.
@@ -168,23 +188,6 @@ export async function POST(req: Request) {
         while (iter < MAX_ITERATIONS) {
           iter += 1;
 
-          // Two-block system: block 1 is byte-stable across iterations and
-          // turns, and its cache breakpoint covers tools + SYSTEM_PROMPT
-          // (the dominant prefix cost). Block 2 carries the volatile plan
-          // state AFTER the breakpoint so rebuilding it each iteration
-          // never invalidates the cached prefix.
-          const systemBlocks: Anthropic.TextBlockParam[] = [
-            {
-              type: "text",
-              text: SYSTEM_PROMPT,
-              cache_control: { type: "ephemeral" },
-            },
-            {
-              type: "text",
-              text: "# Estado atual da planta\n" + summarizePlan(localPlan),
-            },
-          ];
-
           const sdkStream = anthropic.messages.stream({
             model: MODEL,
             max_tokens: MAX_TOKENS,
@@ -194,12 +197,13 @@ export async function POST(req: Request) {
             output_config: { effort: "xhigh" },
             system: systemBlocks,
             tools,
-            // Second cache breakpoint on the last message block: each
-            // iteration re-sends the whole conversation (which includes the
-            // 1600px review PNG when present); the breakpoint lets the next
-            // iteration read the prior turns from cache instead of re-paying
-            // them at full price.
-            messages: withMessageCacheBreakpoint(conversation),
+            // Breakpoints rolantes nas DUAS últimas mensagens: o lookup de
+            // cache só olha ~20 blocos para trás de cada breakpoint; uma
+            // iteração com muitas tools (+ imagens) estoura essa janela com
+            // breakpoint único e silenciava o hit. Com dois, o penúltimo
+            // breakpoint cai perto da fronteira gravada pela iteração
+            // anterior e o prefixo inteiro (PNGs incluídos) é lido do cache.
+            messages: withMessageCacheBreakpoints(conversation),
           });
 
           // Real-time tool execution (Fase T2): accumulate input JSON deltas
@@ -399,33 +403,41 @@ export async function POST(req: Request) {
   });
 }
 
-/** Clona a conversa com um breakpoint de cache no último bloco da última
- *  mensagem. A cada iteração reenviamos a conversa inteira (incluindo o PNG
- *  de revisão); o breakpoint deixa a iteração seguinte ler o prefixo do
- *  cache em vez de repagar tudo. A conversa original não é mutada. */
-function withMessageCacheBreakpoint(
+/** Clona a conversa com breakpoints de cache no último bloco cacheável das
+ *  DUAS últimas mensagens. A cada iteração reenviamos a conversa inteira
+ *  (incluindo PNGs); o breakpoint do fim grava o prefixo novo e o penúltimo
+ *  garante o hit mesmo quando a última iteração gerou mais de ~20 blocos
+ *  (janela de lookback do cache). Blocos de thinking não aceitam
+ *  cache_control e são pulados. A conversa original não é mutada. */
+function withMessageCacheBreakpoints(
   conversation: Anthropic.MessageParam[]
 ): Anthropic.MessageParam[] {
   if (conversation.length === 0) return conversation;
   const out = conversation.slice();
-  const last = out[out.length - 1];
   const cc = { type: "ephemeral" as const };
-  if (typeof last.content === "string") {
-    if (last.content.length === 0) return conversation;
-    out[out.length - 1] = {
-      ...last,
-      content: [{ type: "text", text: last.content, cache_control: cc }],
-    };
-    return out;
+  let marked = 0;
+  for (let i = out.length - 1; i >= 0 && marked < 2; i--) {
+    const m = out[i];
+    if (typeof m.content === "string") {
+      if (m.content.length === 0) continue;
+      out[i] = { ...m, content: [{ type: "text", text: m.content, cache_control: cc }] };
+      marked += 1;
+    } else if (Array.isArray(m.content) && m.content.length > 0) {
+      const blocks = m.content.slice();
+      let j = blocks.length - 1;
+      while (
+        j >= 0 &&
+        (blocks[j].type === "thinking" || blocks[j].type === "redacted_thinking")
+      ) {
+        j -= 1;
+      }
+      if (j < 0) continue;
+      blocks[j] = { ...blocks[j], cache_control: cc } as (typeof blocks)[number];
+      out[i] = { ...m, content: blocks };
+      marked += 1;
+    }
   }
-  if (Array.isArray(last.content) && last.content.length > 0) {
-    const blocks = last.content.slice();
-    const lastBlock = blocks[blocks.length - 1];
-    blocks[blocks.length - 1] = { ...lastBlock, cache_control: cc } as typeof lastBlock;
-    out[out.length - 1] = { ...last, content: blocks };
-    return out;
-  }
-  return conversation;
+  return out;
 }
 
 interface KnowledgeSearchInput {
