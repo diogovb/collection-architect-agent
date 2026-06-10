@@ -202,6 +202,10 @@ export function applyTool<T extends ToolName>(
         plan.annotations!.length = 0;
         plan.northArrow = null;
         return { ok: true, message: "Planta apagada." };
+      case "preview_plan":
+        // Tool de VISÃO: o render acontece no route (servidor); no engine —
+        // e no espelhamento client-side — é um no-op deliberado.
+        return { ok: true, message: "Planta renderizada para revisão do agente." };
       default:
         return { ok: false, message: `Ferramenta desconhecida: ${toolName}` };
     }

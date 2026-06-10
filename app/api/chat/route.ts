@@ -7,9 +7,10 @@ import {
   searchKnowledgeBase,
   type KnowledgeMatch,
 } from "@/lib/embeddings";
-import type { FloorPlan, SelectionContext, StreamEvent, ToolName } from "@/lib/types";
+import type { FloorPlan, SelectionContext, StreamEvent, ToolInputs, ToolName } from "@/lib/types";
 import { validatePlan, formatIssuesForAgent, diagnosticsHash } from "@/lib/agent/validate-plan";
-import { renderPlanPng } from "@/lib/canvas/render-png";
+import { renderPlanPng, renderRoomPng } from "@/lib/canvas/render-png";
+import type { DiagnosticIssue } from "@/lib/scene/types";
 
 /** Tools whose successful execution should trigger the visual review pass.
  *  Pure-info tools (search_knowledge_base) and trivial cosmetic ones
@@ -39,6 +40,39 @@ const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 const MAX_VISUAL_REVIEWS = 2;
+
+/** Tools que completam um "lote de cômodo" — o resultado delas volta com a
+ *  IMAGEM do estado ao fim da iteração, para o agente revisar ANTES de
+ *  seguir para o próximo cômodo (ver enquanto constrói, não só no fim). */
+const AUTO_RENDER_TOOLS: ReadonlySet<string> = new Set([
+  "furnish_room",
+  "add_furniture_group",
+  "add_millwork_run",
+  "create_apartment_layout",
+]);
+
+/** Orçamento GLOBAL de imagens mid-flight por request (auto-render +
+ *  preview_plan; a revisão final da Fase D fica FORA do teto). */
+const MAX_IMAGES_PER_REQUEST = 6;
+const MIDFLIGHT_PNG_WIDTH = 1024;
+
+/** Códigos de "estado de obra" que não fazem sentido no digest ambiente
+ *  durante a construção (cômodo recém-criado ainda sem porta etc.) — a
+ *  Fase V no stop continua cobrindo todos. */
+const DIGEST_EXCLUDED = /^(ROOM_NO_DOOR|NO_ENTRY_DOOR|ROOM_UNREACHABLE|CIRCULATION|ROOM_MIN|MIN_ROOM|WINDOW_RATIO|WALL_DANGLING|DANGLING)/;
+
+/** Subconjunto acionável-agora dos achados (mobília/aberturas). */
+function actionableIssues(issues: DiagnosticIssue[]): DiagnosticIssue[] {
+  return issues.filter((i) => i.severity !== "info" && !DIGEST_EXCLUDED.test(i.code));
+}
+
+function digestLine(i: DiagnosticIssue): string {
+  const ids = i.nodeIds
+    .filter((id) => id.startsWith("furniture:"))
+    .map((id) => id.slice("furniture:".length));
+  const idTag = ids.length > 0 ? ` [furniture_id: ${ids.join(", ")}]` : "";
+  return `- (${i.code}) ${i.message}${idTag}`;
+}
 
 // Scene tools (lib/agent/tools.ts) operate on the server-side scene graph but
 // have no sync path back to the client — every change would be invisible. They
@@ -147,11 +181,22 @@ export async function POST(req: Request) {
 
         let iter = 0;
         let lastDiagnosticsHash = "";
+        let lastDigestHash = "";
         let validatorRounds = 0;
         let visualReviews = 0;
         let pendingVisualReview = false;
         let mutationsAny = false;
+        let imagesUsed = 0;
         const MAX_VALIDATOR_ROUNDS = 3;
+
+        const findRoomByName = (name?: string) => {
+          if (!name) return undefined;
+          const n = name.trim().toLowerCase();
+          return (
+            localPlan.rooms.find((r) => r.name.trim().toLowerCase() === n) ??
+            localPlan.rooms.find((r) => r.name.trim().toLowerCase().includes(n))
+          );
+        };
 
         // System em 2 blocos, computado UMA vez por request: o bloco 1 é
         // byte-estável entre turnos (tools + SYSTEM_PROMPT, custo dominante
@@ -220,6 +265,11 @@ export async function POST(req: Request) {
           }
           const toolBuffers = new Map<number, ToolBuffer>();
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
+          // Alvo do auto-render desta iteração (última tool de lote ok) e a
+          // posição do tool_result correspondente.
+          let autoRenderRoomName: string | undefined;
+          let autoRenderIdx: number | null = null;
+          let mutatedThisIteration = false;
 
           for await (const ev of sdkStream) {
             if (ev.type === "content_block_start") {
@@ -256,24 +306,66 @@ export async function POST(req: Request) {
               send({ type: "tool_input", id: buf.id, input });
               let ok: boolean;
               let message: string;
+              // Conteúdo rico (imagem) quando a tool devolve render; default
+              // continua sendo a string da mensagem.
+              let resultContent: Anthropic.ToolResultBlockParam["content"] | undefined;
               if (buf.name === "search_knowledge_base") {
                 const r = await runKnowledgeSearch(input);
                 ok = r.ok;
                 message = r.message;
+              } else if (buf.name === "preview_plan") {
+                // Tool de VISÃO: renderiza o estado atual para o agente olhar
+                // sob demanda. Não muta nada, não dispara revisão visual.
+                const inp = (input ?? {}) as ToolInputs["preview_plan"];
+                if (imagesUsed >= MAX_IMAGES_PER_REQUEST) {
+                  ok = true;
+                  message =
+                    "Orçamento de imagens deste pedido esgotado — siga pelo estado textual das tools e pelos avisos do motor.";
+                } else {
+                  try {
+                    const room = findRoomByName(inp.room_name);
+                    const png = room
+                      ? await renderRoomPng(localPlan, room.id, MIDFLIGHT_PNG_WIDTH, { doorZones: true })
+                      : await renderPlanPng(localPlan, MIDFLIGHT_PNG_WIDTH, { doorZones: true });
+                    imagesUsed += 1;
+                    ok = true;
+                    message = room
+                      ? `Planta renderizada (recorte de '${room.name}'). Hachuras vermelhas = zonas de porta que DEVEM ficar livres.`
+                      : "Planta renderizada (vista geral). Hachuras vermelhas = zonas de porta que DEVEM ficar livres.";
+                    resultContent = [
+                      {
+                        type: "image",
+                        source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
+                      },
+                      { type: "text", text: message },
+                    ];
+                  } catch (e) {
+                    ok = false;
+                    message = `Falha ao renderizar a planta: ${e instanceof Error ? e.message : "erro desconhecido"}.`;
+                  }
+                }
               } else {
                 const r = applyTool(localPlan, buf.name, input);
                 ok = r.ok;
                 message = r.message;
                 mutationsAny = mutationsAny || ok;
+                mutatedThisIteration = mutatedThisIteration || ok;
                 if (ok && VISUAL_TRIGGER_TOOLS.has(buf.name)) {
                   pendingVisualReview = true;
+                }
+                if (ok && AUTO_RENDER_TOOLS.has(buf.name)) {
+                  autoRenderRoomName =
+                    buf.name === "create_apartment_layout"
+                      ? undefined
+                      : (input as { room_name?: string } | null)?.room_name;
+                  autoRenderIdx = toolResults.length;
                 }
               }
               send({ type: "tool_result", id: buf.id, ok, message });
               toolResults.push({
                 type: "tool_result",
                 tool_use_id: buf.id,
-                content: message,
+                content: resultContent ?? message,
                 is_error: !ok,
               });
               toolBuffers.delete(ev.index);
@@ -283,6 +375,76 @@ export async function POST(req: Request) {
           // Full assistant message with thinking blocks + signatures intact
           // and tool_use inputs fully parsed.
           const finalMessage = await sdkStream.finalMessage();
+
+          // ---- Olhos do agente (pós-iteração, pré-push) ----
+          // 1) Auto-render: UMA imagem por iteração, do estado FIM-de-lote,
+          //    anexada ao tool_result da última tool de cômodo ok (renderizar
+          //    no content_block_stop daria imagem obsoleta — outras tools da
+          //    mesma iteração ainda mutariam o plano).
+          if (autoRenderIdx !== null && imagesUsed < MAX_IMAGES_PER_REQUEST) {
+            const target = toolResults[autoRenderIdx];
+            if (target && !target.is_error) {
+              try {
+                const room = findRoomByName(autoRenderRoomName);
+                const png = room
+                  ? await renderRoomPng(localPlan, room.id, MIDFLIGHT_PNG_WIDTH, { doorZones: true })
+                  : await renderPlanPng(localPlan, MIDFLIGHT_PNG_WIDTH, { doorZones: true });
+                imagesUsed += 1;
+                const baseText =
+                  typeof target.content === "string"
+                    ? target.content
+                    : "(resultado da tool)";
+                target.content = [
+                  {
+                    type: "text",
+                    text:
+                      baseText +
+                      "\n\n[Imagem anexa: estado da planta ao fim deste lote. REVISE antes do próximo cômodo: porta alcançável e giro livre? algo solto no meio? algo sobre parede? cadeira na mesa, criados junto à cama? Hachuras vermelhas = zonas de porta que devem ficar livres. Corrija AGORA o que estiver errado.]",
+                  },
+                  {
+                    type: "image",
+                    source: { type: "base64", media_type: "image/png", data: png.toString("base64") },
+                  },
+                ];
+              } catch (e) {
+                if (process.env.NODE_ENV !== "production") {
+                  console.warn("[auto-render] failed:", e);
+                }
+              }
+            }
+          }
+          // 2) Digest ambiente: avisos acionáveis-agora anexados como texto ao
+          //    último tool_result quando o conjunto MUDOU — feedback imediato
+          //    sem queimar rodada de validador (a Fase V no stop é a
+          //    enforcement completa, incluindo códigos de shell).
+          if (mutatedThisIteration && toolResults.length > 0) {
+            try {
+              const actionable = actionableIssues(validatePlan(localPlan));
+              const dHash = diagnosticsHash(actionable);
+              let digestText: string | null = null;
+              if (actionable.length > 0 && dHash !== lastDigestHash) {
+                lastDigestHash = dHash;
+                const shown = actionable.slice(0, 6).map(digestLine).join("\n");
+                const more = actionable.length > 6 ? `\n… e mais ${actionable.length - 6} aviso(s).` : "";
+                digestText = `⚠ Avisos ativos do motor (trate antes de finalizar):\n${shown}${more}`;
+              } else if (actionable.length === 0 && lastDigestHash !== "") {
+                lastDigestHash = "";
+                digestText = "✓ Avisos do motor zerados.";
+              }
+              if (digestText) {
+                const last = toolResults[toolResults.length - 1];
+                if (typeof last.content === "string") {
+                  last.content = `${last.content}\n\n${digestText}`;
+                } else if (Array.isArray(last.content)) {
+                  last.content = [...last.content, { type: "text", text: digestText }];
+                }
+              }
+            } catch (e) {
+              if (process.env.NODE_ENV !== "production") {
+                console.warn("[digest] failed:", e);
+              }
+            }
+          }
 
           // Always push the assistant turn and — when tools ran — the
           // matching tool_results user message as an inseparable pair.
@@ -311,10 +473,35 @@ export async function POST(req: Request) {
           // model that keeps tweaking forever.
           if (pendingVisualReview && visualReviews < MAX_VISUAL_REVIEWS) {
             try {
-              const png = await renderPlanPng(localPlan, REVIEW_PNG_WIDTH);
+              // Achados atuais pintam o overlay (contorno vermelho nos móveis
+              // flagados) e entram como texto junto da imagem — o modelo
+              // funde a evidência visual com a simbólica.
+              let reviewIssues: DiagnosticIssue[] = [];
+              try {
+                reviewIssues = actionableIssues(validatePlan(localPlan));
+              } catch {
+                // validadores são consultivos aqui
+              }
+              const flaggedIds = [
+                ...new Set(
+                  reviewIssues.flatMap((i) =>
+                    i.nodeIds
+                      .filter((id) => id.startsWith("furniture:"))
+                      .map((id) => id.slice("furniture:".length))
+                  )
+                ),
+              ];
+              const png = await renderPlanPng(localPlan, REVIEW_PNG_WIDTH, {
+                doorZones: true,
+                ...(flaggedIds.length > 0 ? { flaggedIds } : {}),
+              });
               const b64 = png.toString("base64");
               visualReviews += 1;
               pendingVisualReview = false;
+              const issuesText =
+                reviewIssues.length > 0
+                  ? `\n\nAvisos ativos do motor (os móveis citados estão CONTORNADOS EM VERMELHO na imagem):\n${reviewIssues.slice(0, 8).map(digestLine).join("\n")}`
+                  : "";
               // Consecutive user messages are legal — the API merges them.
               conversation.push({
                 role: "user",
@@ -326,14 +513,15 @@ export async function POST(req: Request) {
                   {
                     type: "text",
                     text:
-                      "Acima está o resultado visual da planta após as suas tools. Verifique de forma crítica:\n" +
-                      "- Móveis na frente de portas (zona de aproximação 60cm + arco da folha)\n" +
-                      "- Móveis bloqueando janelas (precisa ≥30cm livres na frente)\n" +
-                      "- Sobreposições visíveis entre móveis\n" +
-                      "- Camas/sofás flutuando longe de paredes\n" +
-                      "- Triângulo de cozinha (geladeira-pia-fogão fora de 0.6–2.7m)\n" +
-                      "- Móveis fora dos cômodos\n\n" +
-                      "Se identificar problemas REAIS, corrija: móveis soltos com move_furniture/swap_furniture/remove_furniture; módulos de marcenaria com update_millwork_module ou remove_millwork_run + add_millwork_run (módulos NÃO se movem individualmente); portas/janelas com update_door/remove_door/update_window. Se estiver tudo coerente, responda apenas com um resumo curto pro usuário e finalize sem chamar mais tools.",
+                      "REVISÃO FINAL — olhe a imagem como um arquiteto revisando a prancheta. Responda mentalmente o checklist POR CÔMODO:\n" +
+                      "1. Todas as portas estão alcançáveis (nenhum móvel na boca do vão) e com giro livre? Hachuras vermelhas = zonas que DEVEM ficar livres.\n" +
+                      "2. Algo sobre/dentro de parede?\n" +
+                      "3. Algum móvel sólido solto no meio do cômodo sem função? (Tapete no centro é correto; mesa de jantar ao centro é correto.)\n" +
+                      "4. Pares coerentes: cadeira na mesa (cadeira PARCIALMENTE sob o tampo é CORRETO — não desfaça o encaixe), criados junto à cama, mesa de centro diante do sofá?\n" +
+                      "5. Cabeceira sob janela? Móvel alto tapando janela? Triângulo de cozinha razoável?\n" +
+                      "6. Móveis fora dos cômodos ou sobrepostos?" +
+                      issuesText +
+                      "\n\nSe identificar problemas REAIS, corrija: móveis com move_furniture/swap_furniture/remove_furniture; módulos de marcenaria com update_millwork_module ou remove_millwork_run + add_millwork_run (módulos NÃO se movem individualmente); portas/janelas com update_door/remove_door/update_window. Se estiver tudo coerente, responda apenas com um resumo curto pro usuário e finalize sem chamar mais tools.",
                   },
                 ],
               });

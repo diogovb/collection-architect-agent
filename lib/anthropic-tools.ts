@@ -708,4 +708,18 @@ export const tools: Anthropic.Tool[] = [
       required: ["query"],
     },
   },
+  {
+    name: "preview_plan",
+    description:
+      "OLHE a planta: devolve a imagem renderizada do estado atual (com zonas de porta hachuradas — áreas que devem ficar livres). Use depois de mobiliar/ajustar um cômodo para REVISAR visualmente antes de seguir: porta alcançável? giro livre? algo solto no meio? algo sobre parede? cadeira na mesa? Passe room_name para ampliar um cômodo específico (recomendado em plantas grandes); omita para ver a planta inteira. Não muda nada na planta.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: {
+          type: "string",
+          description: "Nome do cômodo para recorte ampliado. Omita para a planta inteira.",
+        },
+      },
+    },
+  },
 ];

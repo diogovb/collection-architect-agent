@@ -517,7 +517,9 @@ export type ToolName =
   | "add_text_note"
   | "add_north_arrow"
   // ---- knowledge base (RAG) ----
-  | "search_knowledge_base";
+  | "search_knowledge_base"
+  // ---- visão (render sob demanda para o agente) ----
+  | "preview_plan";
 
 export type FurnitureGroup =
   | "dining_set_4"
@@ -743,6 +745,7 @@ export interface ToolInputs {
     angle?: number;
   };
   search_knowledge_base: { query: string; category?: string };
+  preview_plan: { room_name?: string };
 }
 
 // ----- Selection -----
