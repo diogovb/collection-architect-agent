@@ -4,7 +4,7 @@
 // element (wall / door / window / furniture / room / slab / dimension) and
 // offers per-type actions. Mirrors the modal in the user's design reference
 // ("Parede divisória — L 2,20 m · h 2,80 m · Drywall 9 cm" with action
-// chips). One unified component for both 2D SVG and 3D R3F paths.
+// chips). Used by the 2D SVG canvas (Floorplan2D).
 //
 // Positioning: caller supplies an SVGElement (or null) representing the hit
 // element; we read its on-screen bounding box and place the menu ~16 px to

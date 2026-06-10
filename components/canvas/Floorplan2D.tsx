@@ -2,13 +2,11 @@
 
 // Native SVG 2D floorplan renderer (Pascal-editor style).
 //
-// We render the same scene graph as the 3D R3F canvas, but in pure SVG. This
-// gives us crisp lines via `vector-effect="non-scaling-stroke"`, much faster
-// pan/zoom (no WebGL frame), and total CSS control. Coordinate mapping:
-// world.x → svg.x, world.z → svg.y (top-down).
-//
-// Tools (wall-draw, drag, snap) are not yet wired into the SVG path — they
-// continue to work in 3D mode. We'll port them in a follow-up.
+// Renders the scene graph in pure SVG: crisp lines via
+// `vector-effect="non-scaling-stroke"`, fast pan/zoom (no WebGL frame), and
+// total CSS control. Coordinate mapping: world.x → svg.x, world.z → svg.y
+// (top-down). Tools (wall-draw, drag, snap) are wired in via
+// ./floorplan/use-svg-tools.
 
 import {
   useCallback,

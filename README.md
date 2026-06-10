@@ -82,7 +82,7 @@ collection-architect-agent/
 
 ## Modelo
 
-Por padrão usa `claude-sonnet-4-6`. Se quiser trocar, edite `app/api/chat/route.ts`.
+Usa `claude-fable-5` com thinking adaptativo e `effort: "xhigh"` (constante `MODEL` em `app/api/chat/route.ts`).
 
 ## Base de conhecimento (RAG) — opcional
 

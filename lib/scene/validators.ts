@@ -67,7 +67,9 @@ interface RectXZ { x: number; z: number; w: number; d: number }
  *  rotações ~90/270° o footprint é o transposto preservando o centro —
  *  igual ao que o Floorplan2D desenha. */
 function furnitureAABB(f: FurnitureNode): RectXZ {
-  const transposed = Math.abs(Math.abs(Math.sin(f.rotation)) - 1) < 0.05;
+  // Mesmo limiar do worldAABB legado (~±1°): rotações vêm de múltiplos de
+  // 90° convertidos para radianos, qualquer outra coisa é tratada como 0.
+  const transposed = Math.abs(Math.abs(Math.sin(f.rotation)) - 1) < 0.0002;
   if (!transposed) {
     return { x: f.position.x, z: f.position.z, w: f.dimensions.x, d: f.dimensions.z };
   }
@@ -524,6 +526,8 @@ function validateFurnitureOverlap(furniture: FurnitureNode[], out: DiagnosticIss
       const b = furniture[j];
       // Skip lights, outlets, switches — those are point devices.
       if (isPointDevice(a.catalogId) || isPointDevice(b.catalogId)) continue;
+      // Tapetes legitimamente ficam SOB sofás/mesas — não é overlap.
+      if (isRugLike(a.catalogId) || isRugLike(b.catalogId)) continue;
       // Skip pairs from the same millwork run — overlaps são esperados.
       if (a.runId && b.runId && a.runId === b.runId) continue;
       const aabbA = furnitureAABB(a);

@@ -30,7 +30,14 @@ export function formatIssuesForAgent(issues: DiagnosticIssue[]): string {
     out.push(`## ${sev.toUpperCase()} (${list.length})`);
     for (const i of list) {
       const ref = i.reference ? ` [${i.reference}]` : "";
-      out.push(`- (${i.code})${ref} ${i.message}`);
+      // Ids dos nós da cena viram ids legados utilizáveis nas tools
+      // (furniture:furn_x → furniture_id=furn_x) — sem eles o agente não
+      // tinha como parametrizar move_furniture/swap_furniture.
+      const legacyIds = i.nodeIds
+        .filter((id) => id.startsWith("furniture:"))
+        .map((id) => id.slice("furniture:".length));
+      const idTag = legacyIds.length > 0 ? ` [furniture_id: ${legacyIds.join(", ")}]` : "";
+      out.push(`- (${i.code})${ref} ${i.message}${idTag}`);
     }
   }
   return out.join("\n");

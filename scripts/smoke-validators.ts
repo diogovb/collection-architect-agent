@@ -147,15 +147,63 @@ applyTool(p10, "add_door", { room_name: "Sala", wall: "north", position: 0.5, si
 const winOverDoor = applyTool(p10, "add_window", { room_name: "Sala", wall: "north", position: 0.55, size: 1.5 });
 check("janela sobre porta rejeitada", !winOverDoor.ok, winOverDoor.message);
 
-// ---------- Cenário 11: apartamento completo (regressão) ----------
-console.log("\n[11] create_apartment_layout 70m² (regressão sem spam)");
-const p11 = emptyPlan();
-const apt = applyTool(p11, "create_apartment_layout", { total_area: 70, num_bedrooms: 2, num_bathrooms: 2 });
-check("layout gerado", apt.ok, apt.message);
-const i11 = validatePlan(p11);
-const errors11 = i11.filter((i) => i.severity === "error");
-console.log(`  (diagnósticos: ${i11.length} — errors: ${errors11.map((e) => e.code).join(", ") || "nenhum"})`);
-check("sem ROOM_OVERLAP no layout gerado", !errors11.some((e) => e.code === "ROOM_OVERLAP"), errors11.map((e) => e.message).join(" | "));
+// ---------- Cenário 11: apartamentos em várias metragens (regressão) ----------
+// 60/90/110m² geram coordenadas fora da grade de 5cm (derivadas de raiz
+// quadrada) — antes do fix de snap, TODAS as portas/janelas dessas plantas
+// eram perdidas na migração (OPENING_LOST + ROOM_NO_DOOR em massa).
+for (const area of [60, 70, 90, 110]) {
+  console.log(`\n[11] create_apartment_layout ${area}m² (regressão sem perda de aberturas)`);
+  const p11 = emptyPlan();
+  const apt = applyTool(p11, "create_apartment_layout", { total_area: area, num_bedrooms: 2, num_bathrooms: 2 });
+  check(`layout ${area}m² gerado`, apt.ok, apt.message);
+  const i11 = validatePlan(p11);
+  const errors11 = i11.filter((i) => i.severity === "error");
+  console.log(`  (diagnósticos: ${i11.length} — errors: ${errors11.map((e) => e.code).join(", ") || "nenhum"})`);
+  check(`${area}m²: sem OPENING_LOST`, !i11.some((i) => i.code === "OPENING_LOST"), errors11.map((e) => e.message).join(" | "));
+  check(`${area}m²: sem ROOM_NO_DOOR`, !errors11.some((e) => e.code === "ROOM_NO_DOOR"), errors11.map((e) => e.message).join(" | "));
+  check(`${area}m²: sem ROOM_OVERLAP`, !errors11.some((e) => e.code === "ROOM_OVERLAP"), errors11.map((e) => e.message).join(" | "));
+}
+
+// ---------- Cenário 12: update_door substitui porta estreita ----------
+console.log("\n[12] update_door alarga porta estreita (caminho do MIN_DOOR_WIDTH)");
+const p12 = emptyPlan();
+applyTool(p12, "create_room", { name: "Banheiro", width: 2.0, height: 1.8, x: 0, y: 0 });
+applyTool(p12, "add_door", { room_name: "Banheiro", wall: "north", position: 0.5, size: 0.6 });
+const upd = applyTool(p12, "update_door", { room_name: "Banheiro", wall: "north", new_size: 0.7 });
+check("porta alargada", upd.ok && p12.doors[0]?.size === 0.7, `${upd.message} size=${p12.doors[0]?.size}`);
+const redo = applyTool(p12, "add_door", { room_name: "Banheiro", wall: "north", position: 0.5, size: 0.8 });
+check("add_door no mesmo lugar substitui (não engole)", redo.ok && p12.doors[0]?.size === 0.8 && p12.doors.length === 1, `${redo.message} size=${p12.doors[0]?.size} n=${p12.doors.length}`);
+const rem = applyTool(p12, "remove_door", { room_name: "Banheiro", wall: "north" });
+check("remove_door funciona", rem.ok && p12.doors.length === 0, rem.message);
+
+// ---------- Cenário 13: varanda a oeste sem invadir o cômodo ----------
+console.log("\n[13] add_balcony west não sobrepõe o cômodo pai");
+const p13 = emptyPlan();
+applyTool(p13, "create_room", { name: "Sala", width: 5, height: 4, x: 2, y: 0 });
+applyTool(p13, "add_door", { room_name: "Sala", wall: "north", position: 0.5 });
+const balc = applyTool(p13, "add_balcony", { name: "Varanda", attached_to: "Sala", wall: "west", width: 3, depth: 1.5 });
+check("varanda criada", balc.ok, balc.message);
+const i13 = validatePlan(p13);
+check("sem ROOM_OVERLAP", !i13.some((i) => i.code === "ROOM_OVERLAP"), i13.filter((i) => i.code === "ROOM_OVERLAP").map((i) => i.message).join(" | "));
+
+// ---------- Cenário 14: resize_room não pode invadir vizinho ----------
+console.log("\n[14] resize_room rejeitado quando invadiria vizinho");
+const p14 = emptyPlan();
+applyTool(p14, "create_room", { name: "Sala", width: 4, height: 4, x: 0, y: 0 });
+applyTool(p14, "create_room", { name: "Quarto", width: 3, height: 4, x: 4, y: 0 });
+const grow = applyTool(p14, "resize_room", { room_name: "Sala", width: 5, height: 4 });
+check("resize que invade rejeitado", !grow.ok && /invadiria/.test(grow.message), grow.message);
+const growOk = applyTool(p14, "resize_room", { room_name: "Sala", width: 4, height: 5 });
+check("resize em direção livre aceito", growOk.ok, growOk.message);
+
+// ---------- Cenário 15: swap rotacionado respeita footprint visual ----------
+console.log("\n[15] swap_furniture com rotação 90° usa footprint transposto");
+const p15 = emptyPlan();
+applyTool(p15, "create_room", { name: "Sala Estreita", width: 1.4, height: 4.0, x: 0, y: 0 });
+p15.furniture.push({ id: "f-arm", roomId: p15.rooms[0].id, type: "armchair", label: "Poltrona", x: 0.3, y: 1.5, width: 0.8, height: 0.8, rotation: 90 });
+const swapV = applyTool(p15, "swap_furniture", { furniture_id: "f-arm", new_type: "sofa_2seat" });
+// sofa_2seat ~1.6×0.9 rotacionado vira 0.9×1.6 → cabe em 1.4m de largura.
+check("swap rotacionado aceito (footprint 0.9×1.6 cabe)", swapV.ok, swapV.message);
 
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

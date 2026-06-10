@@ -468,7 +468,11 @@ export type ToolName =
   | "create_room"
   | "remove_room"
   | "add_door"
+  | "update_door"
+  | "remove_door"
   | "add_window"
+  | "update_window"
+  | "remove_window"
   | "add_furniture"
   | "place_furniture_intent"
   | "add_millwork_run"
@@ -543,11 +547,39 @@ export interface ToolInputs {
     position?: number;
     size?: number;
   };
+  update_door: {
+    room_name: string;
+    wall: Wall;
+    /** Localiza a porta mais próxima desta position (0..1); opcional quando
+     *  há uma única porta na parede. */
+    position?: number;
+    new_size?: number;
+    new_position?: number;
+    hinge?: "near" | "far";
+    swing?: "in" | "out";
+  };
+  remove_door: {
+    room_name: string;
+    wall: Wall;
+    position?: number;
+  };
   add_window: {
     room_name: string;
     wall: Wall;
     position?: number;
     size?: number;
+  };
+  update_window: {
+    room_name: string;
+    wall: Wall;
+    position?: number;
+    new_size?: number;
+    new_position?: number;
+  };
+  remove_window: {
+    room_name: string;
+    wall: Wall;
+    position?: number;
   };
   add_furniture: {
     room_name: string;

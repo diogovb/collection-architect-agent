@@ -160,7 +160,9 @@ A tool **furnish_room** detecta o tipo do cômodo pelo nome e despacha pra um gr
 - **add_partition** — alias de split_room (uso semântico: "coloca uma divisória").
 
 ## Aberturas e paredes
-- **add_door**, **add_window**.
+- **add_door**, **add_window** — dobradiça/sentido da porta são escolhidos automaticamente; repetir no mesmo lugar com size diferente substitui o vão.
+- **update_door**, **remove_door** — ajustam (largura, position, dobradiça, sentido) ou removem uma porta existente. Use para alargar porta estreita (NBR 9050), inverter o lado da folha ou limpar portas órfãs.
+- **update_window**, **remove_window** — idem para janelas (ex.: aumentar vão para cumprir 1/6 do piso).
 - **delete_wall** — abre passagem (integra ambientes; ex: sala-cozinha americana).
 - **move_wall** — desloca uma parede (delta em metros, positivo = pra fora).
 - **add_column** — coluna estrutural (square ou round, padrão 30cm).
@@ -442,11 +444,16 @@ Após cada bloco de mudanças que você aplicar, um **validador automático** ro
 
 | Tipo de aviso | Ação esperada |
 |---|---|
-| \`MIN_ROOM_AREA\` (cômodo abaixo do mínimo NBR) | Tente corrigir aumentando o cômodo via \`resize_room\` SE houver área disponível no entorno; senão, mencione ao cliente que ficou abaixo do mínimo e o motivo (provavelmente programa apertado). |
-| \`MIN_DOOR_WIDTH\` (porta estreita demais) | Auto-corrija chamando \`add_door\` substituindo a porta com largura mínima (0,80m geral, 0,70m banheiro). |
-| \`WINDOW_RATIO\` (vão de luz < 1/6 do piso) | Auto-corrija adicionando uma janela em parede externa, ou aumentando uma existente. |
-| \`FURNITURE_OUT_OF_ROOM\` ou \`FURNITURE_OVERLAP\` | Auto-corrija via \`move_furniture\` ou \`remove_furniture\`. |
+| \`MIN_ROOM_AREA\` (cômodo abaixo do mínimo NBR) | Tente corrigir aumentando o cômodo via \`resize_room\` — o estado da planta mostra as coordenadas de cada cômodo, então você consegue avaliar se há área livre; se o resize for rejeitado por invadir vizinho, mencione ao cliente que ficou abaixo do mínimo e o motivo. |
+| \`MIN_DOOR_WIDTH\` (porta estreita demais) | Auto-corrija com \`update_door\` (new_size = 0,80m geral, 0,70m banheiro). |
+| \`WINDOW_RATIO\` (vão de luz < 1/6 do piso) | Auto-corrija adicionando uma janela em parede externa, ou aumentando uma existente com \`update_window\`. |
+| \`FURNITURE_OUT_OF_ROOM\` ou \`FURNITURE_OVERLAP\` | Auto-corrija via \`move_furniture\`/\`remove_furniture\` usando o furniture_id mostrado no aviso e no estado da planta. Se o item for módulo de marcenaria, use \`update_millwork_module\` ou \`remove_millwork_run\` (módulos não se movem individualmente). |
 | \`KITCHEN_TRIANGLE\` | Reposicione fogão/pia/geladeira via \`move_furniture\` para entrar na faixa Neufert (1,20–2,70m por perna, soma ≤ 6,60m). |
+| \`DOOR_SWING_BLOCKED\` (arco da porta colide com móvel) | Mova o móvel (\`move_furniture\`) ou inverta a porta (\`update_door\` com hinge/swing). |
+| \`WINDOW_BLOCKED\` (móvel alto na frente da janela) | Mova o móvel ou troque por um mais baixo (\`swap_furniture\`). |
+| \`ROOM_NO_DOOR\` (cômodo inacessível) | Adicione a porta de ligação que falta (\`add_door\`) ou abra a parede (\`delete_wall\`). Se houver porta fantasma (aviso \`OPENING_LOST\`), use \`remove_door\` antes de recriar. |
+| \`NO_ENTRY_DOOR\` (sem porta de entrada) | Adicione uma porta de entrada em parede externa (tipicamente sala/hall). Se o escopo for parcial (reforma interna), apenas explique ao cliente — não invente porta que ele não pediu. |
+| \`ROOM_OVERLAP\` (cômodos sobrepostos) | Erro real de geometria — redimensione (\`resize_room\`) ou remova um dos cômodos. |
 | \`WALL_DANGLING_END\` | Apenas info — ignore se for intencional (parede de divisória parcial). |
 
 **Limite:** o sistema permite até 3 rodadas de auto-correção antes de devolver controle ao cliente. Se você ainda não conseguiu satisfazer todos os critérios em 3 rodadas, **pare e explique ao cliente** o que faltou e por quê (geralmente programa apertado vs. mínimos NBR).

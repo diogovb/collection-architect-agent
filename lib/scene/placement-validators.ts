@@ -247,16 +247,22 @@ export function validateClearance(
 export function validateDoorClearance(
   bb: BBox,
   room: Room,
-  doors: Door[]
+  doors: Door[],
+  rooms?: Room[],
 ): PlacementResult {
   for (const d of doors) {
-    if (d.roomId !== room.id) continue;
+    // O quarto de disco é calculado em coordenadas de MUNDO a partir do
+    // cômodo DONO da porta — uma porta do vizinho com swing "out" varre o
+    // espaço DESTE cômodo, então não filtramos por roomId.
+    const owner =
+      d.roomId === room.id ? room : rooms?.find((r) => r.id === d.roomId);
+    if (!owner) continue;
+    if (d.silent) continue; // duplicata lógica — o disco pertence à porta real
     const size = d.size ?? 0.8;
     const pos = d.position ?? 0.5;
     const hinge = d.hinge ?? (pos <= 0.5 ? "near" : "far");
     const swing = d.swing ?? "in";
-    if (swing === "out") continue; // a folha abre para o cômodo vizinho
-    const g = legacySwingGeometry(room, d.wall, pos, size, hinge, swing);
+    const g = legacySwingGeometry(owner, d.wall, pos, size, hinge, swing);
     // Encolhe o bbox 5 cm para perdoar contatos de borda (mesmo inset do
     // antigo bboxOverlap(zone, bb, 0.05)).
     const inset = 0.05;
@@ -344,7 +350,7 @@ export function validatePlacement(
   const r1 = validateAnchor(bb, room, placement, existing);
   if (!r1.ok) return r1;
 
-  const r2 = validateDoorClearance(bb, room, plan.doors);
+  const r2 = validateDoorClearance(bb, room, plan.doors, plan.rooms);
   if (!r2.ok) return r2;
 
   const r3 = validateWindowClearance(bb, room, plan.windows);

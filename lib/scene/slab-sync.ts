@@ -22,11 +22,15 @@ export function categoryFromName(name: string): RoomCategory {
   if (/(sala\s+de\s+jantar|jantar)/.test(n)) return "dining";
   if (/(sala|estar|living)/.test(n)) return "living";
   if (/(cozinha|kitchen)/.test(n)) return "kitchen";
+  if (/(lavabo)/.test(n)) return "lavatory";
+  // Banheiro testado ANTES dos padrões de suíte: "Banheiro Suíte" caía em
+  // bedroom_master e os validadores exigiam 12 m² / 2,40 m de um banheiro.
+  if (/(banheiro|wc|bath)/.test(n)) {
+    return /(suite|suíte|master|casal)/.test(n) ? "bath_master" : "bath";
+  }
   if (/(suite|suíte|master|casal)/.test(n)) return "bedroom_master";
   if (/(quarto.*infantil|infantil|kids|criança)/.test(n)) return "bedroom_kids";
   if (/(quarto|dorm|bedroom|solteiro)/.test(n)) return "bedroom";
-  if (/(lavabo)/.test(n)) return "lavatory";
-  if (/(banheiro|wc|bath)/.test(n)) return "bath";
   if (/(lavanderia|laundry|área\s+de\s+serviço|servico)/.test(n)) return "laundry";
   if (/(escrit|office|home\s+office)/.test(n)) return "office";
   if (/(varanda|sacada|balcony)/.test(n)) return "balcony";

@@ -1,16 +1,15 @@
-// Pure drag engine — no React, no R3F, no SVG. Both the 3D (R3F raycast)
-// and 2D (SVG viewBox inverse) paths feed it world-space pointer coords and
-// receive scene mutations via the SceneStore.
+// Pure drag engine — no React, no SVG. The 2D path (SVG viewBox inverse,
+// components/canvas/floorplan/use-svg-tools.ts) feeds it world-space pointer
+// coords and receives scene mutations via the SceneStore.
 //
 // Three drag types:
 //  1. furniture  — translate a FurnitureNode, clamped to its parent room.
 //  2. opening    — slide a Door/WindowNode along its wall, clamped + grid-snapped.
 //  3. wall-draw  — anchor → click chain, creates WallNodes with snapping.
 //
-// Each platform-specific hook (R3F or SVG) wraps these primitives and supplies
-// the correct screen→world conversion. Lifecycle: `begin*` returns a session
-// with `update(world)` and `commit()` / `cancel()` methods. Pointer event
-// listeners go through these.
+// The SVG hook wraps these primitives and supplies the correct screen→world
+// conversion. Lifecycle: `begin*` returns a session with `update(world)` and
+// `commit()` / `cancel()` methods. Pointer event listeners go through these.
 
 import type {
   DimensionNode,

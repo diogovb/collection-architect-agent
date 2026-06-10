@@ -147,15 +147,26 @@ export function quarterDiscIntersectsRect(g: SwingGeometry, rect: PlanRect): boo
 }
 
 /** True quando o arco da porta colide com algum móvel da lista (AABBs visuais,
- *  ignorando tapetes e dispositivos pontuais). */
+ *  ignorando tapetes e dispositivos pontuais). Os AABBs são encolhidos 5 cm
+ *  para que contato de borda exato (armário rente ao batente, raio tangente)
+ *  não conte como bloqueio — mesmo inset usado pelos validadores. */
 export function swingBlockedBy(
   g: SwingGeometry,
   furniture: Furniture[],
 ): Furniture | null {
+  const inset = 0.05;
   for (const f of furniture) {
     if (/^rug|carpet|mat/i.test(f.type)) continue;
     if (/light|outlet|switch/.test(f.type)) continue;
-    if (quarterDiscIntersectsRect(g, worldAABB(f))) return f;
+    const bb = worldAABB(f);
+    const shrunk = {
+      x: bb.x + inset,
+      y: bb.y + inset,
+      w: bb.w - 2 * inset,
+      h: bb.h - 2 * inset,
+    };
+    if (shrunk.w <= 0 || shrunk.h <= 0) continue;
+    if (quarterDiscIntersectsRect(g, shrunk)) return f;
   }
   return null;
 }
@@ -170,28 +181,31 @@ export interface SwingChoice {
 /** Heurística do add_door: dobradiça no lado mais próximo do fim da parede
  *  (a folha aberta descansa contra a parede perpendicular vizinha), abrindo
  *  para dentro. Se o arco colidir com móveis, tenta inverter a dobradiça,
- *  depois abrir para fora (testando os móveis do cômodo vizinho); se nada
- *  liberar, mantém o padrão e deixa o validador avisar. */
+ *  depois abrir para fora — mas APENAS quando existe um cômodo vizinho do
+ *  outro lado (`neighborFurniture !== null`): abrir "para fora" através de
+ *  parede externa desenharia a folha fora da planta. Se nada liberar,
+ *  mantém o padrão e deixa o validador avisar. */
 export function chooseDoorSwing(
   room: Room,
   wall: Wall,
   position: number,
   size: number,
   ownRoomFurniture: Furniture[],
-  neighborFurniture: Furniture[],
+  neighborFurniture: Furniture[] | null,
 ): SwingChoice {
   const hinge0: LegacyHinge = position <= 0.5 ? "near" : "far";
   const hinge1: LegacyHinge = hinge0 === "near" ? "far" : "near";
   const candidates: Array<{ hinge: LegacyHinge; swing: LegacySwing }> = [
     { hinge: hinge0, swing: "in" },
     { hinge: hinge1, swing: "in" },
-    { hinge: hinge0, swing: "out" },
-    { hinge: hinge1, swing: "out" },
   ];
+  if (neighborFurniture !== null) {
+    candidates.push({ hinge: hinge0, swing: "out" }, { hinge: hinge1, swing: "out" });
+  }
   let firstBlocker: Furniture | null = null;
   for (const c of candidates) {
     const g = legacySwingGeometry(room, wall, position, size, c.hinge, c.swing);
-    const pool = c.swing === "in" ? ownRoomFurniture : neighborFurniture;
+    const pool = c.swing === "in" ? ownRoomFurniture : (neighborFurniture ?? []);
     const blocker = swingBlockedBy(g, pool);
     if (!blocker) return c;
     if (!firstBlocker) firstBlocker = blocker;

@@ -333,14 +333,32 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
     cursor += m.width;
   }
 
-  // Generate upper cabinets if "auto". Skip above full-height modules and
-  // above sink/cooktop (where window or hood goes).
+  // Generate upper cabinets if "auto". Skip above full-height modules,
+  // above sink/cooktop (where window or hood goes), above modules the
+  // caller marked with `window_above`, and above any span that overlaps a
+  // window on this wall line — um armário superior na frente da janela
+  // disparava WINDOW_BLOCKED sem remediação possível.
   const upperPolicy = input.upper_cabinets ?? (runType === "kitchen_counter" ? "auto" : "none");
+  const overlapsWindow = (offsetAlong: number, width: number): boolean => {
+    const span = spanInterval(room, wall, offsetAlong, width);
+    for (const w of plan.windows) {
+      const wRoom = plan.rooms.find((r) => r.id === w.roomId);
+      if (!wRoom) continue;
+      if (openingsOverlap1D(span, openingInterval(wRoom, w.wall, w.position, w.size)) > 0) return true;
+    }
+    return false;
+  };
   if (upperPolicy === "auto") {
     cursor = startOffset;
     for (let i = 0; i < normalized.length; i++) {
       const m = normalized[i];
-      const skipUpper = !m.allowsUpper || m.isFullHeight || m.cutoutKind === "sink" || m.cutoutKind === "cooktop";
+      const skipUpper =
+        !m.allowsUpper ||
+        m.isFullHeight ||
+        m.cutoutKind === "sink" ||
+        m.cutoutKind === "cooktop" ||
+        m.window_above === true ||
+        overlapsWindow(cursor, m.width);
       if (!skipUpper) {
         const upperType = m.kind === "cabinet_glass" ? "module_upper_glass" : "module_upper_cabinet";
         const upperBbox = computeModulePosition(room, wall, cursor, m.width, RUN_DEFAULTS.upperDepth);

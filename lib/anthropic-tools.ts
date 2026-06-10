@@ -115,7 +115,8 @@ export const tools: Anthropic.Tool[] = [
   // ============ OPENINGS ============
   {
     name: "add_door",
-    description: "Adiciona uma porta numa parede de um cômodo. position é 0..1 ao longo da parede.",
+    description:
+      "Adiciona uma porta numa parede de um cômodo. position é 0..1 ao longo da parede. O lado da dobradiça e o sentido de abertura são escolhidos automaticamente (evitando móveis); use update_door para ajustá-los. Chamar de novo no mesmo lugar com size diferente SUBSTITUI a porta existente.",
     input_schema: {
       type: "object",
       properties: {
@@ -128,8 +129,41 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "update_door",
+    description:
+      "Ajusta uma porta existente: largura do vão, position na parede, lado da dobradiça (hinge) ou sentido de abertura (swing). Chame quando um aviso pedir para alargar uma porta (NBR 9050), inverter a dobradiça (DOOR_SWING_BLOCKED) ou reposicionar o vão. Localiza a porta mais próxima de `position`; omita quando houver só uma na parede.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        position: { type: "number", description: "Localizador 0..1 da porta a ajustar." },
+        new_size: { type: "number" },
+        new_position: { type: "number" },
+        hinge: { type: "string", enum: ["near", "far"], description: "near = dobradiça na ponta inicial da parede." },
+        swing: { type: "string", enum: ["in", "out"], description: "in = abre para dentro do cômodo." },
+      },
+      required: ["room_name", "wall"],
+    },
+  },
+  {
+    name: "remove_door",
+    description:
+      "Remove uma porta existente. Chame para eliminar portas fantasma/órfãs (aviso OPENING_LOST), portas duplicadas ou quando o cliente pedir. Localiza a porta mais próxima de `position`.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        position: { type: "number" },
+      },
+      required: ["room_name", "wall"],
+    },
+  },
+  {
     name: "add_window",
-    description: "Adiciona uma janela numa parede de um cômodo. position é 0..1.",
+    description:
+      "Adiciona uma janela numa parede de um cômodo. position é 0..1. Chamar de novo no mesmo lugar com size diferente SUBSTITUI a janela (é assim que se aumenta o vão para cumprir 1/6 do piso, NBR 15575).",
     input_schema: {
       type: "object",
       properties: {
@@ -137,6 +171,36 @@ export const tools: Anthropic.Tool[] = [
         wall: { type: "string", enum: ["north", "south", "east", "west"] },
         position: { type: "number", default: 0.5 },
         size: { type: "number", default: 1.5 },
+      },
+      required: ["room_name", "wall"],
+    },
+  },
+  {
+    name: "update_window",
+    description:
+      "Ajusta uma janela existente (largura do vão e/ou position). Chame quando o aviso WINDOW_RATIO pedir mais área de janela ou para reposicionar o vão. Localiza a janela mais próxima de `position`.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        position: { type: "number" },
+        new_size: { type: "number" },
+        new_position: { type: "number" },
+      },
+      required: ["room_name", "wall"],
+    },
+  },
+  {
+    name: "remove_window",
+    description:
+      "Remove uma janela existente. Localiza a janela mais próxima de `position`.",
+    input_schema: {
+      type: "object",
+      properties: {
+        room_name: { type: "string" },
+        wall: { type: "string", enum: ["north", "south", "east", "west"] },
+        position: { type: "number" },
       },
       required: ["room_name", "wall"],
     },

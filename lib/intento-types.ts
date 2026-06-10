@@ -96,8 +96,6 @@ export interface Slide {
   title?: string;
   subtitle?: string;
   body?: string;
-  /** Reference id for slides that point at another entity. */
-  refId?: string;
 }
 
 export interface DiffProposal {

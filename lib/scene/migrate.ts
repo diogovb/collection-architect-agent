@@ -160,7 +160,7 @@ function buildSegments(plan: FloorPlan): SegmentSpec[] {
   for (const r of plan.rooms) {
     if (!r.openWalls?.length) continue;
     for (const w of r.openWalls) {
-      const seg = roomEdge(r, w);
+      const seg = snappedRoomEdge(r, w);
       for (const s of out) {
         if (removed.has(key(s))) continue;
         if (s.axis === "h" && seg.axis === "h" && Math.abs(s.fixed - seg.fixed) < EPS) {
@@ -180,10 +180,10 @@ function buildSegments(plan: FloorPlan): SegmentSpec[] {
     for (const r of plan.rooms) {
       if (!r.isBalcony) continue;
       const edges = [
-        roomEdge(r, "north"),
-        roomEdge(r, "south"),
-        roomEdge(r, "west"),
-        roomEdge(r, "east"),
+        snappedRoomEdge(r, "north"),
+        snappedRoomEdge(r, "south"),
+        snappedRoomEdge(r, "west"),
+        snappedRoomEdge(r, "east"),
       ];
       let matched = false;
       for (const e of edges) {
@@ -213,6 +213,21 @@ function roomEdge(r: Room, w: WallSide): RoomEdge {
     case "west":  return { axis: "v", fixed: r.x, start: r.y, end: r.y + r.height };
     case "east":  return { axis: "v", fixed: r.x + r.width, start: r.y, end: r.y + r.height };
   }
+}
+
+/** Edge quantizada na MESMA grade de 5 cm usada por buildSegments. Sem isso,
+ *  um cômodo fora da grade (create_apartment_layout gera coords derivadas de
+ *  raiz quadrada, ex.: x=4.554) compara a edge CRUA contra segmentos snapados
+ *  com tolerância de 1 mm — nunca casa e TODA porta/janela daquela parede era
+ *  descartada silenciosamente. */
+function snappedRoomEdge(r: Room, w: WallSide): RoomEdge {
+  const e = roomEdge(r, w);
+  return {
+    axis: e.axis,
+    fixed: snapCoord(e.fixed),
+    start: snapCoord(e.start),
+    end: snapCoord(e.end),
+  };
 }
 
 function segmentId(s: SegmentSpec): NodeId {
@@ -311,7 +326,10 @@ const WALL_PT: Record<WallSide, string> = {
  *    west  → out  (cômodo a leste = lado -perp)
  *  hinge "near" (borda com menor coordenada ao longo da parede) → "start". */
 function inferHinge(d: Door): { side: HingeSide; dir: SwingDirection } {
-  const hinge = d.hinge ?? "near";
+  // Mesmo default posicional dos validadores de placement (placement-
+  // validators/chooseDoorSwing) — divergir aqui fazia o validador de cena e o
+  // de placement modelarem discos de giro DIFERENTES para portas sem hinge.
+  const hinge = d.hinge ?? (d.position <= 0.5 ? "near" : "far");
   const swing = d.swing ?? "in";
   const side: HingeSide = hinge === "near" ? "start" : "end";
   const inMeansScenIn = d.wall === "north" || d.wall === "east";
@@ -429,7 +447,7 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       warnings.push(`door ${d.id}: room ${d.roomId} not found`);
       continue;
     }
-    const edge = roomEdge(room, d.wall);
+    const edge = snappedRoomEdge(room, d.wall);
     const found = findOwnerSegment(segments, edge, d.position, d.size);
     if (!found) {
       warnings.push(
@@ -465,7 +483,7 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       warnings.push(`window ${w.id}: room ${w.roomId} not found`);
       continue;
     }
-    const edge = roomEdge(room, w.wall);
+    const edge = snappedRoomEdge(room, w.wall);
     const found = findOwnerSegment(segments, edge, w.position, w.size);
     if (!found) {
       warnings.push(
