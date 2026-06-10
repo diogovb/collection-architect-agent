@@ -4,7 +4,7 @@
 // (floor-plan-engine importa millwork-engine, que precisa destes helpers).
 
 import type { FloorPlan, Room, Wall } from "./types";
-import { SNAP_ROOM_GRID_M, TOL_LINE_M } from "./scene/tolerances";
+import { DOOR_APPROACH_DEPTH_M, SNAP_ROOM_GRID_M, TOL_LINE_M } from "./scene/tolerances";
 import {
   EXTERNAL_WALL_THICKNESS_M,
   INTERNAL_WALL_THICKNESS_M,
@@ -224,4 +224,124 @@ export function usableRect(plan: Pick<FloorPlan, "rooms">, room: Room): PlanRect
     w: Math.max(0, room.width - w - e),
     h: Math.max(0, room.height - n - s),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Corredor de aproximação de porta
+//
+// Uma porta usável precisa de dois espaços: o quarto-de-disco do GIRO (já
+// coberto por door-swing.ts, no lado para onde a folha abre) e o corredor de
+// CHEGADA na frente do vão, nos DOIS lados da parede. Era o buraco que
+// permitia um guarda-roupa exatamente na boca da porta do banheiro quando o
+// giro abria para o outro lado.
+// ---------------------------------------------------------------------------
+
+/** Corredor de aproximação de UMA porta, do lado de um cômodo específico. */
+export interface DoorApproach {
+  /** Retângulo do corredor DENTRO do cômodo consultado (coords de mundo). */
+  rect: PlanRect;
+  /** Eixo do vão (h = corre em x). */
+  axis: "h" | "v";
+  /** Lado do cômodo consultado onde a porta está. */
+  side: Wall;
+  doorId: string;
+  /** Intervalo do vão ao longo do eixo, clampado ao span da edge. */
+  start: number;
+  end: number;
+}
+
+/** Corredor de aproximação de UM vão (existente ou hipotético) do lado de
+ *  um cômodo. Null quando o vão não cai numa parede deste cômodo. A
+ *  profundidade default (DOOR_APPROACH_DEPTH_M) é clampada à metade do
+ *  fundo útil — cômodos minúsculos não viram 100% corredor — e medida a
+ *  partir da face interna da parede (borda do rect útil). */
+export function openingApproach(
+  plan: Pick<FloorPlan, "rooms">,
+  room: Room,
+  iv: OpeningInterval,
+  opts?: { depth?: number; doorId?: string }
+): DoorApproach | null {
+  const usable = usableRect(plan, room);
+
+  // Em qual lado DESTE cômodo essa linha de parede cai?
+  let side: Wall | null = null;
+  if (iv.axis === "h") {
+    if (Math.abs(iv.fixed - room.y) <= SAME_LINE_TOL) side = "north";
+    else if (Math.abs(iv.fixed - (room.y + room.height)) <= SAME_LINE_TOL) side = "south";
+  } else {
+    if (Math.abs(iv.fixed - room.x) <= SAME_LINE_TOL) side = "west";
+    else if (Math.abs(iv.fixed - (room.x + room.width)) <= SAME_LINE_TOL) side = "east";
+  }
+  if (!side) return null;
+
+  // O vão precisa sobrepor o span da edge deste cômodo.
+  const lo = iv.axis === "h" ? room.x : room.y;
+  const hi = iv.axis === "h" ? room.x + room.width : room.y + room.height;
+  const start = Math.max(iv.start, lo);
+  const end = Math.min(iv.end, hi);
+  if (end - start <= TOL_LINE_M) return null;
+
+  const usableDepth = iv.axis === "h" ? usable.h : usable.w;
+  const depth = Math.min(opts?.depth ?? DOOR_APPROACH_DEPTH_M, usableDepth * 0.5);
+  if (depth <= TOL_LINE_M) return null;
+
+  const rect: PlanRect =
+    side === "north"
+      ? { x: start, y: usable.y, w: end - start, h: depth }
+      : side === "south"
+        ? { x: start, y: usable.y + usable.h - depth, w: end - start, h: depth }
+        : side === "west"
+          ? { x: usable.x, y: start, w: depth, h: end - start }
+          : { x: usable.x + usable.w - depth, y: start, w: depth, h: end - start };
+
+  return { rect, axis: iv.axis, side, doorId: opts?.doorId ?? "(nova)", start, end };
+}
+
+/** Corredores de aproximação de todas as portas que tocam as paredes do
+ *  cômodo — próprias OU de vizinhos na mesma linha (porta do vizinho com
+ *  giro para lá ainda precisa de chegada livre AQUI). */
+export function doorApproachRects(
+  plan: Pick<FloorPlan, "rooms" | "doors">,
+  room: Room
+): DoorApproach[] {
+  const out: DoorApproach[] = [];
+  for (const d of plan.doors ?? []) {
+    if (d.silent) continue; // duplicata lógica — o vão real é de outra porta
+    const owner = plan.rooms.find((r) => r.id === d.roomId);
+    if (!owner) continue;
+    const iv = openingInterval(owner, d.wall, d.position ?? 0.5, d.size ?? 0.8);
+    const a = openingApproach(plan, room, iv, { doorId: d.id });
+    if (a) out.push(a);
+  }
+  return out;
+}
+
+/** Fração da LARGURA do vão coberta pela projeção do móvel — só conta quando
+ *  o móvel realmente invade o corredor (interseção de área > 0). É a régua
+ *  da regra graduada: ≥50% = porta inutilizada (erro/rejeição); abaixo,
+ *  intrusão lateral tolerável (aviso). */
+export function doorCoverageFraction(bb: PlanRect, approach: DoorApproach): number {
+  if (rectOverlapArea(bb, approach.rect) <= 1e-6) return 0;
+  const lo = approach.axis === "h" ? bb.x : bb.y;
+  const hi = approach.axis === "h" ? bb.x + bb.w : bb.y + bb.h;
+  const covered = Math.min(hi, approach.end) - Math.max(lo, approach.start);
+  const span = approach.end - approach.start;
+  return span > 1e-6 ? Math.max(0, covered) / span : 0;
+}
+
+/** Maior fração de cobertura de vão entre todos os corredores do cômodo —
+ *  helper para guardas de tools (move/swap/solver) com a porta culpada. */
+export function worstDoorCoverage(
+  approaches: DoorApproach[],
+  bb: PlanRect
+): { fraction: number; approach: DoorApproach | null } {
+  let worst: { fraction: number; approach: DoorApproach | null } = {
+    fraction: 0,
+    approach: null,
+  };
+  for (const a of approaches) {
+    const f = doorCoverageFraction(bb, a);
+    if (f > worst.fraction) worst = { fraction: f, approach: a };
+  }
+  return worst;
 }

@@ -41,6 +41,17 @@ export const TOL_WALL_TOUCH_M = 0.05;
  *  (padrão comum: cada cômodo adjacente registra a porta compartilhada). */
 export const DOOR_DEDUP_RADIUS_M = 0.5;
 
+/** Profundidade do corredor de aproximação de porta: a faixa na frente do
+ *  vão (nos DOIS lados da parede) que precisa ficar transitável para a
+ *  porta ser usável. O quarto-de-disco cobre o lado do giro; este corredor
+ *  cobre o lado de chegada — era o buraco que deixava um guarda-roupa ser
+ *  posicionado exatamente na boca de uma porta que abre para o outro lado.
+ *  A regra é GRADUADA (erro só quando ≥50% da largura do vão é coberta) e
+ *  a profundidade clampada à metade do fundo útil em cômodos minúsculos —
+ *  uma zona binária de 60cm já existiu aqui e foi removida por inviabilizar
+ *  banheiros/cozinhas compactos. */
+export const DOOR_APPROACH_DEPTH_M = 0.7;
+
 /** Piso de ruído na detecção de faces: polígonos menores que 0,5 m² são
  *  artefatos do grafo, não cômodos. */
 export const MIN_ROOM_AREA_M2 = 0.5;

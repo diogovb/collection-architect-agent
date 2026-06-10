@@ -22,7 +22,15 @@ import type {
 } from "../types";
 import type { ApplyResult } from "../floor-plan-engine";
 import { MODULE_DEFS, isFullHeightKind, allowsUpperAbove, cutoutKind, moduleFurnitureType } from "../millwork-modules";
-import { openingInterval, openingsOverlap1D, spanInterval, usableRect, wallSideLabel } from "../plan-geometry";
+import {
+  doorApproachRects,
+  doorCoverageFraction,
+  openingInterval,
+  openingsOverlap1D,
+  spanInterval,
+  usableRect,
+  wallSideLabel,
+} from "../plan-geometry";
 
 const RUN_DEFAULTS: {
   lowerHeight: Record<RunType, number>;
@@ -247,6 +255,29 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
           `(centro a ${doorCenterAlong.toFixed(2)}m do início da parede). ` +
           `Reduza os módulos, use start_offset para começar depois da porta, ou use outra parede.`,
       };
+    }
+  }
+
+  // Porta em parede PERPENDICULAR perto do canto: o run tem ~0,65m de fundo
+  // e pode invadir o corredor de chegada dela (regra graduada de 50% — run
+  // que apenas tangencia o corredor passa e vira no máximo aviso de cena).
+  {
+    const footprint = countertopBbox(innerRoom, wall, startOffset, totalLength, RUN_DEFAULTS.countertopDepth);
+    const approaches = doorApproachRects(plan, room);
+    for (const a of approaches) {
+      const frac = doorCoverageFraction(
+        { x: footprint.x, y: footprint.y, w: footprint.width, h: footprint.height },
+        a
+      );
+      if (frac >= 0.5) {
+        return {
+          ok: false,
+          message:
+            `O run bloquearia a chegada da porta na parede ${wallSideLabel(a.side)} de '${room.name}' ` +
+            `(cobre ${Math.round(frac * 100)}% do vão no canto). ` +
+            `Use start_offset para afastar o run do canto da porta, reduza os módulos ou use outra parede.`,
+        };
+      }
     }
   }
 

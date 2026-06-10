@@ -3,7 +3,14 @@
 
 import { applyTool, emptyPlan } from "../lib/floor-plan-engine";
 import { validatePlan } from "../lib/agent/validate-plan";
-import { usableRect, worldAABB, openingInterval, openingsOverlap1D } from "../lib/plan-geometry";
+import {
+  doorApproachRects,
+  openingInterval,
+  openingsOverlap1D,
+  usableRect,
+  worldAABB,
+  worstDoorCoverage,
+} from "../lib/plan-geometry";
 import { legacySwingGeometry } from "../lib/scene/door-swing";
 import { renderPlanSvg } from "../lib/canvas/render-png";
 import type { FloorPlan, Furniture, Room } from "../lib/types";
@@ -367,6 +374,103 @@ console.log("\n[20] renderPlanSvg: folha da porta ancora na dobradiça real (hin
       `render=(${hx},${hy}) esperado=(${g.hinge.x},${g.hinge.y})`
     );
   }
+}
+
+// ---------- Cenário 21: sequência da suíte (bug de produção) ----------
+console.log("\n[21] Porta criada DEPOIS da mobília → rejeição; ordem certa → corredor livre");
+{
+  // Ordem ERRADA: mobília primeiro, porta depois (era o buraco temporal).
+  const pA = emptyPlan();
+  applyTool(pA, "create_room", { name: "Quarto Infantil", width: 3.2, height: 3.0, x: 0, y: 0 });
+  applyTool(pA, "create_room", { name: "Banheiro Suite", width: 1.6, height: 2.0, x: 3.2, y: 0 });
+  applyTool(pA, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
+  const ward = applyTool(pA, "place_furniture_intent", {
+    room_name: "Quarto Infantil",
+    items: [{ type: "wardrobe_hinged", anchor: "wall:east", position: "mid" }],
+  });
+  check("guarda-roupa na parede leste (sem porta ainda)", ward.ok, ward.message);
+  const lateDoor = applyTool(pA, "add_door", { room_name: "Quarto Infantil", wall: "east", position: 0.6, size: 0.7 });
+  check("add_door tardia REJEITADA", !lateDoor.ok, lateDoor.message);
+  check("mensagem nomeia o móvel bloqueador", /bloqueada por '.*Guarda/i.test(lateDoor.message), lateDoor.message);
+  check("mensagem orienta saída (position livre ou mover)", /Positions livres|mova o móvel/i.test(lateDoor.message), lateDoor.message);
+
+  // Ordem CERTA: shell completo primeiro, mobília depois.
+  const pB = emptyPlan();
+  applyTool(pB, "create_room", { name: "Quarto Infantil", width: 3.2, height: 3.0, x: 0, y: 0 });
+  applyTool(pB, "create_room", { name: "Banheiro Suite", width: 1.6, height: 2.0, x: 3.2, y: 0 });
+  applyTool(pB, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
+  applyTool(pB, "add_door", { room_name: "Quarto Infantil", wall: "east", position: 0.6, size: 0.7 });
+  applyTool(pB, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.4 });
+  const furnB = applyTool(pB, "furnish_room", { room_name: "Quarto Infantil", style: "infantil" });
+  check("furnish com shell completo ok", furnB.ok, furnB.message);
+  let worstFrac = 0;
+  for (const r of pB.rooms) {
+    const apps = doorApproachRects(pB, r);
+    for (const f of pB.furniture) {
+      if (f.roomId !== r.id) continue;
+      if (/^rug|plant|lamp/.test(f.type)) continue;
+      const w = worstDoorCoverage(apps, worldAABB(f));
+      worstFrac = Math.max(worstFrac, w.fraction);
+    }
+  }
+  check("nenhum móvel cobre ≥50% de vão de porta", worstFrac < 0.5, `pior cobertura: ${(worstFrac * 100).toFixed(0)}%`);
+  const cB = codes(pB);
+  check("sem error:DOOR_APPROACH_BLOCKED", !cB.includes("error:DOOR_APPROACH_BLOCKED"), cB.join(", "));
+}
+
+// ---------- Cenário 22: corredor graduado (50%) + isenções ----------
+console.log("\n[22] DOOR_APPROACH_BLOCKED graduado: ≥50% erro, <50% sem erro, decor isento");
+{
+  const p22 = emptyPlan();
+  applyTool(p22, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+  applyTool(p22, "add_door", { room_name: "Sala", wall: "north", position: 0.5, size: 0.8 });
+  // Mutação manual (simula plano vindo de fora): armário exatamente na boca da porta.
+  p22.furniture.push({
+    id: "f_ward22", roomId: p22.rooms[0].id, type: "wardrobe_hinged",
+    label: "Guarda-roupa", x: 1.0, y: 0.075, width: 2.0, height: 0.6,
+  } as Furniture);
+  const c22a = codes(p22);
+  check("cobertura 100% → error", c22a.includes("error:DOOR_APPROACH_BLOCKED"), c22a.join(", "));
+
+  // Cobertura parcial (<50%) na parede perpendicular: sem error.
+  const p22b = emptyPlan();
+  applyTool(p22b, "create_room", { name: "Cozinha", width: 3.6, height: 3.0, x: 0, y: 0 });
+  applyTool(p22b, "add_door", { room_name: "Cozinha", wall: "north", position: 0.2, size: 0.9 });
+  // Armário na parede oeste: invade lateralmente o corredor da porta norte,
+  // mas cobre só ~40% do vão — layout clássico de canto, não pode virar erro.
+  p22b.furniture.push({
+    id: "f_ward22b", roomId: p22b.rooms[0].id, type: "wardrobe_hinged",
+    label: "Armário", x: 0.075, y: 0.5, width: 0.6, height: 2.0,
+  } as Furniture);
+  const c22b = codes(p22b);
+  check("cobertura parcial perpendicular → SEM error", !c22b.includes("error:DOOR_APPROACH_BLOCKED"), c22b.join(", "));
+
+  // Decoração dentro do corredor: isenta.
+  const p22c = emptyPlan();
+  applyTool(p22c, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+  applyTool(p22c, "add_door", { room_name: "Sala", wall: "north", position: 0.5, size: 0.8 });
+  p22c.furniture.push({
+    id: "f_plant22", roomId: p22c.rooms[0].id, type: "plant_pot",
+    label: "Planta", x: 1.7, y: 0.2, width: 0.5, height: 0.5,
+  } as Furniture);
+  const c22c = codes(p22c);
+  check("decor no corredor → sem DOOR_APPROACH_BLOCKED", !c22c.some((c) => c.includes("DOOR_APPROACH_BLOCKED")), c22c.join(", "));
+
+  // move_furniture para dentro do corredor → rejeição dura.
+  const p22d = emptyPlan();
+  applyTool(p22d, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+  applyTool(p22d, "add_door", { room_name: "Sala", wall: "north", position: 0.5, size: 0.8 });
+  const sofa22 = applyTool(p22d, "place_furniture_intent", {
+    room_name: "Sala",
+    items: [{ type: "sofa_3seat", anchor: "wall:south", position: "mid" }],
+  });
+  check("sofá ao sul ok", sofa22.ok, sofa22.message);
+  const sofaF22 = p22d.furniture.find((f) => f.type === "sofa_3seat");
+  const mv = applyTool(p22d, "move_furniture", {
+    furniture_id: sofaF22!.id, new_x: 1.0, new_y: 0.1,
+  });
+  check("mover para a boca da porta REJEITADO", !mv.ok, mv.message);
+  check("motivo cita chegada/arco da porta", /chegada da porta|arco/.test(mv.message), mv.message);
 }
 
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);

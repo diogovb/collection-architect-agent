@@ -12,7 +12,15 @@
 import type { Door, FloorPlan, Furniture, Room, Window } from "../types";
 import type { FurniturePlacement } from "../types";
 import { getPlacement } from "../furniture-placement";
-import { relationDistance, usableRect, worldAABB, type PlanRect } from "../plan-geometry";
+import {
+  doorApproachRects,
+  doorCoverageFraction,
+  relationDistance,
+  usableRect,
+  wallSideLabel,
+  worldAABB,
+  type PlanRect,
+} from "../plan-geometry";
 import { legacySwingGeometry, quarterDiscIntersectsRect } from "./door-swing";
 import { TOL_CONTACT_M, TOL_WALL_TOUCH_M } from "./tolerances";
 
@@ -251,6 +259,7 @@ export function validateDoorClearance(
   room: Room,
   doors: Door[],
   rooms?: Room[],
+  placement?: FurniturePlacement,
 ): PlacementResult {
   for (const d of doors) {
     // O quarto de disco é calculado em coordenadas de MUNDO a partir do
@@ -280,6 +289,28 @@ export function validateDoorClearance(
         ok: false,
         reason: `cai dentro do arco de abertura da porta da parede ${d.wall} (raio ${size.toFixed(2)}m, dobradiça no ${lado} da parede). Posicione fora do quadrante de giro da folha.`,
       };
+    }
+  }
+
+  // Corredor de CHEGADA do vão (regra graduada): o disco cobre o lado do
+  // giro; aqui rejeitamos só quando o móvel cobre ≥50% da largura do vão
+  // dentro do corredor — a porta vira parede. Intrusões menores ficam para
+  // o validador de cena avisar (uma zona binária aqui já matou banheiros
+  // pequenos no passado). Tapetes/decoração/dispositivos pontuais passam.
+  if (rooms) {
+    const exempt =
+      placement && (placement.category === "rug" || placement.category === "decor");
+    if (!exempt) {
+      const approaches = doorApproachRects({ rooms, doors }, room);
+      for (const a of approaches) {
+        const frac = doorCoverageFraction(bb, a);
+        if (frac >= 0.5) {
+          return {
+            ok: false,
+            reason: `bloqueia a chegada da porta na parede ${wallSideLabel(a.side)} (cobriria ${Math.round(frac * 100)}% do vão). A frente do vão precisa ficar transitável nos DOIS lados da parede — escolha outra parede ou afaste-se do vão.`,
+          };
+        }
+      }
     }
   }
   return { ok: true };
@@ -349,7 +380,7 @@ export function validatePlacement(
   const r1 = validateAnchor(bb, room, usable, placement, existing);
   if (!r1.ok) return r1;
 
-  const r2 = validateDoorClearance(bb, room, plan.doors, plan.rooms);
+  const r2 = validateDoorClearance(bb, room, plan.doors, plan.rooms, placement);
   if (!r2.ok) return r2;
 
   const r3 = validateWindowClearance(bb, room, plan.windows);

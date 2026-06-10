@@ -22,6 +22,9 @@ import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
 import { ROOM_TEMPLATES, solveRoomTemplate } from "./room-templates";
 import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
 import {
+  doorApproachRects,
+  doorCoverageFraction,
+  openingApproach,
   openingInterval,
   openingsOverlap1D,
   rectOverlapArea,
@@ -29,8 +32,11 @@ import {
   usableRect,
   wallSideLabel,
   worldAABB,
+  worstDoorCoverage,
 } from "./plan-geometry";
 import { chooseDoorSwing } from "./scene/door-swing";
+import { getPlacement } from "./furniture-placement";
+import { estimatedHeightM } from "./scene/furniture-heights";
 import { DOOR_DEDUP_RADIUS_M, TOL_CONTACT_M } from "./scene/tolerances";
 
 // ---------- ID + helpers ----------
@@ -446,6 +452,62 @@ function wallIsOpen(plan: FloorPlan, room: Room, wall: Wall, position: number): 
   return null;
 }
 
+/** Móvel já posicionado que bloquearia o corredor de chegada de uma abertura
+ *  HIPOTÉTICA (pré-commit), nos DOIS lados da parede. Era o buraco temporal:
+ *  porta criada DEPOIS da mobília não reclamava do guarda-roupa na boca do
+ *  vão. Para janelas (`window: true`), só móveis ALTOS (acima do peitoril)
+ *  contam e a faixa é de 30cm. Tapetes/decoração/dispositivos passam. */
+function openingFurnitureConflict(
+  plan: FloorPlan,
+  room: Room,
+  wall: Wall,
+  position: number,
+  size: number,
+  opts?: { window?: boolean }
+): { blocker: Furniture; sideRoom: Room; fraction: number } | null {
+  const iv = openingInterval(room, wall, position, size);
+  const sides: Room[] = [room];
+  const neighbor = neighborAcrossWall(plan, room, wall, position);
+  if (neighbor) sides.push(neighbor);
+  for (const sideRoom of sides) {
+    const a = openingApproach(plan, sideRoom, iv, opts?.window ? { depth: 0.3 } : undefined);
+    if (!a) continue;
+    for (const f of plan.furniture) {
+      if (f.roomId !== sideRoom.id) continue;
+      const p = getPlacement(f.type);
+      if (p.category === "rug" || p.category === "decor") continue;
+      if (/light|outlet|switch/.test(f.type)) continue;
+      if (opts?.window && estimatedHeightM(f.type) <= 0.95) continue;
+      const frac = doorCoverageFraction(worldAABB(f), a);
+      if (frac >= 0.5) return { blocker: f, sideRoom, fraction: frac };
+    }
+  }
+  return null;
+}
+
+/** Até 2 positions livres para uma abertura nesta parede, considerando vãos
+ *  existentes E mobília (corredor de chegada). Null quando nada serve. */
+function suggestOpeningPositions(
+  plan: FloorPlan,
+  room: Room,
+  wall: Wall,
+  size: number,
+  opts?: { window?: boolean }
+): string | null {
+  const sugs: string[] = [];
+  for (let p = 0.15; p <= 0.86; p += 0.05) {
+    const fit = fitOpening(room, wall, p, size, opts?.window ? "Janela" : "Porta");
+    if (!fit.ok || fit.adjusted) continue;
+    if (wallIsOpen(plan, room, wall, fit.position)) continue;
+    if (findOpeningConflict(plan, room, wall, fit.position, size)) continue;
+    if (openingFurnitureConflict(plan, room, wall, fit.position, size, opts)) continue;
+    const fmt = fit.position.toFixed(2);
+    if (!sugs.includes(fmt)) sugs.push(fmt);
+    if (sugs.length >= 2) break;
+  }
+  return sugs.length > 0 ? sugs.join(" ou ") : null;
+}
+
 function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
@@ -495,6 +557,24 @@ function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult 
         `Porta na parede ${wallSideLabel(input.wall)} de '${room.name}' sobrepõe a ${conflict.kind} existente de '${conflict.roomName}' ` +
         `(parede ${wallSideLabel(conflict.wall)}, position ${conflict.position.toFixed(2)}, ${conflict.size.toFixed(2)}m). ` +
         `Escolha uma position fora desse trecho, outra parede, ou ajuste a abertura existente com update_door/update_window.`,
+    };
+  }
+
+  // Corredor de chegada vs mobília existente (nos DOIS lados): porta criada
+  // depois da mobília era o buraco que deixava um guarda-roupa na boca do
+  // vão sem nenhuma reclamação.
+  const blockedApproach = openingFurnitureConflict(plan, room, input.wall, position, size);
+  if (blockedApproach) {
+    const sug = suggestOpeningPositions(plan, room, input.wall, size);
+    return {
+      ok: false,
+      message:
+        `Porta na parede ${wallSideLabel(input.wall)} de '${room.name}' ficaria bloqueada por '${blockedApproach.blocker.label}' em '${blockedApproach.sideRoom.name}' ` +
+        `(cobre ${Math.round(blockedApproach.fraction * 100)}% do vão). ` +
+        (sug
+          ? `Positions livres nesta parede: ${sug}. `
+          : `Nenhuma position livre nesta parede com a mobília atual. `) +
+        `Alternativas: mova o móvel (move_furniture), escolha outra parede, ou remova o móvel.`,
     };
   }
 
@@ -560,6 +640,19 @@ function doUpdateDoor(plan: FloorPlan, input: ToolInputs["update_door"]): ApplyR
       message: `Atualização sobreporia a ${conflict.kind} de '${conflict.roomName}' (position ${conflict.position.toFixed(2)}, ${conflict.size.toFixed(2)}m). Escolha outra position.`,
     };
   }
+  // new_position pode empurrar a porta para trás de um móvel — mesma guarda
+  // do add_door, senão o bug do guarda-roupa renasce por esta rota.
+  const updBlocked = openingFurnitureConflict(plan, room, input.wall, fit.position, size);
+  if (updBlocked) {
+    const sug = suggestOpeningPositions(plan, room, input.wall, size);
+    return {
+      ok: false,
+      message:
+        `Mover a porta para position ${fit.position.toFixed(2)} a deixaria bloqueada por '${updBlocked.blocker.label}' em '${updBlocked.sideRoom.name}' ` +
+        `(cobre ${Math.round(updBlocked.fraction * 100)}% do vão).` +
+        (sug ? ` Positions livres: ${sug}.` : " Nenhuma position livre nesta parede com a mobília atual."),
+    };
+  }
   door.size = size;
   door.position = fit.position;
   if (input.hinge) door.hinge = input.hinge;
@@ -602,6 +695,13 @@ function doUpdateWindow(plan: FloorPlan, input: ToolInputs["update_window"]): Ap
     return {
       ok: false,
       message: `Atualização sobreporia a ${conflict.kind} de '${conflict.roomName}' (position ${conflict.position.toFixed(2)}, ${conflict.size.toFixed(2)}m). Escolha outra position.`,
+    };
+  }
+  const winUpdBlocked = openingFurnitureConflict(plan, room, input.wall, fit.position, size, { window: true });
+  if (winUpdBlocked) {
+    return {
+      ok: false,
+      message: `Mover a janela para position ${fit.position.toFixed(2)} a deixaria tapada por '${winUpdBlocked.blocker.label}' (móvel alto na frente). Mova o móvel antes ou escolha outra position.`,
     };
   }
   win.size = size;
@@ -684,6 +784,19 @@ function doAddWindow(plan: FloorPlan, input: ToolInputs["add_window"]): ApplyRes
         `Janela na parede ${wallSideLabel(input.wall)} de '${room.name}' sobrepõe a ${conflict.kind} existente de '${conflict.roomName}' ` +
         `(parede ${wallSideLabel(conflict.wall)}, position ${conflict.position.toFixed(2)}, ${conflict.size.toFixed(2)}m). ` +
         `Escolha uma position fora desse trecho ou outra parede.`,
+    };
+  }
+
+  // Móvel ALTO (acima do peitoril) já encostado neste trecho tapa a janela
+  // — mesma régua do validador WINDOW_OBSTRUCTED, agora na criação.
+  const winBlocked = openingFurnitureConflict(plan, room, input.wall, position, size, { window: true });
+  if (winBlocked) {
+    const sug = suggestOpeningPositions(plan, room, input.wall, size, { window: true });
+    return {
+      ok: false,
+      message:
+        `Janela na parede ${wallSideLabel(input.wall)} de '${room.name}' ficaria tapada por '${winBlocked.blocker.label}' (móvel alto cobrindo ${Math.round(winBlocked.fraction * 100)}% do vão).` +
+        (sug ? ` Positions livres: ${sug}.` : " Mova o móvel ou use outra parede."),
     };
   }
 
@@ -1177,6 +1290,17 @@ function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): 
         message: `Trocar por ${def.label} (${newW}×${newH}m) sobreporia '${conflict.label}'. Mova ou remova o vizinho antes. ${summarizeRoomLayout(room, plan)}`,
       };
     }
+    // Variante maior pode passar a tapar uma porta (criado→guarda-roupa).
+    const swapPlacement = getPlacement(input.new_type);
+    if (swapPlacement.category !== "rug" && swapPlacement.category !== "decor") {
+      const worst = worstDoorCoverage(doorApproachRects(plan, room), { x: vx, y: vy, w: vw, h: vh });
+      if (worst.fraction >= 0.5 && worst.approach) {
+        return {
+          ok: false,
+          message: `Trocar por ${def.label} bloquearia a chegada da porta na parede ${wallSideLabel(worst.approach.side)} (cobriria ${Math.round(worst.fraction * 100)}% do vão). Mova o móvel para outra parede antes de trocar.`,
+        };
+      }
+    }
   }
   f.type = input.new_type;
   f.label = def.label;
@@ -1285,7 +1409,9 @@ function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): 
     destRoom,
     othersPlan,
   );
-  if (!check.ok && /arco de abertura|arco da porta/.test(check.reason ?? "")) {
+  // Arco de giro E corredor de chegada são duros: um "ajuste" que deixa a
+  // porta inutilizável nunca é a intenção (era assim que o bug renascia).
+  if (!check.ok && /arco de abertura|arco da porta|chegada da porta/.test(check.reason ?? "")) {
     return {
       ok: false,
       message: `Mover ${f.label}: ${check.reason} ${summarizeRoomLayout(destRoom, plan)}`,
