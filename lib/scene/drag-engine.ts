@@ -30,6 +30,7 @@ import { logEditOpening, logMove } from "./user-action-log";
 import { resolveCorner } from "./collision";
 import { findJunction, JUNCTION_TOLERANCE } from "./junctions";
 import { pushUndoSnapshot } from "./use-undo-redo";
+import { INTERNAL_WALL_THICKNESS_M } from "./wall-constants";
 
 // ---- Furniture drag --------------------------------------------------------
 
@@ -180,7 +181,7 @@ export function beginOpeningSlide(
 
 // ---- Wall draw -------------------------------------------------------------
 
-const INTERNAL_THICKNESS = 0.10;
+const INTERNAL_THICKNESS = INTERNAL_WALL_THICKNESS_M;
 const DEFAULT_HEIGHT = 2.8;
 
 let _wallSeq = 0;

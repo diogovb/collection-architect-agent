@@ -28,6 +28,7 @@ import {
 import { sceneSwingGeometry, quarterDiscIntersectsRect } from "./door-swing";
 import { estimatedHeightM } from "./furniture-heights";
 import { TOL_WALL_TOUCH_M } from "./tolerances";
+import { rectIntersectsWalls } from "./collision";
 
 interface SceneInput {
   nodes: Record<string, AnyNode>;
@@ -50,6 +51,7 @@ export function validateScene(scene: SceneInput): DiagnosticIssue[] {
   validateCirculation(rooms, walls, doors, issues);
   validateDoorSwingBlocked(doors, walls, furniture, rooms, issues);
   validateFurnitureWithinRoom(furniture, rooms, issues);
+  validateFurnitureOnWall(furniture, walls, rooms, issues);
   validateFurnitureOverlap(furniture, issues);
   validateFurnitureRoomCompat(furniture, rooms, issues);
   validateWindowObstruction(windows, walls, rooms, furniture, issues);
@@ -509,6 +511,41 @@ function validateFurnitureWithinRoom(furniture: FurnitureNode[], rooms: RoomNode
         severity: "warning",
         message: `${f.label} ultrapassa os limites de ${room.name}${dist > 0 ? ` em ${dist.toFixed(2).replace(".", ",")} m` : ""}.`,
         nodeIds: [f.id, room.id],
+      });
+    }
+  }
+}
+
+/** Móvel invadindo a FAIXA da parede (entre as duas faces). Pega tanto
+ *  planos antigos (móveis flush no retângulo cheio, antes do fix de área
+ *  útil) quanto qualquer coordenada explícita ruim do agente/usuário.
+ *  Tapetes passam por vãos de porta (os quads de parede não subtraem
+ *  aberturas) e dispositivos pontuais ficam NA parede — ambos pulados. */
+function validateFurnitureOnWall(
+  furniture: FurnitureNode[],
+  walls: WallNode[],
+  rooms: RoomNode[],
+  out: DiagnosticIssue[]
+) {
+  if (walls.length === 0) return;
+  for (const f of furniture) {
+    if (isPointDevice(f.catalogId) || isRugLike(f.catalogId)) continue;
+    const bb = furnitureAABB(f);
+    const rect = {
+      cx: bb.x + bb.w / 2,
+      cz: bb.z + bb.d / 2,
+      width: bb.w,
+      depth: bb.d,
+      rotation: 0, // AABB já transposto — rotação embutida
+    };
+    if (rectIntersectsWalls(rect, walls)) {
+      const room = rooms.find((r) => r.id === f.roomId);
+      const where = room ? ` em '${room.name}'` : "";
+      out.push({
+        code: "FURNITURE_ON_WALL",
+        severity: "warning",
+        message: `${f.label}${where} invade a faixa da parede — alinhe o móvel à face interna (move_furniture).`,
+        nodeIds: [f.id, ...(f.roomId ? [f.roomId] : [])],
       });
     }
   }

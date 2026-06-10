@@ -217,6 +217,14 @@ export interface FurniturePlacement {
   /** Zoning category — feeds future combination validators (e.g. "bed
    *  must coexist with at least one nightstand in bedrooms"). */
   category: "anchor" | "filler" | "rug" | "decor" | "appliance" | "sanitary";
+  /** Preferência SUAVE em relação a janelas na parede ancorada: "prefer"
+   *  puxa o item para o vão (escrivaninha, penteadeira — luz natural);
+   *  "avoid" penaliza sobreposição com o vão (cabeceira, guarda-roupa, TV).
+   *  Ausente = neutro (pia sob janela é clássico). */
+  windowAffinity?: "prefer" | "avoid" | "neutral";
+  /** Preferência SUAVE em relação à porta do cômodo: "far" pontua distância
+   *  (guarda-roupa, cama, sanitários). Ausente = neutro. */
+  doorAffinity?: "far" | "neutral";
 }
 
 /** Optional sub-zone of a room with a different floor material. */

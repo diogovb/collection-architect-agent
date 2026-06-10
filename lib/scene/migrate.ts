@@ -37,9 +37,14 @@ import { polygonSignature } from "./signature";
 import { categoryFromName, defaultFloorForCategory } from "./slab-sync";
 import { SNAP_ROOM_GRID_M, TOL_LINE_M, TOL_VERTEX_M } from "./tolerances";
 import { estimatedHeightM } from "./furniture-heights";
+import {
+  EXTERNAL_WALL_THICKNESS_M,
+  INTERNAL_WALL_THICKNESS_M,
+  RAILING_THICKNESS_M,
+} from "./wall-constants";
 
-const EXTERNAL_THICKNESS = 0.15;
-const INTERNAL_THICKNESS = 0.10;
+const EXTERNAL_THICKNESS = EXTERNAL_WALL_THICKNESS_M;
+const INTERNAL_THICKNESS = INTERNAL_WALL_THICKNESS_M;
 const DEFAULT_WALL_HEIGHT = 2.8;
 const DEFAULT_DOOR_HEIGHT = 2.10;
 const DEFAULT_WINDOW_HEIGHT = 1.20;
@@ -244,7 +249,7 @@ function segmentToWallNode(s: SegmentSpec): WallNode {
     : { x: s.fixed, z: s.end };
   // Railings are thinner than walls (parapet, not load-bearing) so the
   // 2D drag handles + outline use a tighter footprint.
-  const RAILING_THICKNESS = 0.10;
+  const RAILING_THICKNESS = RAILING_THICKNESS_M;
   const RAILING_HEIGHT = 1.10;
   const isRailing = s.isRailing === true;
   return {

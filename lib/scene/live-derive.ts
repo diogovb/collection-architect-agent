@@ -23,8 +23,9 @@ import {
   type Vec2,
   type WallNode,
 } from "./types";
+import { EXTERNAL_WALL_THICKNESS_M } from "./wall-constants";
 
-const SLAB_OUTSET_DEFAULT = 0.075; // EXTERNAL_THICKNESS / 2 (matches migrate.ts)
+const SLAB_OUTSET_DEFAULT = EXTERNAL_WALL_THICKNESS_M / 2;
 
 type LiveState = Pick<SceneState, "nodes" | "liveTransforms">;
 

@@ -70,7 +70,19 @@ function collidesAny(box: Bbox, occupied: Bbox[]): boolean {
   return false;
 }
 
-export function placeLabels(inputs: LabelInput[]): Map<string, LabelOutput> {
+/** Obstáculo fixo (móvel, marcenaria) que os labels devem evitar. Mesma
+ *  convenção de centro do bboxAt. */
+export interface LabelObstacle {
+  x: number;
+  z: number;
+  width: number;
+  height: number;
+}
+
+export function placeLabels(
+  inputs: LabelInput[],
+  obstacles: LabelObstacle[] = []
+): Map<string, LabelOutput> {
   // Sort by priority desc, stable on input order.
   const sorted = inputs
     .map((l, i) => ({ l, i }))
@@ -78,7 +90,9 @@ export function placeLabels(inputs: LabelInput[]): Map<string, LabelOutput> {
     .map((x) => x.l);
 
   const out = new Map<string, LabelOutput>();
-  const occupied: Bbox[] = [];
+  // Semeia o espaço ocupado com os obstáculos (móveis) — assim o nome do
+  // cômodo escapa de um móvel central em vez de ser pintado por cima.
+  const occupied: Bbox[] = obstacles.map((o) => bboxAt(o.x, o.z, o.width, o.height));
 
   for (const lbl of sorted) {
     const w = lbl.width;

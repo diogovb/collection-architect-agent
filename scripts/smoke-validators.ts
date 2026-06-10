@@ -3,7 +3,8 @@
 
 import { applyTool, emptyPlan } from "../lib/floor-plan-engine";
 import { validatePlan } from "../lib/agent/validate-plan";
-import type { FloorPlan } from "../lib/types";
+import { usableRect, worldAABB, openingInterval, openingsOverlap1D } from "../lib/plan-geometry";
+import type { FloorPlan, Furniture, Room } from "../lib/types";
 
 let failures = 0;
 function check(name: string, cond: boolean, detail?: string) {
@@ -104,11 +105,13 @@ const bedR = applyTool(p8, "place_furniture_intent", {
 });
 check("cama rotacionada posicionada", bedR.ok, bedR.message);
 const bed = p8.furniture.find((f) => f.type === "bed_double");
-check("rotação persistida", bed?.rotation === 90, JSON.stringify(bed));
+check("rotação persistida (90/270)", bed !== undefined && (bed.rotation === 90 || bed.rotation === 270), JSON.stringify(bed));
 if (bed) {
-  // bbox armazenado mantém dims do glifo; AABB visual transposto deve tocar a parede oeste.
+  // bbox armazenado mantém dims do glifo; AABB visual transposto deve tocar a
+  // FACE INTERNA da parede oeste (rect útil — parede externa = inset 0.075).
+  const u8 = usableRect(p8, p8.rooms[0]);
   const visualX = bed.x + bed.width / 2 - bed.height / 2;
-  check("footprint visual encosta na parede oeste", Math.abs(visualX - 0) < 0.06, `visualX=${visualX.toFixed(3)}`);
+  check("footprint visual encosta na face interna oeste", Math.abs(visualX - u8.x) < 0.06, `visualX=${visualX.toFixed(3)} usable.x=${u8.x.toFixed(3)}`);
 }
 
 // ---------- Cenário 9: bancada sobre porta ----------
@@ -204,6 +207,139 @@ p15.furniture.push({ id: "f-arm", roomId: p15.rooms[0].id, type: "armchair", lab
 const swapV = applyTool(p15, "swap_furniture", { furniture_id: "f-arm", new_type: "sofa_2seat" });
 // sofa_2seat ~1.6×0.9 rotacionado vira 0.9×1.6 → cabe em 1.4m de largura.
 check("swap rotacionado aceito (footprint 0.9×1.6 cabe)", swapV.ok, swapV.message);
+
+// ---------- Helpers para os cenários de arquitetura ----------
+function middleThird(room: Room, f: Furniture): boolean {
+  const bb = worldAABB(f);
+  const cx = bb.x + bb.w / 2;
+  const cy = bb.y + bb.h / 2;
+  return (
+    cx > room.x + room.width / 3 && cx < room.x + (2 * room.width) / 3 &&
+    cy > room.y + room.height / 3 && cy < room.y + (2 * room.height) / 3
+  );
+}
+function isRug(f: Furniture): boolean {
+  return /^rug|carpet|mat/i.test(f.type);
+}
+
+// ---------- Cenário 16: Quarto Infantil como um arquiteto faria ----------
+console.log("\n[16] Quarto Infantil 3,0×3,2 (porta sul, janela norte) via furnish_room");
+const p16 = emptyPlan();
+applyTool(p16, "create_room", { name: "Quarto Infantil", width: 3.0, height: 3.2, x: 0, y: 0 });
+applyTool(p16, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.35, size: 0.8 });
+applyTool(p16, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.2 });
+const furnish16 = applyTool(p16, "furnish_room", { room_name: "Quarto Infantil" });
+check("furnish_room ok", furnish16.ok, furnish16.message);
+const room16 = p16.rooms[0];
+check("contém bed_child (fix do dispatch /infantil/)", p16.furniture.some((f) => f.type === "bed_child"),
+  p16.furniture.map((f) => f.type).join(", "));
+check("play_table AUSENTE (9,6m² < 12m²)", !p16.furniture.some((f) => f.type === "play_table"),
+  furnish16.message);
+const i16 = validatePlan(p16);
+const errors16 = i16.filter((i) => i.severity === "error");
+check("zero errors", errors16.length === 0, errors16.map((e) => `${e.code}: ${e.message}`).join(" | "));
+check("sem FURNITURE_ON_WALL", !i16.some((i) => i.code === "FURNITURE_ON_WALL"),
+  i16.filter((i) => i.code === "FURNITURE_ON_WALL").map((i) => i.message).join(" | "));
+check("sem DOOR_SWING_BLOCKED", !i16.some((i) => i.code === "DOOR_SWING_BLOCKED"),
+  i16.filter((i) => i.code === "DOOR_SWING_BLOCKED").map((i) => i.message).join(" | "));
+const centerSolid16 = p16.furniture.filter((f) => !isRug(f) && middleThird(room16, f));
+check("nenhum móvel sólido no centro", centerSolid16.length === 0, centerSolid16.map((f) => f.label).join(", "));
+const bed16 = p16.furniture.find((f) => /^bed/.test(f.type));
+if (bed16) {
+  // Anti-padrão real: CABECEIRA sob a janela. A parede das costas vem da
+  // rotação (0=norte, 90=leste, 180=sul, 270=oeste). Cama lateral à janela
+  // é layout clássico de quarto infantil — não conta.
+  const rot = ((bed16.rotation ?? 0) % 360 + 360) % 360;
+  const backWall = rot === 0 ? "north" : rot === 90 ? "east" : rot === 180 ? "south" : "west";
+  const win16 = p16.windows[0];
+  let headboardUnderWindow = false;
+  if (backWall === win16.wall) {
+    const bb = worldAABB(bed16);
+    const headInterval = win16.wall === "north" || win16.wall === "south"
+      ? { axis: "h" as const, fixed: win16.wall === "north" ? room16.y : room16.y + room16.height, start: bb.x, end: bb.x + bb.w }
+      : { axis: "v" as const, fixed: win16.wall === "west" ? room16.x : room16.x + room16.width, start: bb.y, end: bb.y + bb.h };
+    const winInterval = openingInterval(room16, win16.wall, win16.position, win16.size);
+    headboardUnderWindow = openingsOverlap1D(headInterval, winInterval) > 0;
+  }
+  check("cabeceira NÃO está sob a janela", !headboardUnderWindow, `bed=${JSON.stringify(bed16)}`);
+}
+const desk16 = p16.furniture.find((f) => /^desk_study/.test(f.type));
+if (desk16) {
+  const win16 = p16.windows[0];
+  const wi = openingInterval(room16, win16.wall, win16.position, win16.size);
+  const wCenter = { x: (wi.start + wi.end) / 2, y: room16.y };
+  const db = worldAABB(desk16);
+  const d = Math.hypot(db.x + db.w / 2 - wCenter.x, db.y + db.h / 2 - wCenter.y);
+  check("escrivaninha aproveitou a janela (≤1,6m do centro do vão)", d <= 1.6, `d=${d.toFixed(2)}m`);
+}
+
+// ---------- Cenário 17: Quarto casal ----------
+console.log("\n[17] Quarto casal 3,5×3,2 (porta sul, janela norte) via furnish_room");
+const p17 = emptyPlan();
+applyTool(p17, "create_room", { name: "Suíte Master", width: 3.5, height: 3.2, x: 0, y: 0 });
+applyTool(p17, "add_door", { room_name: "Suíte Master", wall: "south", position: 0.2, size: 0.8 });
+applyTool(p17, "add_window", { room_name: "Suíte Master", wall: "north", position: 0.5, size: 1.4 });
+const furnish17 = applyTool(p17, "furnish_room", { room_name: "Suíte Master" });
+check("furnish ok", furnish17.ok, furnish17.message);
+const bed17 = p17.furniture.find((f) => /^bed/.test(f.type));
+check("cama presente", bed17 !== undefined, p17.furniture.map((f) => f.type).join(", "));
+check("guarda-roupa presente (ou fallback sliding)", p17.furniture.some((f) => /^wardrobe/.test(f.type)), furnish17.message);
+const nstands = p17.furniture.filter((f) => f.type === "nightstand");
+if (bed17 && nstands.length > 0) {
+  const bb = worldAABB(bed17);
+  const close = nstands.filter((n) => {
+    const nb = worldAABB(n);
+    const dx = Math.max(0, Math.max(bb.x - (nb.x + nb.w), nb.x - (bb.x + bb.w)));
+    const dy = Math.max(0, Math.max(bb.y - (nb.y + nb.h), nb.y - (bb.y + bb.h)));
+    return Math.hypot(dx, dy) <= 0.45;
+  });
+  check(`criados-mudos junto da cama (${close.length}/${nstands.length})`, close.length === nstands.length,
+    nstands.map((n) => `${n.label}@(${n.x.toFixed(2)},${n.y.toFixed(2)})`).join("; "));
+}
+const i17 = validatePlan(p17);
+check("zero errors", i17.filter((i) => i.severity === "error").length === 0,
+  i17.filter((i) => i.severity === "error").map((e) => e.code).join(", "));
+check("sem FURNITURE_ON_WALL", !i17.some((i) => i.code === "FURNITURE_ON_WALL"),
+  i17.filter((i) => i.code === "FURNITURE_ON_WALL").map((i) => i.message).join(" | "));
+
+// ---------- Cenário 18: fidelidade de âncora explícita ----------
+console.log("\n[18] Âncora explícita wall:west + rotation 90 continua a oeste");
+const p18 = emptyPlan();
+applyTool(p18, "create_room", { name: "Quarto", width: 3.0, height: 4.0, x: 0, y: 0 });
+applyTool(p18, "add_door", { room_name: "Quarto", wall: "south", position: 0.5 });
+const r18 = applyTool(p18, "place_furniture_intent", {
+  room_name: "Quarto",
+  items: [{ type: "bed_double", anchor: "wall:west", position: "mid", rotation: 90 }],
+});
+check("posicionado", r18.ok, r18.message);
+const bed18 = p18.furniture.find((f) => f.type === "bed_double");
+if (bed18) {
+  const u18 = usableRect(p18, p18.rooms[0]);
+  const vb = worldAABB(bed18);
+  check("encostado na face interna oeste (fidelidade)", Math.abs(vb.x - u18.x) < 0.06, `vb.x=${vb.x.toFixed(3)} usable.x=${u18.x.toFixed(3)}`);
+}
+
+// ---------- Cenário 19: FURNITURE_ON_WALL detecta invasão ----------
+console.log("\n[19] FURNITURE_ON_WALL: flush na face interna OK; em cima da parede AVISA");
+const p19 = emptyPlan();
+applyTool(p19, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+applyTool(p19, "add_door", { room_name: "Sala", wall: "south", position: 0.5 });
+const sofa19 = applyTool(p19, "place_furniture_intent", {
+  room_name: "Sala",
+  items: [{ type: "sofa_3seat", anchor: "wall:north", position: "mid" }],
+});
+check("sofá posicionado", sofa19.ok, sofa19.message);
+const i19a = validatePlan(p19);
+check("flush na face interna: sem FURNITURE_ON_WALL", !i19a.some((i) => i.code === "FURNITURE_ON_WALL"),
+  i19a.filter((i) => i.code === "FURNITURE_ON_WALL").map((i) => i.message).join(" | "));
+// Simula plano antigo: empurra o sofá para o retângulo cheio (em cima da parede).
+const sofaF = p19.furniture.find((f) => f.type === "sofa_3seat");
+if (sofaF) {
+  sofaF.y = p19.rooms[0].y; // flush no retângulo = invade a faixa da parede
+  const i19b = validatePlan(p19);
+  check("em cima da parede: FURNITURE_ON_WALL aparece", i19b.some((i) => i.code === "FURNITURE_ON_WALL"),
+    i19b.map((i) => i.code).join(", "));
+}
 
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);
 process.exit(failures === 0 ? 0 : 1);

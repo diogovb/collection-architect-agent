@@ -22,7 +22,7 @@ import type {
 } from "../types";
 import type { ApplyResult } from "../floor-plan-engine";
 import { MODULE_DEFS, isFullHeightKind, allowsUpperAbove, cutoutKind, moduleFurnitureType } from "../millwork-modules";
-import { openingInterval, openingsOverlap1D, spanInterval, wallSideLabel } from "../plan-geometry";
+import { openingInterval, openingsOverlap1D, spanInterval, usableRect, wallSideLabel } from "../plan-geometry";
 
 const RUN_DEFAULTS: {
   lowerHeight: Record<RunType, number>;
@@ -215,17 +215,24 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   })();
   const totalLength = normalized.reduce((s, m) => s + m.width, 0);
   const startOffset = input.start_offset ?? 0;
-  const wallLen = wallLength(room, wall);
+  // Área útil: módulos e bancada encostam na FACE INTERNA das paredes (o
+  // retângulo "innerRoom" abaixo substitui o retângulo cheio em todos os
+  // cálculos de posição). Os checks 1D de porta/janela continuam em coords
+  // de mundo — por isso o shift `startInsetAlong`.
+  const usable = usableRect(plan, room);
+  const innerRoom = { x: usable.x, y: usable.y, width: usable.w, height: usable.h };
+  const startInsetAlong = wall === "north" || wall === "south" ? usable.x - room.x : usable.y - room.y;
+  const wallLen = wallLength(innerRoom, wall);
   if (startOffset + totalLength > wallLen + 0.001) {
     return {
       ok: false,
-      message: `Run não cabe na parede ${wall} de '${room.name}': run = ${totalLength.toFixed(2)}m + offset ${startOffset.toFixed(2)}m, mas parede tem ${wallLen.toFixed(2)}m.`,
+      message: `Run não cabe na parede ${wall} de '${room.name}': run = ${totalLength.toFixed(2)}m + offset ${startOffset.toFixed(2)}m, mas a parede tem ${wallLen.toFixed(2)}m úteis (descontando paredes laterais).`,
     };
   }
 
   // A bancada não pode cobrir uma porta — nem a do próprio cômodo nem a do
   // vizinho que compartilha a parede (comparação 1D no espaço do mundo).
-  const runSpan = spanInterval(room, wall, startOffset, totalLength);
+  const runSpan = spanInterval(room, wall, startInsetAlong + startOffset, totalLength);
   for (const d of plan.doors) {
     const dRoom = plan.rooms.find((r) => r.id === d.roomId);
     if (!dRoom) continue;
@@ -249,7 +256,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
     let probe = startOffset;
     for (const m of normalized) {
       if (m.isFullHeight) {
-        const mSpan = spanInterval(room, wall, probe, m.width);
+        const mSpan = spanInterval(room, wall, startInsetAlong + probe, m.width);
         for (const w of plan.windows) {
           const wRoom = plan.rooms.find((r) => r.id === w.roomId);
           if (!wRoom) continue;
@@ -285,7 +292,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   let countertopFurniture: Furniture | null = null;
   if (wantCountertop && hasNonFullHeight) {
     const ctMaterial: CountertopMaterial = input.countertop?.material ?? "granito_preto";
-    const ctBbox = countertopBbox(room, wall, startOffset, totalLength, RUN_DEFAULTS.countertopDepth);
+    const ctBbox = countertopBbox(innerRoom, wall, startOffset, totalLength, RUN_DEFAULTS.countertopDepth);
     const cutouts: NonNullable<Furniture["cutouts"]> = [];
     let runOffset = 0;
     for (const m of normalized) {
@@ -313,7 +320,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   let cursor = startOffset;
   for (const m of normalized) {
     const ftype = moduleFurnitureType(m.kind);
-    const bbox = computeModulePosition(room, wall, cursor, m.width, m.defaultDepth);
+    const bbox = computeModulePosition(innerRoom, wall, cursor, m.width, m.defaultDepth);
     const item: Furniture = {
       id: nextFurnId(),
       roomId: room.id,
@@ -340,7 +347,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   // disparava WINDOW_BLOCKED sem remediação possível.
   const upperPolicy = input.upper_cabinets ?? (runType === "kitchen_counter" ? "auto" : "none");
   const overlapsWindow = (offsetAlong: number, width: number): boolean => {
-    const span = spanInterval(room, wall, offsetAlong, width);
+    const span = spanInterval(room, wall, startInsetAlong + offsetAlong, width);
     for (const w of plan.windows) {
       const wRoom = plan.rooms.find((r) => r.id === w.roomId);
       if (!wRoom) continue;
@@ -361,7 +368,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
         overlapsWindow(cursor, m.width);
       if (!skipUpper) {
         const upperType = m.kind === "cabinet_glass" ? "module_upper_glass" : "module_upper_cabinet";
-        const upperBbox = computeModulePosition(room, wall, cursor, m.width, RUN_DEFAULTS.upperDepth);
+        const upperBbox = computeModulePosition(innerRoom, wall, cursor, m.width, RUN_DEFAULTS.upperDepth);
         newFurniture.push({
           id: nextFurnId(),
           roomId: room.id,
@@ -382,7 +389,7 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
   cursor = startOffset;
   for (const m of normalized) {
     if (m.hood_above && (m.kind === "cooktop_4" || m.kind === "cooktop_5" || m.kind === "cooktop_induction" || m.kind === "outdoor_cooktop")) {
-      const hoodBbox = computeModulePosition(room, wall, cursor, m.width, RUN_DEFAULTS.hoodHeight);
+      const hoodBbox = computeModulePosition(innerRoom, wall, cursor, m.width, RUN_DEFAULTS.hoodHeight);
       newFurniture.push({
         id: nextFurnId(),
         roomId: room.id,

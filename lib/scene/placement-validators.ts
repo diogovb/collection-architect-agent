@@ -12,7 +12,7 @@
 import type { Door, FloorPlan, Furniture, Room, Window } from "../types";
 import type { FurniturePlacement } from "../types";
 import { getPlacement } from "../furniture-placement";
-import { worldAABB } from "../plan-geometry";
+import { relationDistance, usableRect, worldAABB, type PlanRect } from "../plan-geometry";
 import { legacySwingGeometry, quarterDiscIntersectsRect } from "./door-swing";
 import { TOL_CONTACT_M, TOL_WALL_TOUCH_M } from "./tolerances";
 
@@ -48,38 +48,38 @@ export interface PlacementResult {
   advisories?: string[];
 }
 
-/** True when a side of the bbox sits flush with one of the room's 4 walls
- *  (axis-aligned tolerance). */
-function touchedWalls(bb: BBox, room: Room, tol = TOL_WALL_TOUCH_M): { north: boolean; south: boolean; east: boolean; west: boolean } {
+/** True when a side of the bbox sits flush with one of the usable rect's 4
+ *  edges (= a FACE INTERNA da parede; axis-aligned tolerance). */
+export function touchedWalls(bb: BBox, usable: PlanRect, tol = TOL_WALL_TOUCH_M): { north: boolean; south: boolean; east: boolean; west: boolean } {
   return {
-    north: Math.abs(bb.y - room.y) <= tol,
-    south: Math.abs(bb.y + bb.h - (room.y + room.height)) <= tol,
-    west: Math.abs(bb.x - room.x) <= tol,
-    east: Math.abs(bb.x + bb.w - (room.x + room.width)) <= tol,
+    north: Math.abs(bb.y - usable.y) <= tol,
+    south: Math.abs(bb.y + bb.h - (usable.y + usable.h)) <= tol,
+    west: Math.abs(bb.x - usable.x) <= tol,
+    east: Math.abs(bb.x + bb.w - (usable.x + usable.w)) <= tol,
   };
 }
 
-function countTouching(bb: BBox, room: Room): number {
-  const t = touchedWalls(bb, room);
+function countTouching(bb: BBox, usable: PlanRect): number {
+  const t = touchedWalls(bb, usable);
   return Number(t.north) + Number(t.south) + Number(t.east) + Number(t.west);
 }
 
 /** Returns a human-readable list of corners with their occupation state
  *  (free / occupied by X). Drives error messages so the agent picks a
  *  free corner on retry. */
-function describeCorners(room: Room, existing: Furniture[]): string {
+function describeCorners(room: Room, usable: PlanRect, existing: Furniture[]): string {
   const corners = [
-    { name: "NW", x: room.x, y: room.y },
-    { name: "NE", x: room.x + room.width, y: room.y },
-    { name: "SE", x: room.x + room.width, y: room.y + room.height },
-    { name: "SW", x: room.x, y: room.y + room.height },
+    { name: "NW", x: usable.x, y: usable.y },
+    { name: "NE", x: usable.x + usable.w, y: usable.y },
+    { name: "SE", x: usable.x + usable.w, y: usable.y + usable.h },
+    { name: "SW", x: usable.x, y: usable.y + usable.h },
   ];
   const out: string[] = [];
   for (const c of corners) {
     const cellSize = 0.6;
     const probe = {
-      x: Math.max(room.x, c.x === room.x ? room.x : room.x + room.width - cellSize),
-      y: Math.max(room.y, c.y === room.y ? room.y : room.y + room.height - cellSize),
+      x: Math.max(usable.x, c.x === usable.x ? usable.x : usable.x + usable.w - cellSize),
+      y: Math.max(usable.y, c.y === usable.y ? usable.y : usable.y + usable.h - cellSize),
       w: cellSize,
       h: cellSize,
     };
@@ -92,19 +92,19 @@ function describeCorners(room: Room, existing: Furniture[]): string {
 /** Linear free length on each wall after subtracting existing furniture
  *  + door + window footprints. Used in error messages so the agent can
  *  pick a wall with enough space. */
-function describeWalls(room: Room, existing: Furniture[], doors: Door[], windows: Window[]): string {
+function describeWalls(room: Room, usable: PlanRect, existing: Furniture[], doors: Door[], windows: Window[]): string {
   type WallKey = "north" | "south" | "east" | "west";
   const walls: Record<WallKey, number> = {
-    north: room.width,
-    south: room.width,
-    east: room.height,
-    west: room.height,
+    north: usable.w,
+    south: usable.w,
+    east: usable.h,
+    west: usable.h,
   };
   const occupants: Record<WallKey, number> = { north: 0, south: 0, east: 0, west: 0 };
   for (const f of existing) {
     if (f.roomId !== room.id) continue;
     const bb = bboxOf(f);
-    const t = touchedWalls(bb, room);
+    const t = touchedWalls(bb, usable);
     if (t.north) occupants.north += bb.w;
     if (t.south) occupants.south += bb.w;
     if (t.west) occupants.west += bb.h;
@@ -124,31 +124,32 @@ function describeWalls(room: Room, existing: Furniture[], doors: Door[], windows
     .join(", ");
 }
 
-/** Validates `anchorTo` against the actual bbox+room. */
+/** Validates `anchorTo` against the actual bbox + usable rect. */
 export function validateAnchor(
   bb: BBox,
   room: Room,
+  usable: PlanRect,
   placement: FurniturePlacement,
   existing: Furniture[]
 ): PlacementResult {
   if (placement.anchorTo === "free") return { ok: true };
-  const touching = countTouching(bb, room);
+  const touching = countTouching(bb, usable);
   if (placement.anchorTo === "wall" && touching < 1) {
     return {
       ok: false,
-      reason: `precisa estar contra uma parede (anchorTo: "wall") mas o item está flutuando. Paredes: ${describeWalls(room, existing, [], [])}.`,
+      reason: `precisa estar contra uma parede (anchorTo: "wall") mas o item está flutuando. Paredes: ${describeWalls(room, usable, existing, [], [])}.`,
     };
   }
   if (placement.anchorTo === "corner" && touching < 2) {
     return {
       ok: false,
-      reason: `precisa estar em um canto (anchorTo: "corner") mas só ${touching} face(s) tocando parede. Cantos: ${describeCorners(room, existing)}.`,
+      reason: `precisa estar em um canto (anchorTo: "corner") mas só ${touching} face(s) tocando parede. Cantos: ${describeCorners(room, usable, existing)}.`,
     };
   }
   if (placement.anchorTo === "wall-or-corner" && touching < 1) {
     return {
       ok: false,
-      reason: `precisa estar contra parede ou canto mas o item está flutuando. Cantos disponíveis: ${describeCorners(room, existing)}.`,
+      reason: `precisa estar contra parede ou canto mas o item está flutuando. Cantos disponíveis: ${describeCorners(room, usable, existing)}.`,
     };
   }
   return { ok: true };
@@ -184,13 +185,14 @@ const OPPOSITE: Record<"north" | "south" | "east" | "west", "north" | "south" | 
 export function validateClearance(
   bb: BBox,
   room: Room,
+  usable: PlanRect,
   placement: FurniturePlacement,
   existing: Furniture[]
 ): PlacementResult {
   const front = placement.clearance.front;
   if (front <= EPS) return { ok: true };
 
-  const t = touchedWalls(bb, room);
+  const t = touchedWalls(bb, usable);
   const touched = (["north", "south", "east", "west"] as const).filter((k) => t[k]);
 
   let zonesToCheck: BBox[];
@@ -212,8 +214,8 @@ export function validateClearance(
         const cx = z.x + z.w / 2;
         const cy = z.y + z.h / 2;
         return (
-          cx >= room.x - EPS && cx <= room.x + room.width + EPS &&
-          cy >= room.y - EPS && cy <= room.y + room.height + EPS
+          cx >= usable.x - EPS && cx <= usable.x + usable.w + EPS &&
+          cy >= usable.y - EPS && cy <= usable.y + usable.h + EPS
         );
       });
   }
@@ -311,8 +313,6 @@ export function validateRelations(
   label?: string,
 ): PlacementResult {
   if (!placement.relations || placement.relations.length === 0) return { ok: true };
-  const cx = bb.x + bb.w / 2;
-  const cy = bb.y + bb.h / 2;
   const advisories: string[] = [];
   for (const rel of placement.relations) {
     const partners = existing.filter((f) => f.roomId === room.id && f.type === rel.withType);
@@ -320,9 +320,7 @@ export function validateRelations(
     let closest: { f: Furniture; d: number } | null = null;
     for (const p of partners) {
       const pb = bboxOf(p);
-      const px = pb.x + pb.w / 2;
-      const py = pb.y + pb.h / 2;
-      const d = Math.hypot(px - cx, py - cy);
+      const d = relationDistance(rel, bb, pb);
       if (!closest || d < closest.d) closest = { f: p, d };
     }
     if (!closest) continue;
@@ -346,8 +344,9 @@ export function validatePlacement(
   const bb: BBox = { x: proposed.x, y: proposed.y, w: proposed.width, h: proposed.height };
   const placement = getPlacement(proposed.type);
   const existing = plan.furniture;
+  const usable = usableRect(plan, room);
 
-  const r1 = validateAnchor(bb, room, placement, existing);
+  const r1 = validateAnchor(bb, room, usable, placement, existing);
   if (!r1.ok) return r1;
 
   const r2 = validateDoorClearance(bb, room, plan.doors, plan.rooms);
@@ -356,7 +355,7 @@ export function validatePlacement(
   const r3 = validateWindowClearance(bb, room, plan.windows);
   if (!r3.ok) return r3;
 
-  const r4 = validateClearance(bb, room, placement, existing);
+  const r4 = validateClearance(bb, room, usable, placement, existing);
   if (!r4.ok) return r4;
 
   const r5 = validateRelations(bb, room, placement, existing, proposed.label);
@@ -369,7 +368,8 @@ export function validatePlacement(
  *  for the agent to consume on a retry. Always cheap to compute. */
 export function summarizeRoomLayout(room: Room, plan: FloorPlan): string {
   const existing = plan.furniture.filter((f) => f.roomId === room.id);
-  return `Cômodo '${room.name}' (${room.width}×${room.height}m). Cantos: ${describeCorners(room, plan.furniture)}. Paredes: ${describeWalls(room, plan.furniture, plan.doors, plan.windows)}. Itens: ${
+  const usable = usableRect(plan, room);
+  return `Cômodo '${room.name}' (${room.width}×${room.height}m, útil ${usable.w.toFixed(2)}×${usable.h.toFixed(2)}m descontando paredes). Cantos: ${describeCorners(room, usable, plan.furniture)}. Paredes: ${describeWalls(room, usable, plan.furniture, plan.doors, plan.windows)}. Itens: ${
     existing.length === 0 ? "nenhum" : existing.map((f) => `${f.label}(${f.x.toFixed(1)},${f.y.toFixed(1)},${f.width}×${f.height})`).join(", ")
   }.`;
 }

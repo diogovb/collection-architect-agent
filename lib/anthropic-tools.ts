@@ -340,7 +340,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_furniture",
     description:
-      "Adiciona UM ÚNICO móvel num cômodo. Chame quando o cliente pedir um item avulso ou um ajuste pontual. relative_x/relative_y são 0..1 dentro do cômodo (0,0 = canto superior-esquerdo). Para mobiliar um cômodo INTEIRO prefira `place_furniture_intent` (âncoras semânticas wall:north@mid / corner:NE + solver com clearances e relações ergonômicas); para bancadas/marcenaria (cozinha, banheiro, closet, lavanderia) use `add_millwork_run` — nunca esta ferramenta.",
+      "ÚLTIMO RECURSO: adiciona UM móvel por coordenada relativa (relative_x/relative_y 0..1 na área útil; 0,0 = canto NW interno). Chame APENAS para um ajuste pontual que o cliente pediu explicitamente. Para mobiliar qualquer cômodo use `furnish_room` (template profissional) ou `place_furniture_intent` (âncoras semânticas + solver pontuado que lê portas/janelas); para bancadas/marcenaria use `add_millwork_run` — nunca esta ferramenta.",
     input_schema: {
       type: "object",
       properties: {
@@ -465,7 +465,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "place_furniture_intent",
     description:
-      "Posiciona MÚLTIPLOS móveis num cômodo declarando INTENÇÃO em vez de coordenadas. Para cada item, escolha um âncora semântico (`wall:north`, `wall:south`, `wall:east`, `wall:west`, `corner:NW`, `corner:NE`, `corner:SW`, `corner:SE`, `center`, `free`) e opcionalmente position (start/mid/end ao longo da parede). O solver calcula coords absolutos respeitando: encosto-de-parede, clearance frontal/lateral, arco da porta, distância de janela, triângulo de cozinha, distância sofá-TV. Use isto para mobiliação completa de um cômodo. Múltiplos itens no MESMO âncora são distribuídos automaticamente ao longo da parede.",
+      "Posiciona MÚLTIPLOS móveis num cômodo declarando INTENÇÃO em vez de coordenadas. Para cada item, escolha um âncora semântico (`wall:north`, `wall:south`, `wall:east`, `wall:west`, `corner:NW`, `corner:NE`, `corner:SW`, `corner:SE`, `center`, `free`) e opcionalmente position (start/mid/end). O solver PONTUADO calcula a posição exata: lê portas/janelas (evita vãos e o arco da porta), encosta na face interna da parede, gira a peça de costas pra parede automaticamente, respeita clearances e relações ergonômicas (criado↔cama, sofá↔TV, triângulo de cozinha) e mantém o centro do cômodo livre. Sua âncora explícita tem prioridade quando é válida; se não couber, ele escolhe a melhor alternativa e relata. Use para mobiliação completa de um cômodo.",
     input_schema: {
       type: "object",
       properties: {
@@ -505,7 +505,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_furniture_group",
     description:
-      "Adiciona um conjunto pré-definido de móveis num cômodo (ex: 'dining_set_6' = mesa de jantar 6 lugares + 6 cadeiras).",
+      "Adiciona um conjunto pré-definido de móveis num cômodo via template profissional resolvido pelo solver pontuado (lê portas/janelas, zoneia como arquiteto, valida tudo). Ex: 'dining_set_6', 'bedroom_couple_basic', 'kids_room_basic'. Itens que não couberem são omitidos com explicação.",
     input_schema: {
       type: "object",
       properties: {
@@ -672,7 +672,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "furnish_room",
     description:
-      "Mobilia automaticamente um cômodo com móveis adequados ao tipo dele. Chame quando o cliente pedir para mobiliar um cômodo (ou vários) de uma vez sem especificar peças; quando ele pedir controle fino de posicionamento, use place_furniture_intent peça a peça.",
+      "Mobilia automaticamente um cômodo com o template profissional do tipo dele (cama em parede sólida, escrivaninha perto da janela, centro livre — o solver pontuado lê portas/janelas e valida tudo). Chame quando o cliente pedir para mobiliar um cômodo (ou vários) sem especificar peças; quando ele pedir controle fino, use place_furniture_intent peça a peça.",
     input_schema: {
       type: "object",
       properties: {

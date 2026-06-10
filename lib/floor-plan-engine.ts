@@ -19,12 +19,14 @@ import type {
 import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furniture-svgs";
 import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
 import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
+import { ROOM_TEMPLATES, solveRoomTemplate } from "./room-templates";
 import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
 import {
   openingInterval,
   openingsOverlap1D,
   rectOverlapArea,
   spanInterval,
+  usableRect,
   wallSideLabel,
   worldAABB,
 } from "./plan-geometry";
@@ -296,10 +298,11 @@ function doResizeRoom(plan: FloorPlan, input: ToolInputs["resize_room"]): ApplyR
   }
   room.width = input.width;
   room.height = input.height;
-  // Clamp furniture inside.
+  // Clamp furniture inside the USABLE area (inner wall faces).
+  const resized = usableRect(plan, room);
   for (const f of plan.furniture.filter((ff) => ff.roomId === room.id)) {
-    f.x = Math.max(room.x, Math.min(room.x + room.width - f.width, f.x));
-    f.y = Math.max(room.y, Math.min(room.y + room.height - f.height, f.y));
+    f.x = Math.max(resized.x, Math.min(resized.x + resized.w - f.width, f.x));
+    f.y = Math.max(resized.y, Math.min(resized.y + resized.h - f.height, f.y));
   }
   return { ok: true, message: `Cômodo '${room.name}' redimensionado para ${input.width}x${input.height}m.` };
 }
@@ -951,7 +954,6 @@ function clamp01(n: number): number {
 function doAddFurniture(
   plan: FloorPlan,
   input: ToolInputs["add_furniture"],
-  opts?: { skipOverlapCheck?: boolean },
 ): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
@@ -959,61 +961,59 @@ function doAddFurniture(
   const def = FURN_DEFS[t];
   if (!def) return { ok: false, message: `Tipo de móvel desconhecido: ${t}` };
   const size = def.sizeM;
-  // Reject items that don't fit the room outright — gives the agent a
-  // chance to pick a smaller variant or a different room.
-  if (size.w > room.width + 0.01 || size.h > room.height + 0.01) {
+  // Área útil: rx/ry mapeiam 0..1 sobre o retângulo DESCONTANDO as paredes
+  // (rx=0 = encostado na FACE INTERNA, não em cima da faixa da parede).
+  const usable = usableRect(plan, room);
+  // Reject items that don't fit the usable area outright — gives the agent
+  // a chance to pick a smaller variant or a different room.
+  if (size.w > usable.w + 0.01 || size.h > usable.h + 0.01) {
     return {
       ok: false,
       message:
         `${def.label} (${size.w.toFixed(2)}×${size.h.toFixed(2)}m) não cabe em ` +
-        `'${room.name}' (${room.width.toFixed(2)}×${room.height.toFixed(2)}m). ` +
+        `'${room.name}' (área útil ${usable.w.toFixed(2)}×${usable.h.toFixed(2)}m, descontando paredes). ` +
         `Escolha um modelo menor ou outro cômodo.`,
     };
   }
   const rx = clamp01(input.relative_x ?? 0.5);
   const ry = clamp01(input.relative_y ?? 0.5);
-  const fx = room.x + rx * Math.max(0, room.width - size.w);
-  const fy = room.y + ry * Math.max(0, room.height - size.h);
+  const fx = usable.x + rx * Math.max(0, usable.w - size.w);
+  const fy = usable.y + ry * Math.max(0, usable.h - size.h);
 
   // Rich placement validators (Phase C). Every furniture type carries
   // metadata in lib/furniture-placement.ts: anchor (wall/corner/free),
   // clearance per side, ergonomic relations (kitchen triangle, sofa-TV).
   // These run BEFORE the legacy AABB overlap so we surface the most
   // diagnostic error first — "geladeira precisa canto" beats "geladeira
-  // sobrepõe ar". Skipped for `add_furniture_group` calls (which use
-  // hand-curated layouts that already mostly respect the rules).
-  let advisories: string[] = [];
-  if (!opts?.skipOverlapCheck) {
-    const placementCheck = validatePlacement(
-      { type: t, x: fx, y: fy, width: size.w, height: size.h, label: input.label ?? def.label },
-      room,
-      plan,
-    );
-    if (!placementCheck.ok) {
-      return {
-        ok: false,
-        message:
-          `${def.label} em (rx=${rx.toFixed(2)}, ry=${ry.toFixed(2)}) ${placementCheck.reason} ` +
-          `${summarizeRoomLayout(room, plan)}`,
-      };
-    }
-    advisories = placementCheck.advisories ?? [];
+  // sobrepõe ar". (O antigo bypass skipOverlapCheck dos grupos foi
+  // eliminado — grupos agora passam pelo solver com validação ligada.)
+  const placementCheck = validatePlacement(
+    { type: t, x: fx, y: fy, width: size.w, height: size.h, label: input.label ?? def.label },
+    room,
+    plan,
+  );
+  if (!placementCheck.ok) {
+    return {
+      ok: false,
+      message:
+        `${def.label} em (rx=${rx.toFixed(2)}, ry=${ry.toFixed(2)}) ${placementCheck.reason} ` +
+        `${summarizeRoomLayout(room, plan)}`,
+    };
   }
+  const advisories: string[] = placementCheck.advisories ?? [];
 
   // Overlap check (Bug "agente cria coisas em cima da outra"). Rejects
   // the placement if it intersects an existing furniture in the same
   // room. The error message lists the conflicting item AND describes
   // every occupied AABB so the agent can pick a free spot on the next
   // try without having to call list_furniture first.
-  const conflict = !opts?.skipOverlapCheck
-    ? findFurnitureOverlap(plan, room.id, fx, fy, size.w, size.h)
-    : null;
+  const conflict = findFurnitureOverlap(plan, room.id, fx, fy, size.w, size.h);
   if (conflict) {
     const occupied = plan.furniture
       .filter((f) => f.roomId === room.id && !isRugLike(f.type))
       .map((f) => {
-        const orx = (f.x - room.x) / Math.max(0.01, room.width - f.width);
-        const ory = (f.y - room.y) / Math.max(0.01, room.height - f.height);
+        const orx = (f.x - usable.x) / Math.max(0.01, usable.w - f.width);
+        const ory = (f.y - usable.y) / Math.max(0.01, usable.h - f.height);
         return `${f.label} (rx≈${orx.toFixed(2)}, ry≈${ory.toFixed(2)}, ${f.width.toFixed(2)}×${f.height.toFixed(2)}m)`;
       })
       .join("; ");
@@ -1082,19 +1082,20 @@ function findFurnitureOverlap(
  *  corner:NE, etc.), validates each piece, then commits the survivors
  *  via direct push (skipping doAddFurniture's per-item validators since
  *  the solver already ran them with full sibling awareness). */
-function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furniture_intent"]): ApplyResult {
-  const room = findRoom(plan, input.room_name);
-  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
-  if (!Array.isArray(input.items) || input.items.length === 0) {
-    return { ok: false, message: "place_furniture_intent: lista 'items' vazia." };
-  }
-  const result = solvePlacement({ room, items: input.items, plan });
+
+/** Materializa os itens resolvidos pelo solver no plano. O solver devolve o
+ *  bbox VISUAL (já transposto para rotações 90/270); o bbox armazenado
+ *  guarda as dimensões do glifo SEM rotação com o mesmo centro — o renderer
+ *  aplica a rotação em torno do centro. Compartilhado entre
+ *  place_furniture_intent e os templates de furnish_room. */
+export function commitSolvedItems(
+  plan: FloorPlan,
+  room: Room,
+  result: { solved: Array<{ intent: { type: FurnitureType; label?: string; rotation?: number }; x: number; y: number; width: number; height: number }> },
+): void {
   for (const s of result.solved) {
     const def = FURN_DEFS[s.intent.type];
     if (!def) continue;
-    // O solver devolve o bbox VISUAL (já transposto para rotações 90/270).
-    // O bbox armazenado guarda as dimensões do glifo SEM rotação com o mesmo
-    // centro — o renderer aplica a rotação em torno do centro.
     const rotated = ((s.intent.rotation ?? 0) % 180 + 180) % 180 === 90;
     const w = rotated ? s.height : s.width;
     const h = rotated ? s.width : s.height;
@@ -1113,6 +1114,16 @@ function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furnit
     };
     plan.furniture.push(item);
   }
+}
+
+function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furniture_intent"]): ApplyResult {
+  const room = findRoom(plan, input.room_name);
+  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  if (!Array.isArray(input.items) || input.items.length === 0) {
+    return { ok: false, message: "place_furniture_intent: lista 'items' vazia." };
+  }
+  const result = solvePlacement({ room, items: input.items, plan });
+  commitSolvedItems(plan, room, result);
   const message = formatSolverResult(room, plan, result);
   // Partial success is treated as ok = true with a descriptive message
   // so the agent sees what landed and what didn't, and can retry the
@@ -1145,17 +1156,18 @@ function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): 
   let nx = f.x;
   let ny = f.y;
   if (room) {
-    if (vw > room.width + TOL_CONTACT_M || vh > room.height + TOL_CONTACT_M) {
+    const swapUsable = usableRect(plan, room);
+    if (vw > swapUsable.w + TOL_CONTACT_M || vh > swapUsable.h + TOL_CONTACT_M) {
       return {
         ok: false,
-        message: `${def.label} (${newW}×${newH}m${rotated ? ", rotacionado 90°" : ""}) não cabe em '${room.name}' (${room.width}×${room.height}m).`,
+        message: `${def.label} (${newW}×${newH}m${rotated ? ", rotacionado 90°" : ""}) não cabe em '${room.name}' (área útil ${swapUsable.w.toFixed(2)}×${swapUsable.h.toFixed(2)}m).`,
       };
     }
-    // Clamp the VISUAL bbox inside the room, then derive the stored
+    // Clamp the VISUAL bbox inside the usable area, then derive the stored
     // top-left so the centers coincide.
     const oldBB = worldAABB(f);
-    const vx = Math.max(room.x, Math.min(room.x + room.width - vw, oldBB.x));
-    const vy = Math.max(room.y, Math.min(room.y + room.height - vh, oldBB.y));
+    const vx = Math.max(swapUsable.x, Math.min(swapUsable.x + swapUsable.w - vw, oldBB.x));
+    const vy = Math.max(swapUsable.y, Math.min(swapUsable.y + swapUsable.h - vh, oldBB.y));
     nx = vx + (vw - newW) / 2;
     ny = vy + (vh - newH) / 2;
     const conflict = findFurnitureOverlap(plan, room.id, vx, vy, vw, vh, f.id);
@@ -1674,10 +1686,13 @@ function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): Appl
   if (/(banheiro|lavabo|wc)/.test(n)) group = room.width * room.height >= 5 ? "bathroom_full" : "bathroom_basic";
   else if (/sala/.test(n)) group = room.width * room.height >= 18 ? "living_full" : "living_basic";
   else if (/cozinha/.test(n)) group = room.width * room.height >= 10 ? "kitchen_full" : "kitchen_basic";
+  // Infantil ANTES dos padrões genéricos de quarto: "Quarto Infantil"
+  // casava com /quarto/ e ganhava cama de solteiro + escrivaninha — o ramo
+  // infantil era inalcançável.
+  else if (/(infantil|criança|crianca|bebê|bebe|kids)/.test(n)) group = "kids_room_basic";
   else if (/(suíte|suite|quarto.*casal|quarto principal|master)/.test(n))
     group = room.width * room.height >= 14 ? "bedroom_couple_full" : "bedroom_couple_basic";
   else if (/quarto/.test(n)) group = "bedroom_single_basic";
-  else if (/(infantil|criança|bebê|bebe)/.test(n)) group = "kids_room_basic";
   else if (/(serviço|servico|lavanderia)/.test(n)) group = "laundry_basic";
   else if (/jantar/.test(n)) group = "dining_set_6";
   else if (/(escritório|escritorio|home office)/.test(n)) group = "office_basic";
@@ -1688,200 +1703,30 @@ function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): Appl
   return doAddFurnitureGroup(plan, { room_name: room.name, group });
 }
 
-// ---------- Furniture groups ----------
-
-/** Returns the longest wall of a room — used by kitchen_basic/full to
- *  pick where to place the bancada. north/south are width; east/west are
- *  height. */
-function longestWall(room: Room): "north" | "south" | "east" | "west" {
-  return room.width >= room.height ? "north" : "east";
-}
-
-function placeFurniture(plan: FloorPlan, room: Room, type: FurnitureType, rx: number, ry: number, label?: string) {
-  // Curated group layouts trust their relative positions; we still want
-  // the size/room-fit guard but skip the per-item overlap check so the
-  // sofa→rug→coffee_table stack can coexist.
-  doAddFurniture(plan, {
-    room_name: room.name,
-    furniture_type: type,
-    label,
-    relative_x: rx,
-    relative_y: ry,
-  }, { skipOverlapCheck: true });
-}
+// ---------- Furniture groups (templates + solver pontuado) ----------
 
 function doAddFurnitureGroup(plan: FloorPlan, input: ToolInputs["add_furniture_group"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  const template = ROOM_TEMPLATES[input.group];
+  if (!template) return { ok: false, message: `Grupo desconhecido: ${input.group}.` };
 
-  const placeMany = (items: { type: FurnitureType; rx: number; ry: number; label?: string }[]) => {
-    for (const it of items) placeFurniture(plan, room, it.type, it.rx, it.ry, it.label);
-  };
-
-  switch (input.group) {
-    case "living_basic":
-      placeMany([
-        { type: "sofa_3seat", rx: 0.5, ry: 0.15 },
-        { type: "tv_console", rx: 0.5, ry: 0.85 },
-        { type: "coffee_table", rx: 0.5, ry: 0.5 },
-      ]);
-      break;
-    case "living_full":
-      placeMany([
-        { type: "sofa_L", rx: 0.05, ry: 0.1 },
-        { type: "armchair", rx: 0.85, ry: 0.7 },
-        { type: "tv_console", rx: 0.5, ry: 0.95 },
-        { type: "coffee_table", rx: 0.45, ry: 0.55 },
-        { type: "rug_rect", rx: 0.45, ry: 0.55 },
-        { type: "side_table", rx: 0.95, ry: 0.5 },
-        { type: "floor_lamp", rx: 0.0, ry: 0.0 },
-        { type: "plant_pot", rx: 1.0, ry: 0.0 },
-        { type: "bookshelf", rx: 0.0, ry: 0.95 },
-      ]);
-      break;
-    case "bedroom_couple_basic":
-      placeMany([
-        { type: "bed_double", rx: 0.5, ry: 0.05 },
-        { type: "nightstand", rx: 0.0, ry: 0.05 },
-        { type: "nightstand", rx: 1.0, ry: 0.05 },
-        { type: "wardrobe_hinged", rx: 0.5, ry: 1.0 },
-      ]);
-      break;
-    case "bedroom_couple_full":
-      placeMany([
-        { type: "bed_king", rx: 0.5, ry: 0.05 },
-        { type: "nightstand", rx: 0.0, ry: 0.05 },
-        { type: "nightstand", rx: 1.0, ry: 0.05 },
-        { type: "wardrobe_sliding", rx: 0.5, ry: 1.0 },
-        { type: "dresser", rx: 0.0, ry: 0.6 },
-        { type: "vanity", rx: 1.0, ry: 0.6 },
-      ]);
-      break;
-    case "bedroom_single_basic":
-      placeMany([
-        { type: "bed_single", rx: 0.05, ry: 0.05 },
-        { type: "wardrobe_hinged", rx: 0.5, ry: 1.0 },
-        { type: "desk_study", rx: 1.0, ry: 0.0 },
-        { type: "desk_chair", rx: 0.85, ry: 0.25 },
-      ]);
-      break;
-    case "kids_room_basic":
-      placeMany([
-        { type: "bed_child", rx: 0.05, ry: 0.05 },
-        { type: "toy_shelf", rx: 1.0, ry: 0.0 },
-        { type: "play_table", rx: 0.5, ry: 0.7 },
-        { type: "wardrobe_hinged", rx: 0.5, ry: 1.0 },
-      ]);
-      break;
-    case "kitchen_basic":
-      // Iteração 7 — delega para add_millwork_run criar bancada contínua
-      // arquitetônica em vez de itens espalhados.
-      doAddMillworkRun(plan, {
-        room_name: room.name,
-        wall: longestWall(room),
-        type: "kitchen_counter",
-        modules: [
-          { kind: "fridge_niche", width: 0.7 },
-          { kind: "cabinet_drawer_3", width: 0.6 },
-          { kind: "cooktop_4", width: 0.6, hood_above: true },
-          { kind: "cabinet_door", width: 0.5 },
-          { kind: "sink_single", width: 0.6 },
-        ],
-        countertop: { material: "granito_preto", has_backsplash: true },
-        upper_cabinets: "auto",
-        finish: { body_material: "MDF_branco", door_style: "shaker" },
-      });
-      break;
-    case "kitchen_full":
-      doAddMillworkRun(plan, {
-        room_name: room.name,
-        wall: longestWall(room),
-        type: "kitchen_counter",
-        modules: [
-          { kind: "fridge_niche_double", width: 0.9 },
-          { kind: "cabinet_drawer_4", width: 0.6 },
-          { kind: "cooktop_5", width: 0.75, hood_above: true },
-          { kind: "cabinet_door", width: 0.4 },
-          { kind: "sink_double", width: 1.2 },
-          { kind: "dishwasher_niche", width: 0.6 },
-          { kind: "oven_tower", width: 0.6 },
-        ],
-        countertop: { material: "granito_preto", has_backsplash: true },
-        upper_cabinets: "auto",
-        finish: { body_material: "MDF_amadeirado", door_style: "shaker" },
-      });
-      break;
-    case "bathroom_basic":
-      placeMany([
-        { type: "toilet", rx: 0.0, ry: 0.0 },
-        { type: "sink_pedestal", rx: 0.5, ry: 0.0 },
-        { type: "shower_square", rx: 1.0, ry: 1.0 },
-      ]);
-      break;
-    case "bathroom_full":
-      placeMany([
-        { type: "toilet", rx: 0.0, ry: 0.0 },
-        { type: "bidet", rx: 0.2, ry: 0.0 },
-        { type: "sink_double_vanity", rx: 0.6, ry: 0.0 },
-        { type: "shower_rect", rx: 1.0, ry: 1.0 },
-        { type: "bathtub_rect", rx: 0.0, ry: 1.0 },
-        { type: "towel_rack", rx: 0.5, ry: 0.5 },
-      ]);
-      break;
-    case "office_basic":
-      placeMany([
-        { type: "desk_L", rx: 0.0, ry: 0.0 },
-        { type: "office_chair", rx: 0.3, ry: 0.3 },
-        { type: "filing_cabinet", rx: 1.0, ry: 0.0 },
-        { type: "bookshelf", rx: 1.0, ry: 1.0 },
-      ]);
-      break;
-    case "laundry_basic":
-      placeMany([
-        { type: "washing_machine", rx: 0.0, ry: 0.0 },
-        { type: "dryer", rx: 0.5, ry: 0.0 },
-        { type: "laundry_sink", rx: 1.0, ry: 0.0 },
-        { type: "ironing_board", rx: 0.5, ry: 1.0 },
-      ]);
-      break;
-    case "dining_set_4":
-      placeMany([
-        { type: "dining_table_4", rx: 0.5, ry: 0.5 },
-      ]);
-      break;
-    case "dining_set_6":
-      placeMany([{ type: "dining_table_6", rx: 0.5, ry: 0.5 }]);
-      break;
-    case "dining_set_8":
-      placeMany([{ type: "dining_table_8", rx: 0.5, ry: 0.5 }]);
-      break;
-    case "garden_basic":
-      placeMany([
-        { type: "tree_large", rx: 0.0, ry: 0.0 },
-        { type: "tree_small", rx: 1.0, ry: 0.0 },
-        { type: "outdoor_table", rx: 0.5, ry: 0.5 },
-        { type: "planter_round", rx: 0.0, ry: 1.0 },
-        { type: "planter_round", rx: 1.0, ry: 1.0 },
-        { type: "fountain", rx: 0.5, ry: 0.0 },
-      ]);
-      break;
-    case "pool_set":
-      placeMany([
-        { type: "pool_rect", rx: 0.5, ry: 0.4 },
-        { type: "sun_lounger", rx: 0.0, ry: 1.0 },
-        { type: "sun_lounger", rx: 0.3, ry: 1.0 },
-        { type: "umbrella", rx: 0.7, ry: 1.0 },
-      ]);
-      break;
-    case "bbq_set":
-      placeMany([
-        { type: "bbq_grill", rx: 0.0, ry: 0.0 },
-        { type: "outdoor_table", rx: 0.7, ry: 0.5 },
-        { type: "pergola", rx: 0.5, ry: 0.5 },
-      ]);
-      break;
+  // Cozinhas delegam para a marcenaria contínua (bancada arquitetônica).
+  if (template.kind === "millwork") {
+    return doAddMillworkRun(plan, template.build(room));
   }
-  return { ok: true, message: `'${room.name}' mobiliado (grupo ${input.group}).` };
+
+  // Demais grupos: intents semânticos resolvidos pelo solver pontuado com
+  // validação LIGADA (fim do skipOverlapCheck — era ele que deixava grupos
+  // empilharem móveis sobre paredes/portas sem nenhum aviso).
+  const { output, skipped } = solveRoomTemplate(plan, room, template.items);
+  commitSolvedItems(plan, room, output);
+  const base = formatSolverResult(room, plan, output);
+  const skippedNote = skipped.length > 0 ? ` Omitidos: ${skipped.join("; ")}.` : "";
+  return {
+    ok: output.solved.length > 0,
+    message: `${base}${skippedNote}`,
+  };
 }
 
 // ---------- Plan summary for prompts ----------

@@ -273,7 +273,9 @@ export function Floorplan2D({ onLoadExample }: Props) {
           { x: 1, z: 0 },
           { x: -1, z: 0 },
         ],
-        maxOffset: 0.4,
+        // 0.8 m de busca: o suficiente para o nome do cômodo escapar de um
+        // móvel posicionado perto do centro (tapete + mesa, por exemplo).
+        maxOffset: 0.8,
       });
       if (showArea) {
         const areaTxt = `${r.area.toFixed(2).replace(".", ",")} M²`;
@@ -290,7 +292,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
             { x: 0, z: 1 },
             { x: 0, z: -1 },
           ],
-          maxOffset: 0.4,
+          maxOffset: 0.8,
         });
       }
     }
@@ -367,6 +369,23 @@ export function Floorplan2D({ onLoadExample }: Props) {
 
   const labelLayout = useMemo(() => {
     const PX_PER_M_FALLBACK = 60;
+    // Obstáculos: móveis sólidos (não-tapete, não-pontual) — o nome do
+    // cômodo desvia deles em vez de ser pintado por cima de uma mesa
+    // central. AABB transposto para rotações 90/270 (mesma convenção do
+    // renderer).
+    const obstacles = furniture
+      .filter((f) => !/^rug|carpet|mat/i.test(f.catalogId) && !/light|outlet|switch/.test(f.catalogId))
+      .map((f) => {
+        const transposed = Math.abs(Math.abs(Math.sin(f.rotation)) - 1) < 0.0002;
+        const w = transposed ? f.dimensions.z : f.dimensions.x;
+        const d = transposed ? f.dimensions.x : f.dimensions.z;
+        return {
+          x: f.position.x + f.dimensions.x / 2,
+          z: f.position.z + f.dimensions.z / 2,
+          width: w,
+          height: d,
+        };
+      });
     // For top-left aligned labels, shift the placement anchor to the bbox
     // centre so collision detection (which assumes centred bboxes) reasons
     // correctly. After placement we shift back to the visible anchor.
@@ -388,7 +407,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
         maxOffset: spec.maxOffset,
       };
     });
-    const placed = placeLabels(inputs);
+    const placed = placeLabels(inputs, obstacles);
     // Translate back: subtract the centre offset so consumers always see
     // the visible anchor (top-left for room labels, centre for dim labels).
     const out = new Map<string, { x: number; z: number; moved: boolean }>();
@@ -404,7 +423,7 @@ export function Floorplan2D({ onLoadExample }: Props) {
       out.set(spec.id, { x: r.x - dx, z: r.z - dz, moved: r.moved });
     }
     return out;
-  }, [labelSpecs, measuredBboxes]);
+  }, [labelSpecs, measuredBboxes, furniture]);
 
   // ---- Auto-fit viewBox ----
   const fitBounds = useMemo(() => {
