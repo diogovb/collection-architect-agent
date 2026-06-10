@@ -46,7 +46,6 @@ const TOOL_LABEL_PT: Partial<Record<ToolName, string>> = {
   add_window: "Inserindo janela",
   set_floor_material: "Aplicando piso",
   create_apartment_layout: "Gerando layout",
-  furnish_room: "Mobiliando ambiente",
   search_knowledge_base: "Consultando base técnica",
   delete_wall: "Removendo parede",
   merge_rooms: "Integrando ambientes",

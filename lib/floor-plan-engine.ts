@@ -5,7 +5,6 @@ import type {
   FloorMaterial,
   FloorPlan,
   Furniture,
-  FurnitureGroup,
   FurnitureType,
   Room,
   SelectedElement,
@@ -24,8 +23,6 @@ import {
   validateDoorClearance,
   validatePlacement,
 } from "./scene/placement-validators";
-import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
-import { ROOM_TEMPLATES, solveRoomTemplate } from "./room-templates";
 import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
 import {
   doorApproachRects,
@@ -169,8 +166,6 @@ export function applyTool<T extends ToolName>(
         return doSplitFloor(plan, input as ToolInputs["split_floor"]);
       case "add_furniture":
         return doAddFurniture(plan, input as ToolInputs["add_furniture"]);
-      case "place_furniture_intent":
-        return doPlaceFurnitureIntent(plan, input as ToolInputs["place_furniture_intent"]);
       case "place_items":
         return doPlaceItems(plan, input as ToolInputs["place_items"]);
       case "add_millwork_run":
@@ -179,8 +174,6 @@ export function applyTool<T extends ToolName>(
         return doRemoveMillworkRun(plan, input as ToolInputs["remove_millwork_run"]);
       case "update_millwork_module":
         return doUpdateMillworkModule(plan, input as ToolInputs["update_millwork_module"]);
-      case "add_furniture_group":
-        return doAddFurnitureGroup(plan, input as ToolInputs["add_furniture_group"]);
       case "swap_furniture":
         return doSwapFurniture(plan, input as ToolInputs["swap_furniture"]);
       case "remove_furniture":
@@ -203,8 +196,6 @@ export function applyTool<T extends ToolName>(
         return doAddNorthArrow(plan, input as ToolInputs["add_north_arrow"]);
       case "create_apartment_layout":
         return doCreateApartment(plan, input as ToolInputs["create_apartment_layout"]);
-      case "furnish_room":
-        return doFurnishRoom(plan, input as ToolInputs["furnish_room"]);
       case "clear_all":
         plan.rooms.length = 0;
         plan.doors.length = 0;
@@ -1393,11 +1384,14 @@ function doPlaceItems(plan: FloorPlan, input: ToolInputs["place_items"]): ApplyR
         continue;
       }
     }
-    // 3) porta: giro + chegada (regra graduada de 50%)
-    const doorCheck = validateDoorClearance({ x: vx, y: vy, w: vw, h: vh }, room, plan.doors, plan.rooms, placement);
-    if (!doorCheck.ok) {
-      lines.push(`✗ ${label}: ${doorCheck.reason}`);
-      continue;
+    // 3) porta: giro + chegada (regra graduada de 50%). Tapetes/decoração
+    //    são isentos — a folha da porta varre POR CIMA do tapete.
+    if (placement.category !== "rug" && placement.category !== "decor") {
+      const doorCheck = validateDoorClearance({ x: vx, y: vy, w: vw, h: vh }, room, plan.doors, plan.rooms, placement);
+      if (!doorCheck.ok) {
+        lines.push(`✗ ${label}: ${doorCheck.reason}`);
+        continue;
+      }
     }
 
     // ---- aplica (bbox armazenado = dims do glifo preservando o centro) ----
@@ -1503,61 +1497,14 @@ function reposeSatellites(plan: FloorPlan, partner: Furniture): string[] {
   return notes;
 }
 
-/** DSL handler for `place_furniture_intent` — multi-item generative
- *  placement. The solver computes coords from semantic anchors (wall:N,
- *  corner:NE, etc.), validates each piece, then commits the survivors
- *  via direct push (skipping doAddFurniture's per-item validators since
- *  the solver already ran them with full sibling awareness). */
 
 /** Materializa os itens resolvidos pelo solver no plano. O solver devolve o
  *  bbox VISUAL (já transposto para rotações 90/270); o bbox armazenado
  *  guarda as dimensões do glifo SEM rotação com o mesmo centro — o renderer
- *  aplica a rotação em torno do centro. Compartilhado entre
- *  place_furniture_intent e os templates de furnish_room. */
-export function commitSolvedItems(
-  plan: FloorPlan,
-  room: Room,
-  result: { solved: Array<{ intent: { type: FurnitureType; label?: string; rotation?: number }; x: number; y: number; width: number; height: number }> },
-): void {
-  for (const s of result.solved) {
-    const def = FURN_DEFS[s.intent.type];
-    if (!def) continue;
-    const rotated = ((s.intent.rotation ?? 0) % 180 + 180) % 180 === 90;
-    const w = rotated ? s.height : s.width;
-    const h = rotated ? s.width : s.height;
-    const x = s.x + (s.width - w) / 2;
-    const y = s.y + (s.height - h) / 2;
-    const item: Furniture = {
-      id: nextId("furn"),
-      roomId: room.id,
-      type: s.intent.type,
-      label: s.intent.label ?? def.label,
-      x,
-      y,
-      width: w,
-      height: h,
-      // !== undefined, não truthy: rotação 0 explícita é informação válida.
-      ...(s.intent.rotation !== undefined ? { rotation: s.intent.rotation } : {}),
-    };
-    plan.furniture.push(item);
-  }
-}
-
-function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furniture_intent"]): ApplyResult {
-  const room = findRoom(plan, input.room_name);
-  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
-  if (!Array.isArray(input.items) || input.items.length === 0) {
-    return { ok: false, message: "place_furniture_intent: lista 'items' vazia." };
-  }
-  const result = solvePlacement({ room, items: input.items, plan });
-  commitSolvedItems(plan, room, result);
-  const message = formatSolverResult(room, plan, result);
-  // Partial success is treated as ok = true with a descriptive message
-  // so the agent sees what landed and what didn't, and can retry the
-  // failed items with different anchors. Total failure (0 placed) is
-  // treated as ok = false.
-  return { ok: result.solved.length > 0, message };
-}
+ *  aplica a rotação em torno do centro.
+ *
+ *  (O caminho pontuado do solver e os templates foram REMOVIDOS — a
+ *  composição é do modelo via place_items; ver doPlaceItems.) */
 
 function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): ApplyResult {
   const f = plan.furniture.find((ff) => ff.id === input.furniture_id);
@@ -2096,62 +2043,6 @@ function doCreateApartment(plan: FloorPlan, input: ToolInputs["create_apartment_
   }
 
   return { ok: true, message: `Apartamento gerado: ${plan.rooms.length} cômodos, área aproximada ${total_area}m².` };
-}
-
-// ---------- Auto-furnish (smarter dispatch) ----------
-
-function doFurnishRoom(plan: FloorPlan, input: ToolInputs["furnish_room"]): ApplyResult {
-  const room = findRoom(plan, input.room_name);
-  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
-  const n = room.name.toLowerCase();
-
-  let group: FurnitureGroup | null = null;
-  // Banheiro/lavabo testados ANTES dos padrões de suíte: "Banheiro Suíte"
-  // casava com /suíte/ e ganhava cama de casal dentro do banheiro.
-  if (/(banheiro|lavabo|wc)/.test(n)) group = room.width * room.height >= 5 ? "bathroom_full" : "bathroom_basic";
-  else if (/sala/.test(n)) group = room.width * room.height >= 18 ? "living_full" : "living_basic";
-  else if (/cozinha/.test(n)) group = room.width * room.height >= 10 ? "kitchen_full" : "kitchen_basic";
-  // Infantil ANTES dos padrões genéricos de quarto: "Quarto Infantil"
-  // casava com /quarto/ e ganhava cama de solteiro + escrivaninha — o ramo
-  // infantil era inalcançável.
-  else if (/(infantil|criança|crianca|bebê|bebe|kids)/.test(n)) group = "kids_room_basic";
-  else if (/(suíte|suite|quarto.*casal|quarto principal|master)/.test(n))
-    group = room.width * room.height >= 14 ? "bedroom_couple_full" : "bedroom_couple_basic";
-  else if (/quarto/.test(n)) group = "bedroom_single_basic";
-  else if (/(serviço|servico|lavanderia)/.test(n)) group = "laundry_basic";
-  else if (/jantar/.test(n)) group = "dining_set_6";
-  else if (/(escritório|escritorio|home office)/.test(n)) group = "office_basic";
-  else if (/(jardim|quintal)/.test(n)) group = "garden_basic";
-  else if (/piscina/.test(n)) group = "pool_set";
-
-  if (!group) return { ok: false, message: `Não sei mobiliar '${room.name}' automaticamente.` };
-  return doAddFurnitureGroup(plan, { room_name: room.name, group });
-}
-
-// ---------- Furniture groups (templates + solver pontuado) ----------
-
-function doAddFurnitureGroup(plan: FloorPlan, input: ToolInputs["add_furniture_group"]): ApplyResult {
-  const room = findRoom(plan, input.room_name);
-  if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
-  const template = ROOM_TEMPLATES[input.group];
-  if (!template) return { ok: false, message: `Grupo desconhecido: ${input.group}.` };
-
-  // Cozinhas delegam para a marcenaria contínua (bancada arquitetônica).
-  if (template.kind === "millwork") {
-    return doAddMillworkRun(plan, template.build(room));
-  }
-
-  // Demais grupos: intents semânticos resolvidos pelo solver pontuado com
-  // validação LIGADA (fim do skipOverlapCheck — era ele que deixava grupos
-  // empilharem móveis sobre paredes/portas sem nenhum aviso).
-  const { output, skipped } = solveRoomTemplate(plan, room, template.items);
-  commitSolvedItems(plan, room, output);
-  const base = formatSolverResult(room, plan, output);
-  const skippedNote = skipped.length > 0 ? ` Omitidos: ${skipped.join("; ")}.` : "";
-  return {
-    ok: output.solved.length > 0,
-    message: `${base}${skippedNote}`,
-  };
 }
 
 // ---------- Plan summary for prompts ----------

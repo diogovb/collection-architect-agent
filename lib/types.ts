@@ -481,8 +481,9 @@ export type ToolName =
   | "add_window"
   | "update_window"
   | "remove_window"
+  // add_furniture vive SÓ no engine (sonda de física do smoke; fora do
+  // registro de tools do modelo — composição é via place_items)
   | "add_furniture"
-  | "place_furniture_intent"
   | "add_millwork_run"
   | "remove_millwork_run"
   | "update_millwork_module"
@@ -491,7 +492,6 @@ export type ToolName =
   | "set_railing_material"
   | "move_furniture"
   | "create_apartment_layout"
-  | "furnish_room"
   | "clear_all"
   // ---- new structural ----
   | "delete_wall"
@@ -510,7 +510,6 @@ export type ToolName =
   | "duplicate_room"
   | "add_column"
   // ---- furniture helpers ----
-  | "add_furniture_group"
   | "swap_furniture"
   // ---- annotations ----
   | "add_dimension"
@@ -544,26 +543,6 @@ export interface PlaceItem {
   /** Presente = MOVE a peça existente (place = criar OU mover). */
   furniture_id?: string;
 }
-
-export type FurnitureGroup =
-  | "dining_set_4"
-  | "dining_set_6"
-  | "dining_set_8"
-  | "living_basic"
-  | "living_full"
-  | "bedroom_couple_basic"
-  | "bedroom_couple_full"
-  | "bedroom_single_basic"
-  | "kids_room_basic"
-  | "kitchen_basic"
-  | "kitchen_full"
-  | "bathroom_basic"
-  | "bathroom_full"
-  | "office_basic"
-  | "laundry_basic"
-  | "garden_basic"
-  | "pool_set"
-  | "bbq_set";
 
 export interface ToolInputs {
   create_room: {
@@ -622,19 +601,6 @@ export interface ToolInputs {
     relative_x?: number;
     relative_y?: number;
   };
-  place_furniture_intent: {
-    room_name: string;
-    items: Array<{
-      type: FurnitureType;
-      label?: string;
-      anchor:
-        | "wall:north" | "wall:south" | "wall:east" | "wall:west"
-        | "corner:NW" | "corner:NE" | "corner:SW" | "corner:SE"
-        | "center" | "free";
-      position?: "start" | "mid" | "end";
-      rotation?: number;
-    }>;
-  };
   add_millwork_run: {
     room_name: string;
     wall: Wall | "freestanding";
@@ -680,10 +646,6 @@ export interface ToolInputs {
     num_bedrooms: number;
     num_bathrooms: number;
     style?: "modern" | "classic" | "compact";
-  };
-  furnish_room: {
-    room_name: string;
-    style?: "modern" | "minimal" | "classic";
   };
   clear_all: Record<string, never>;
 
@@ -747,10 +709,6 @@ export interface ToolInputs {
     y: number;
     size?: number;
     shape?: "square" | "round";
-  };
-  add_furniture_group: {
-    room_name: string;
-    group: FurnitureGroup;
   };
   swap_furniture: {
     furniture_id: string;

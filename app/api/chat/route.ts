@@ -16,10 +16,7 @@ import type { DiagnosticIssue } from "@/lib/scene/types";
  *  Pure-info tools (search_knowledge_base) and trivial cosmetic ones
  *  (set_floor_material) don't require a visual sanity check. */
 const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
-  "add_furniture",
-  "add_furniture_group",
-  "place_furniture_intent",
-  "furnish_room",
+  "place_items",
   "move_furniture",
   "swap_furniture",
   "add_partition",

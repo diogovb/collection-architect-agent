@@ -104,13 +104,13 @@ const farSofa = applyTool(p7, "add_furniture", { room_name: "Sala", furniture_ty
 check("sofá longe da porta aceito", farSofa.ok, farSofa.message);
 
 // ---------- Cenário 8: rotação 90° no solver ----------
-console.log("\n[8] place_furniture_intent com rotation 90 → footprint transposto");
+console.log("\n[8] place_items snap oeste → footprint transposto encostado na face interna");
 const p8 = emptyPlan();
 applyTool(p8, "create_room", { name: "Quarto", width: 3.0, height: 4.0, x: 0, y: 0 });
 applyTool(p8, "add_door", { room_name: "Quarto", wall: "south", position: 0.5 });
-const bedR = applyTool(p8, "place_furniture_intent", {
+const bedR = applyTool(p8, "place_items", {
   room_name: "Quarto",
-  items: [{ type: "bed_double", anchor: "wall:west", position: "mid", rotation: 90 }],
+  items: [{ type: "bed_double", snap: "oeste", along: 2.0 }],
 });
 check("cama rotacionada posicionada", bedR.ok, bedR.message);
 const bed = p8.furniture.find((f) => f.type === "bed_double");
@@ -231,19 +231,28 @@ function isRug(f: Furniture): boolean {
   return /^rug|carpet|mat/i.test(f.type);
 }
 
-// ---------- Cenário 16: Quarto Infantil como um arquiteto faria ----------
-console.log("\n[16] Quarto Infantil 3,0×3,2 (porta sul, janela norte) via furnish_room");
+// ---------- Cenário 16: Quarto Infantil COMPOSTO (place_items) ----------
+console.log("\n[16] Quarto Infantil 3,0×3,2 (porta sul, janela norte) composto via place_items");
 const p16 = emptyPlan();
 applyTool(p16, "create_room", { name: "Quarto Infantil", width: 3.0, height: 3.2, x: 0, y: 0 });
 applyTool(p16, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.35, size: 0.8 });
 applyTool(p16, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.2 });
-const furnish16 = applyTool(p16, "furnish_room", { room_name: "Quarto Infantil" });
-check("furnish_room ok", furnish16.ok, furnish16.message);
+// Composição de arquiteto (o que o MODELO faria): cama na parede cega
+// oeste, escrivaninha sob a janela, cadeira na mesa, armário a leste,
+// estante ao sul longe do vão, tapete ao centro.
+const furnish16 = applyTool(p16, "place_items", {
+  room_name: "Quarto Infantil",
+  items: [
+    { type: "bed_child", snap: "oeste", along: 1.6 },
+    { type: "desk_study", snap: "norte", along: 1.5 },
+    { type: "desk_chair", snap: "junto_de:Escrivaninha" },
+    { type: "wardrobe_hinged", snap: "leste", along: 1.7 },
+    { type: "toy_shelf", snap: "sul", along: 2.3 },
+    { type: "rug_rect", center_x: 1.4, center_y: 1.9 },
+  ],
+});
+check("composição aplicada por inteiro", furnish16.ok && /6\/6/.test(furnish16.message), furnish16.message);
 const room16 = p16.rooms[0];
-check("contém bed_child (fix do dispatch /infantil/)", p16.furniture.some((f) => f.type === "bed_child"),
-  p16.furniture.map((f) => f.type).join(", "));
-check("play_table AUSENTE (9,6m² < 12m²)", !p16.furniture.some((f) => f.type === "play_table"),
-  furnish16.message);
 const i16 = validatePlan(p16);
 const errors16 = i16.filter((i) => i.severity === "error");
 check("zero errors", errors16.length === 0, errors16.map((e) => `${e.code}: ${e.message}`).join(" | "));
@@ -282,27 +291,39 @@ if (desk16) {
   check("escrivaninha aproveitou a janela (≤1,6m do centro do vão)", d <= 1.6, `d=${d.toFixed(2)}m`);
 }
 
-// ---------- Cenário 17: Quarto casal ----------
-console.log("\n[17] Quarto casal 3,5×3,2 (porta sul, janela norte) via furnish_room");
+// ---------- Cenário 17: Quarto casal COMPOSTO (place_items) ----------
+console.log("\n[17] Quarto casal 3,5×3,2 (porta sul, janela norte) composto via place_items");
 const p17 = emptyPlan();
 applyTool(p17, "create_room", { name: "Suíte Master", width: 3.5, height: 3.2, x: 0, y: 0 });
 applyTool(p17, "add_door", { room_name: "Suíte Master", wall: "south", position: 0.2, size: 0.8 });
 applyTool(p17, "add_window", { room_name: "Suíte Master", wall: "north", position: 0.5, size: 1.4 });
-const furnish17 = applyTool(p17, "furnish_room", { room_name: "Suíte Master" });
-check("furnish ok", furnish17.ok, furnish17.message);
-const bed17 = p17.furniture.find((f) => /^bed/.test(f.type));
-check("cama presente", bed17 !== undefined, p17.furniture.map((f) => f.type).join(", "));
-check("guarda-roupa presente (ou fallback sliding)", p17.furniture.some((f) => /^wardrobe/.test(f.type)), furnish17.message);
+// Cabeceira ao norte com criados COLADOS flanqueando; armário a leste,
+// longe do giro da porta sul (que domina o canto SW deste cômodo).
+const rBed17 = applyTool(p17, "place_items", {
+  room_name: "Suíte Master",
+  items: [{ type: "bed_double", snap: "norte", along: 1.75 }],
+});
+check("cama composta ao norte", rBed17.ok, rBed17.message);
+const bed17 = p17.furniture.find((f) => /^bed/.test(f.type))!;
+const bedBB17 = worldAABB(bed17);
+const rRest17 = applyTool(p17, "place_items", {
+  room_name: "Suíte Master",
+  items: [
+    { type: "nightstand", snap: "norte", along: bedBB17.x - 0.25 },
+    { type: "nightstand", snap: "norte", along: bedBB17.x + bedBB17.w + 0.25 },
+    { type: "wardrobe_sliding", snap: "leste", along: 1.875 },
+  ],
+});
+check("criados + armário compostos", rRest17.ok && /3\/3/.test(rRest17.message), rRest17.message);
 const nstands = p17.furniture.filter((f) => f.type === "nightstand");
-if (bed17 && nstands.length > 0) {
-  const bb = worldAABB(bed17);
+{
   const close = nstands.filter((n) => {
     const nb = worldAABB(n);
-    const dx = Math.max(0, Math.max(bb.x - (nb.x + nb.w), nb.x - (bb.x + bb.w)));
-    const dy = Math.max(0, Math.max(bb.y - (nb.y + nb.h), nb.y - (bb.y + bb.h)));
-    return Math.hypot(dx, dy) <= 0.45;
+    const dx = Math.max(0, Math.max(bedBB17.x - (nb.x + nb.w), nb.x - (bedBB17.x + bedBB17.w)));
+    const dy = Math.max(0, Math.max(bedBB17.y - (nb.y + nb.h), nb.y - (bedBB17.y + bedBB17.h)));
+    return Math.hypot(dx, dy) <= 0.05;
   });
-  check(`criados-mudos junto da cama (${close.length}/${nstands.length})`, close.length === nstands.length,
+  check(`criados-mudos COLADOS na cama (${close.length}/${nstands.length})`, close.length === nstands.length && nstands.length === 2,
     nstands.map((n) => `${n.label}@(${n.x.toFixed(2)},${n.y.toFixed(2)})`).join("; "));
 }
 const i17 = validatePlan(p17);
@@ -311,21 +332,23 @@ check("zero errors", i17.filter((i) => i.severity === "error").length === 0,
 check("sem FURNITURE_ON_WALL", !i17.some((i) => i.code === "FURNITURE_ON_WALL"),
   i17.filter((i) => i.code === "FURNITURE_ON_WALL").map((i) => i.message).join(" | "));
 
-// ---------- Cenário 18: fidelidade de âncora explícita ----------
-console.log("\n[18] Âncora explícita wall:west + rotation 90 continua a oeste");
+// ---------- Cenário 18: centro explícito é honrado EXATAMENTE ----------
+console.log("\n[18] place_items com centro explícito: posição e frente honradas ao milímetro");
 const p18 = emptyPlan();
 applyTool(p18, "create_room", { name: "Quarto", width: 3.0, height: 4.0, x: 0, y: 0 });
 applyTool(p18, "add_door", { room_name: "Quarto", wall: "south", position: 0.5 });
-const r18 = applyTool(p18, "place_furniture_intent", {
+const r18 = applyTool(p18, "place_items", {
   room_name: "Quarto",
-  items: [{ type: "bed_double", anchor: "wall:west", position: "mid", rotation: 90 }],
+  items: [{ type: "armchair", center_x: 1.0, center_y: 1.0, facing: "leste" }],
 });
 check("posicionado", r18.ok, r18.message);
-const bed18 = p18.furniture.find((f) => f.type === "bed_double");
-if (bed18) {
-  const u18 = usableRect(p18, p18.rooms[0]);
-  const vb = worldAABB(bed18);
-  check("encostado na face interna oeste (fidelidade)", Math.abs(vb.x - u18.x) < 0.06, `vb.x=${vb.x.toFixed(3)} usable.x=${u18.x.toFixed(3)}`);
+const chair18 = p18.furniture.find((f) => f.type === "armchair");
+if (chair18) {
+  const vb = worldAABB(chair18);
+  const cx = vb.x + vb.w / 2;
+  const cy = vb.y + vb.h / 2;
+  check("centro honrado (1.00,1.00)", Math.abs(cx - 1.0) < 0.005 && Math.abs(cy - 1.0) < 0.005, `centro=(${cx.toFixed(3)},${cy.toFixed(3)})`);
+  check("frente leste (rot 270)", (chair18.rotation ?? 0) === 270, `rot=${chair18.rotation}`);
 }
 
 // ---------- Cenário 19: FURNITURE_ON_WALL detecta invasão ----------
@@ -333,9 +356,9 @@ console.log("\n[19] FURNITURE_ON_WALL: flush na face interna OK; em cima da pare
 const p19 = emptyPlan();
 applyTool(p19, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
 applyTool(p19, "add_door", { room_name: "Sala", wall: "south", position: 0.5 });
-const sofa19 = applyTool(p19, "place_furniture_intent", {
+const sofa19 = applyTool(p19, "place_items", {
   room_name: "Sala",
-  items: [{ type: "sofa_3seat", anchor: "wall:north", position: "mid" }],
+  items: [{ type: "sofa_3seat", snap: "norte", along: 2.0 }],
 });
 check("sofá posicionado", sofa19.ok, sofa19.message);
 const i19a = validatePlan(p19);
@@ -384,9 +407,9 @@ console.log("\n[21] Porta criada DEPOIS da mobília → rejeição; ordem certa 
   applyTool(pA, "create_room", { name: "Quarto Infantil", width: 3.2, height: 3.0, x: 0, y: 0 });
   applyTool(pA, "create_room", { name: "Banheiro Suite", width: 1.6, height: 2.0, x: 3.2, y: 0 });
   applyTool(pA, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
-  const ward = applyTool(pA, "place_furniture_intent", {
+  const ward = applyTool(pA, "place_items", {
     room_name: "Quarto Infantil",
-    items: [{ type: "wardrobe_hinged", anchor: "wall:east", position: "mid" }],
+    items: [{ type: "wardrobe_hinged", snap: "leste", along: 1.5 }],
   });
   check("guarda-roupa na parede leste (sem porta ainda)", ward.ok, ward.message);
   const lateDoor = applyTool(pA, "add_door", { room_name: "Quarto Infantil", wall: "east", position: 0.6, size: 0.7 });
@@ -401,8 +424,19 @@ console.log("\n[21] Porta criada DEPOIS da mobília → rejeição; ordem certa 
   applyTool(pB, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
   applyTool(pB, "add_door", { room_name: "Quarto Infantil", wall: "east", position: 0.6, size: 0.7 });
   applyTool(pB, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.4 });
-  const furnB = applyTool(pB, "furnish_room", { room_name: "Quarto Infantil", style: "infantil" });
-  check("furnish com shell completo ok", furnB.ok, furnB.message);
+  // Composição que respeita os DOIS giros (porta sul domina o canto SW;
+  // porta da suíte a leste): cama sob a janela, armário a oeste-alto,
+  // escrivaninha no trecho livre do leste, cadeira encaixada.
+  const furnB = applyTool(pB, "place_items", {
+    room_name: "Quarto Infantil",
+    items: [
+      { type: "bed_child", snap: "norte", along: 1.6 },
+      { type: "wardrobe_hinged", snap: "oeste", along: 1.1 },
+      { type: "desk_study", snap: "leste", along: 0.7 },
+      { type: "desk_chair", snap: "junto_de:Escrivaninha" },
+    ],
+  });
+  check("composição com shell completo ok", furnB.ok && /4\/4/.test(furnB.message), furnB.message);
   let worstFrac = 0;
   for (const r of pB.rooms) {
     const apps = doorApproachRects(pB, r);
@@ -460,9 +494,9 @@ console.log("\n[22] DOOR_APPROACH_BLOCKED graduado: ≥50% erro, <50% sem erro, 
   const p22d = emptyPlan();
   applyTool(p22d, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
   applyTool(p22d, "add_door", { room_name: "Sala", wall: "north", position: 0.5, size: 0.8 });
-  const sofa22 = applyTool(p22d, "place_furniture_intent", {
+  const sofa22 = applyTool(p22d, "place_items", {
     room_name: "Sala",
-    items: [{ type: "sofa_3seat", anchor: "wall:south", position: "mid" }],
+    items: [{ type: "sofa_3seat", snap: "sul", along: 2.0 }],
   });
   check("sofá ao sul ok", sofa22.ok, sofa22.message);
   const sofaF22 = p22d.furniture.find((f) => f.type === "sofa_3seat");
@@ -480,8 +514,15 @@ console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; 
   applyTool(p23, "create_room", { name: "Quarto Infantil", width: 3.2, height: 3.0, x: 0, y: 0 });
   applyTool(p23, "add_door", { room_name: "Quarto Infantil", wall: "south", position: 0.25 });
   applyTool(p23, "add_window", { room_name: "Quarto Infantil", wall: "north", position: 0.5, size: 1.4 });
-  const furn23 = applyTool(p23, "furnish_room", { room_name: "Quarto Infantil", style: "infantil" });
-  check("furnish ok", furn23.ok, furn23.message);
+  const furn23 = applyTool(p23, "place_items", {
+    room_name: "Quarto Infantil",
+    items: [
+      { type: "desk_study", snap: "norte", along: 1.5 },
+      { type: "desk_chair", snap: "junto_de:Escrivaninha" },
+      { type: "rug_rect", center_x: 1.5, center_y: 1.8 },
+    ],
+  });
+  check("composição ok", furn23.ok, furn23.message);
   const desk23 = p23.furniture.find((f) => f.type === "desk_study");
   const chair23 = p23.furniture.find((f) => f.type === "desk_chair");
   check("mesa presente", desk23 !== undefined, furn23.message);
@@ -542,16 +583,16 @@ console.log("\n[23] Cadeira deriva pose da mesa (tucked); sem mesa → omitida; 
     }
   }
 
-  // Cadeira sem mesa nenhuma: solver omite com explicação.
+  // Cadeira sem mesa nenhuma: junto_de sem parceiro é rejeitado com clareza.
   const p23b = emptyPlan();
   applyTool(p23b, "create_room", { name: "Sala", width: 3.0, height: 3.0, x: 0, y: 0 });
   applyTool(p23b, "add_door", { room_name: "Sala", wall: "south", position: 0.5 });
-  const lone = applyTool(p23b, "place_furniture_intent", {
+  const lone = applyTool(p23b, "place_items", {
     room_name: "Sala",
-    items: [{ type: "desk_chair", anchor: "free" }],
+    items: [{ type: "desk_chair", snap: "junto_de:Escrivaninha" }],
   });
   check("cadeira sem mesa NÃO é posicionada", !lone.ok, lone.message);
-  check("motivo explica a omissão", /para acompanhar|omitida/i.test(lone.message), lone.message);
+  check("motivo explica a ausência do parceiro", /parceiro .* não encontrado/i.test(lone.message), lone.message);
 
   // Cadeira órfã empurrada manualmente no meio → FURNITURE_FLOATING.
   p23b.furniture.push({

@@ -45,17 +45,6 @@ const FURNITURE_TYPES = [
 
 const FLOOR_MATERIALS = ["madeira", "porcelanato", "ceramica", "marmore", "grama", "deck", "pedra"];
 
-const FURNITURE_GROUPS = [
-  "dining_set_4", "dining_set_6", "dining_set_8",
-  "living_basic", "living_full",
-  "bedroom_couple_basic", "bedroom_couple_full",
-  "bedroom_single_basic", "kids_room_basic",
-  "kitchen_basic", "kitchen_full",
-  "bathroom_basic", "bathroom_full",
-  "office_basic", "laundry_basic",
-  "garden_basic", "pool_set", "bbq_set",
-];
-
 export const tools: Anthropic.Tool[] = [
   // ============ ROOMS ============
   {
@@ -337,22 +326,7 @@ export const tools: Anthropic.Tool[] = [
   },
 
   // ============ FURNITURE ============
-  {
-    name: "add_furniture",
-    description:
-      "ÚLTIMO RECURSO: adiciona UM móvel por coordenada relativa (relative_x/relative_y 0..1 na área útil; 0,0 = canto NW interno). Chame APENAS para um ajuste pontual que o cliente pediu explicitamente. Para mobiliar qualquer cômodo use `furnish_room` (template profissional) ou `place_furniture_intent` (âncoras semânticas + solver pontuado que lê portas/janelas); para bancadas/marcenaria use `add_millwork_run` — nunca esta ferramenta.",
-    input_schema: {
-      type: "object",
-      properties: {
-        room_name: { type: "string" },
-        furniture_type: { type: "string", enum: FURNITURE_TYPES },
-        label: { type: "string" },
-        relative_x: { type: "number", default: 0.5 },
-        relative_y: { type: "number", default: 0.5 },
-      },
-      required: ["room_name", "furniture_type"],
-    },
-  },
+  // (A composição de mobília é do MODELO via place_items; o motor é física.)
   {
     name: "add_millwork_run",
     description:
@@ -460,59 +434,6 @@ export const tools: Anthropic.Tool[] = [
         width: { type: "number" },
       },
       required: ["run_id", "module_index"],
-    },
-  },
-  {
-    name: "place_furniture_intent",
-    description:
-      "Posiciona MÚLTIPLOS móveis num cômodo declarando INTENÇÃO em vez de coordenadas. Para cada item, escolha um âncora semântico (`wall:north`, `wall:south`, `wall:east`, `wall:west`, `corner:NW`, `corner:NE`, `corner:SW`, `corner:SE`, `center`, `free`) e opcionalmente position (start/mid/end). O solver PONTUADO calcula a posição exata: lê portas/janelas (evita vãos e o arco da porta), encosta na face interna da parede, gira a peça de costas pra parede automaticamente, respeita clearances e relações ergonômicas (criado↔cama, sofá↔TV, triângulo de cozinha) e mantém o centro do cômodo livre. Sua âncora explícita tem prioridade quando é válida; se não couber, ele escolhe a melhor alternativa e relata. Use para mobiliação completa de um cômodo.",
-    input_schema: {
-      type: "object",
-      properties: {
-        room_name: { type: "string" },
-        items: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string", enum: FURNITURE_TYPES },
-              label: { type: "string" },
-              anchor: {
-                type: "string",
-                enum: [
-                  "wall:north", "wall:south", "wall:east", "wall:west",
-                  "corner:NW", "corner:NE", "corner:SW", "corner:SE",
-                  "center", "free",
-                ],
-              },
-              position: {
-                type: "string",
-                enum: ["start", "mid", "end"],
-                description: "Posição ao longo da parede ancorada. Default 'mid'.",
-              },
-              rotation: {
-                type: "number",
-                description: "Rotação opcional em graus (múltiplos de 90).",
-              },
-            },
-            required: ["type", "anchor"],
-          },
-        },
-      },
-      required: ["room_name", "items"],
-    },
-  },
-  {
-    name: "add_furniture_group",
-    description:
-      "Adiciona um conjunto pré-definido de móveis num cômodo via template profissional resolvido pelo solver pontuado (lê portas/janelas, zoneia como arquiteto, valida tudo). Ex: 'dining_set_6', 'bedroom_couple_basic', 'kids_room_basic'. Itens que não couberem são omitidos com explicação. O resultado volta com a IMAGEM do cômodo — REVISE-a antes de seguir para o próximo (porta alcançável? nada solto no meio? nada sobre parede?).",
-    input_schema: {
-      type: "object",
-      properties: {
-        room_name: { type: "string" },
-        group: { type: "string", enum: FURNITURE_GROUPS },
-      },
-      required: ["room_name", "group"],
     },
   },
   {
@@ -669,19 +590,6 @@ export const tools: Anthropic.Tool[] = [
         style: { type: "string", enum: ["modern", "classic", "compact"], default: "modern" },
       },
       required: ["total_area", "num_bedrooms", "num_bathrooms"],
-    },
-  },
-  {
-    name: "furnish_room",
-    description:
-      "Mobilia automaticamente um cômodo com o template profissional do tipo dele (cama em parede sólida, escrivaninha perto da janela, cadeira encaixada na mesa, centro livre — o solver pontuado lê portas/janelas e valida tudo). Chame quando o cliente pedir para mobiliar um cômodo (ou vários) sem especificar peças; quando ele pedir controle fino, use place_furniture_intent peça a peça. IMPORTANTE: só mobilie depois do shell completo (todas as portas e janelas do cômodo já criadas). O resultado volta com a IMAGEM do cômodo — REVISE-a antes de seguir para o próximo.",
-    input_schema: {
-      type: "object",
-      properties: {
-        room_name: { type: "string" },
-        style: { type: "string", enum: ["modern", "minimal", "classic"], default: "modern" },
-      },
-      required: ["room_name"],
     },
   },
   {
