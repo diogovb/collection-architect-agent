@@ -184,6 +184,7 @@ export async function POST(req: Request) {
         let mutationsAny = false;
         let imagesUsed = 0;
         let lastIterationHadText = false;
+        let maxTokensNudges = 0;
         const MAX_VALIDATOR_ROUNDS = 3;
 
         const findRoomByName = (name?: string) => {
@@ -445,6 +446,28 @@ export async function POST(req: Request) {
             }
           }
 
+          // Pensamento estourou o teto do turno SEM agir (briefs abertos +
+          // xhigh podem comer os 64k só planejando): o turno truncado de
+          // thinking puro é DESCARTADO (não é um turno válido de entrada) e
+          // um empurrão manda agir com o que já decidiu — sem isso o pedido
+          // morria em silêncio com a planta vazia.
+          const truncatedThinkingOnly =
+            finalMessage.stop_reason === "max_tokens" && toolResults.length === 0;
+          if (truncatedThinkingOnly && maxTokensNudges < 2) {
+            maxTokensNudges += 1;
+            conversation.push({
+              role: "user",
+              content:
+                "[Sistema] Seu turno anterior esgotou o orçamento de tokens PENSANDO, sem executar nenhuma ação — o raciocínio foi descartado. Não replaneje do zero: AJA AGORA em lotes curtos. Comece pelo shell (create_room → add_door/add_window) ou pelo próximo place_items com o que você já decidiu; refine depois olhando as imagens que voltam a cada lote.",
+            });
+            continue;
+          }
+          if (truncatedThinkingOnly) {
+            // 3º estouro seguido: parar com honestidade (o fallback abaixo
+            // avisa o cliente) em vez de empurrar um turno truncado inválido.
+            break;
+          }
+
           // Always push the assistant turn and — when tools ran — the
           // matching tool_results user message as an inseparable pair.
           // An assistant turn containing tool_use blocks MUST be directly
@@ -461,7 +484,12 @@ export async function POST(req: Request) {
           // about to STOP — validating transient states (cômodo criado mas
           // ainda sem porta) queimava as rodadas de correção com falsos
           // positivos antes de a construção terminar.
-          if (finalMessage.stop_reason === "tool_use" && toolResults.length > 0) {
+          // (stop_reason "max_tokens" COM tools executadas também segue —
+          // o par assistant+tool_results já está íntegro acima.)
+          if (
+            (finalMessage.stop_reason === "tool_use" || finalMessage.stop_reason === "max_tokens") &&
+            toolResults.length > 0
+          ) {
             continue;
           }
 
@@ -578,6 +606,12 @@ export async function POST(req: Request) {
             type: "text_delta",
             text:
               "Apliquei o projeto na planta — confira no canvas. Cheguei ao limite de passos deste pedido; se quiser que eu siga refinando (ou complete algo que ficou de fora), é só dizer \"continue\".",
+          });
+        } else if (!lastIterationHadText && !mutationsAny && maxTokensNudges > 0) {
+          send({
+            type: "text_delta",
+            text:
+              "Não consegui concluir o planejamento dentro do orçamento deste pedido. Divida em etapas menores — por exemplo: \"crie o shell do studio\" e depois \"mobilie a área de estar\" — que eu executo cada uma com calma.",
           });
         }
 
