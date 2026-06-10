@@ -187,6 +187,7 @@ export async function POST(req: Request) {
         let pendingVisualReview = false;
         let mutationsAny = false;
         let imagesUsed = 0;
+        let lastIterationHadText = false;
         const MAX_VALIDATOR_ROUNDS = 3;
 
         const findRoomByName = (name?: string) => {
@@ -375,6 +376,9 @@ export async function POST(req: Request) {
           // Full assistant message with thinking blocks + signatures intact
           // and tool_use inputs fully parsed.
           const finalMessage = await sdkStream.finalMessage();
+          lastIterationHadText = finalMessage.content.some(
+            (b) => b.type === "text" && b.text.trim().length > 0
+          );
 
           // ---- Olhos do agente (pós-iteração, pré-push) ----
           // 1) Auto-render: UMA imagem por iteração, do estado FIM-de-lote,
@@ -569,6 +573,17 @@ export async function POST(req: Request) {
         }
         } finally {
           clearInterval(heartbeat);
+        }
+
+        // Nunca terminar em silêncio: se o último turno não tinha texto
+        // (limite de iterações no meio de uma correção, por exemplo), o
+        // cliente recebia uma resposta vazia.
+        if (!lastIterationHadText && mutationsAny) {
+          send({
+            type: "text_delta",
+            text:
+              "Apliquei o projeto na planta — confira no canvas. Cheguei ao limite de passos deste pedido; se quiser que eu siga refinando (ou complete algo que ficou de fora), é só dizer \"continue\".",
+          });
         }
 
         send({ type: "done" });
