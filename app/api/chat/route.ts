@@ -41,19 +41,11 @@ const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
 
 const MAX_VISUAL_REVIEWS = 2;
 
-/** Tools que completam um "lote de cômodo" — o resultado delas volta com a
- *  IMAGEM do estado ao fim da iteração, para o agente revisar ANTES de
- *  seguir para o próximo cômodo (ver enquanto constrói, não só no fim). */
-const AUTO_RENDER_TOOLS: ReadonlySet<string> = new Set([
-  "furnish_room",
-  "add_furniture_group",
-  "add_millwork_run",
-  "create_apartment_layout",
-]);
-
 /** Orçamento GLOBAL de imagens mid-flight por request (auto-render +
- *  preview_plan; a revisão final da Fase D fica FORA do teto). */
-const MAX_IMAGES_PER_REQUEST = 6;
+ *  preview_plan; a revisão final da Fase D fica FORA do teto). O agente
+ *  agora VÊ a planta após CADA lote de mutações — desenhar é olhar cada
+ *  traço, não só o resultado final. */
+const MAX_IMAGES_PER_REQUEST = 12;
 const MIDFLIGHT_PNG_WIDTH = 1024;
 
 /** Códigos de "estado de obra" que não fazem sentido no digest ambiente
@@ -87,7 +79,9 @@ export const maxDuration = 300;
 
 const MODEL = "claude-fable-5";
 const MAX_TOKENS = 64000;
-const MAX_ITERATIONS = 8;
+// Composição iterativa (compor → olhar → refinar) pede mais turnos que o
+// fluxo antigo de templates.
+const MAX_ITERATIONS = 12;
 /** Visual-review PNG width. Fable 5 has high-res vision (up to 2576px long
  *  edge with 1:1 pixel coordinates); 1600px doubles label legibility over the
  *  old 1024px without paying full-res image-token cost. */
@@ -266,9 +260,9 @@ export async function POST(req: Request) {
           }
           const toolBuffers = new Map<number, ToolBuffer>();
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
-          // Alvo do auto-render desta iteração (última tool de lote ok) e a
-          // posição do tool_result correspondente.
-          let autoRenderRoomName: string | undefined;
+          // Auto-render desta iteração: QUALQUER mutação ok gera imagem no
+          // último tool_result; crop quando um único cômodo foi tocado.
+          const iterRooms = new Set<string>();
           let autoRenderIdx: number | null = null;
           let mutatedThisIteration = false;
 
@@ -350,16 +344,14 @@ export async function POST(req: Request) {
                 ok = r.ok;
                 message = r.message;
                 mutationsAny = mutationsAny || ok;
-                mutatedThisIteration = mutatedThisIteration || ok;
+                if (ok) {
+                  mutatedThisIteration = true;
+                  autoRenderIdx = toolResults.length;
+                  const rn = (input as { room_name?: string } | null)?.room_name;
+                  iterRooms.add(typeof rn === "string" ? rn : "*toda*");
+                }
                 if (ok && VISUAL_TRIGGER_TOOLS.has(buf.name)) {
                   pendingVisualReview = true;
-                }
-                if (ok && AUTO_RENDER_TOOLS.has(buf.name)) {
-                  autoRenderRoomName =
-                    buf.name === "create_apartment_layout"
-                      ? undefined
-                      : (input as { room_name?: string } | null)?.room_name;
-                  autoRenderIdx = toolResults.length;
                 }
               }
               send({ type: "tool_result", id: buf.id, ok, message });
@@ -381,15 +373,16 @@ export async function POST(req: Request) {
           );
 
           // ---- Olhos do agente (pós-iteração, pré-push) ----
-          // 1) Auto-render: UMA imagem por iteração, do estado FIM-de-lote,
-          //    anexada ao tool_result da última tool de cômodo ok (renderizar
-          //    no content_block_stop daria imagem obsoleta — outras tools da
+          // 1) Auto-render: UMA imagem por iteração com mutação, do estado
+          //    FIM-de-lote, anexada ao último tool_result ok (renderizar no
+          //    content_block_stop daria imagem obsoleta — outras tools da
           //    mesma iteração ainda mutariam o plano).
-          if (autoRenderIdx !== null && imagesUsed < MAX_IMAGES_PER_REQUEST) {
+          if (mutatedThisIteration && autoRenderIdx !== null && imagesUsed < MAX_IMAGES_PER_REQUEST) {
             const target = toolResults[autoRenderIdx];
             if (target && !target.is_error) {
               try {
-                const room = findRoomByName(autoRenderRoomName);
+                const onlyRoom = iterRooms.size === 1 ? [...iterRooms][0] : undefined;
+                const room = onlyRoom && onlyRoom !== "*toda*" ? findRoomByName(onlyRoom) : undefined;
                 const png = room
                   ? await renderRoomPng(localPlan, room.id, MIDFLIGHT_PNG_WIDTH, { doorZones: true })
                   : await renderPlanPng(localPlan, MIDFLIGHT_PNG_WIDTH, { doorZones: true });

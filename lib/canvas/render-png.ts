@@ -207,9 +207,12 @@ function renderFurniture(f: Furniture): string {
   const transform = rotate ? ` transform="rotate(${rotate} ${cx} ${cy})"` : "";
   // Fonte encolhe para caber no móvel (piso 0.09m — legível a 1024px).
   const fs = Math.max(0.09, Math.min(0.18, (f.width * 1.6) / Math.max(1, label.length)));
+  // Texto a 180° ficaria de cabeça para baixo — contra-rotaciona para ler
+  // na horizontal (90/270 ficam verticais, padrão de prancheta).
+  const textTransform = rotate === 180 ? ` transform="rotate(180 ${cx} ${cy})"` : "";
   return `<g${transform}>
     <rect x="${f.x}" y="${f.y}" width="${f.width}" height="${f.height}" fill="${fill}" stroke="${stroke}" stroke-width="${STROKE_FINE}" />
-    <text x="${cx}" y="${cy + fs / 3}" text-anchor="middle" font-family="sans-serif" font-size="${fs}" fill="#333">${label}</text>
+    <text x="${cx}" y="${cy + fs / 3}" text-anchor="middle" font-family="sans-serif" font-size="${fs}" fill="#333"${textTransform}>${label}</text>
   </g>`;
 }
 
@@ -275,6 +278,19 @@ export function renderPlanSvg(plan: FloorPlan, opts?: RenderOpts): string {
     gridLines.push(`<line x1="${bb.minX}" y1="${y}" x2="${bb.maxX}" y2="${y}" stroke="#E8E5DC" stroke-width="${STROKE_GRID}" />`);
   }
 
+  // Régua com METROS nas bordas: transforma a imagem em instrumento de
+  // medição — o agente lê uma coordenada na régua e devolve números no
+  // place_items (olhar → medir → agir).
+  const ruler: string[] = [];
+  for (let x = Math.ceil(bb.minX); x <= Math.floor(bb.maxX); x++) {
+    ruler.push(`<line x1="${x}" y1="${bb.minY}" x2="${x}" y2="${bb.minY + 0.12}" stroke="#888" stroke-width="${STROKE_GRID * 2}" />`);
+    ruler.push(`<text x="${x}" y="${bb.minY + 0.36}" text-anchor="middle" font-family="monospace" font-size="0.2" fill="#777">${x}</text>`);
+  }
+  for (let y = Math.ceil(bb.minY); y <= Math.floor(bb.maxY); y++) {
+    ruler.push(`<line x1="${bb.minX}" y1="${y}" x2="${bb.minX + 0.12}" y2="${y}" stroke="#888" stroke-width="${STROKE_GRID * 2}" />`);
+    ruler.push(`<text x="${bb.minX + 0.16}" y="${y + 0.07}" text-anchor="start" font-family="monospace" font-size="0.2" fill="#777">${y}</text>`);
+  }
+
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${widthPx}" height="${heightPx}" viewBox="${bb.minX} ${bb.minY} ${w} ${h}">
   <rect x="${bb.minX}" y="${bb.minY}" width="${w}" height="${h}" fill="#FAF7F0" />
   <g class="grid" opacity="0.5">${gridLines.join("")}</g>
@@ -284,6 +300,7 @@ export function renderPlanSvg(plan: FloorPlan, opts?: RenderOpts): string {
   <g class="doors">${doors}</g>
   <g class="windows">${windows}</g>
   <g class="flagged">${flagged}</g>
+  <g class="ruler">${ruler.join("")}</g>
 </svg>`;
 }
 
