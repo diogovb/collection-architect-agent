@@ -722,6 +722,8 @@ export interface SelectionContext {
 
 export type StreamEvent =
   | { type: "text_delta"; text: string }
+  /** Keep-alive ping emitted when the model starts a thinking block. */
+  | { type: "thinking" }
   | { type: "tool_start"; id: string; name: ToolName }
   | { type: "tool_input"; id: string; input: unknown }
   | { type: "tool_result"; id: string; ok: boolean; message: string }

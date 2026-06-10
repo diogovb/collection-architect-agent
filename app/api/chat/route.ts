@@ -42,16 +42,22 @@ const tools = legacyTools as Anthropic.Tool[];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// xhigh effort + up to 8 tool iterations can legitimately run for minutes.
+export const maxDuration = 300;
 
-const DEFAULT_MODEL = "claude-opus-4-7";
-const ALLOWED_MODELS = new Set(["claude-opus-4-7", "claude-sonnet-4-6"]);
-const MAX_TOKENS = 4096;
+const MODEL = "claude-fable-5";
+const MAX_TOKENS = 64000;
 const MAX_ITERATIONS = 8;
+/** Visual-review PNG width. Fable 5 has high-res vision (up to 2576px long
+ *  edge with 1:1 pixel coordinates); 1600px doubles label legibility over the
+ *  old 1024px without paying full-res image-token cost. */
+const REVIEW_PNG_WIDTH = 1600;
 
 interface ClientPayload {
   messages: { role: "user" | "assistant"; content: string }[];
   plan: FloorPlan;
   selection?: SelectionContext | null;
+  /** Accepted for backward compatibility with older clients; ignored. */
   model?: string;
 }
 
@@ -72,9 +78,7 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "JSON inválido." }), { status: 400 });
   }
 
-  const { messages, plan, selection, model: requestedModel } = body;
-  const model =
-    requestedModel && ALLOWED_MODELS.has(requestedModel) ? requestedModel : DEFAULT_MODEL;
+  const { messages, plan, selection } = body;
   if (!Array.isArray(messages) || messages.length === 0) {
     return new Response(JSON.stringify({ error: "Conversa vazia." }), { status: 400 });
   }
@@ -133,36 +137,50 @@ export async function POST(req: Request) {
         while (iter < MAX_ITERATIONS) {
           iter += 1;
 
-          const systemBlock =
-            SYSTEM_PROMPT +
-            "\n\n# Estado atual da planta\n" +
-            summarizePlan(localPlan);
+          // Two-block system: block 1 is byte-stable across iterations and
+          // turns, and its cache breakpoint covers tools + SYSTEM_PROMPT
+          // (the dominant prefix cost). Block 2 carries the volatile plan
+          // state AFTER the breakpoint so rebuilding it each iteration
+          // never invalidates the cached prefix.
+          const systemBlocks: Anthropic.TextBlockParam[] = [
+            {
+              type: "text",
+              text: SYSTEM_PROMPT,
+              cache_control: { type: "ephemeral" },
+            },
+            {
+              type: "text",
+              text: "# Estado atual da planta\n" + summarizePlan(localPlan),
+            },
+          ];
 
           const sdkStream = anthropic.messages.stream({
-            model,
+            model: MODEL,
             max_tokens: MAX_TOKENS,
-            system: systemBlock,
+            // Fable 5 only supports adaptive thinking; never send
+            // {type:"disabled"} or budget_tokens (both 400).
+            thinking: { type: "adaptive" },
+            output_config: { effort: "xhigh" },
+            system: systemBlocks,
             tools,
             messages: conversation,
           });
 
-          // Real-time tool execution (Fase T2). The previous version waited
-          // for `sdkStream.finalMessage()` before running any tool — meaning
-          // the canvas only mutated after the agent had emitted ALL tool
-          // calls in the iteration. Now we accumulate input JSON deltas
-          // per content-block index and, on `content_block_stop`, execute
-          // the tool and emit `tool_input`/`tool_result` IMMEDIATELY.
+          // Real-time tool execution (Fase T2): accumulate input JSON deltas
+          // per content-block index and, on `content_block_stop`, execute the
+          // tool and emit `tool_input`/`tool_result` IMMEDIATELY so the canvas
+          // mutates live. The assistant turn pushed back into `conversation`
+          // comes from `finalMessage()` below — NOT from a hand-built copy —
+          // because Fable 5 emits thinking blocks (with signatures) that must
+          // be passed back verbatim in multi-turn tool loops.
           interface ToolBuffer {
             id: string;
             name: ToolName;
             json: string;
           }
           const toolBuffers = new Map<number, ToolBuffer>();
-          const accumulatedContent: Anthropic.ContentBlockParam[] = [];
-          const blockIndexToOrdinal = new Map<number, number>();
           const toolResults: Anthropic.ToolResultBlockParam[] = [];
           let mutationsHappened = false;
-          let stopReason: string | null = null;
 
           for await (const ev of sdkStream) {
             if (ev.type === "content_block_start") {
@@ -170,30 +188,22 @@ export async function POST(req: Request) {
               if (cb.type === "tool_use") {
                 send({ type: "tool_start", id: cb.id, name: cb.name as ToolName });
                 toolBuffers.set(ev.index, { id: cb.id, name: cb.name as ToolName, json: "" });
-                blockIndexToOrdinal.set(ev.index, accumulatedContent.length);
-                accumulatedContent.push({
-                  type: "tool_use",
-                  id: cb.id,
-                  name: cb.name,
-                  input: {},
-                });
-              } else if (cb.type === "text") {
-                blockIndexToOrdinal.set(ev.index, accumulatedContent.length);
-                accumulatedContent.push({ type: "text", text: "" });
+              } else if (cb.type === "thinking") {
+                // Keep-alive ping: adaptive thinking can pause output for
+                // tens of seconds; one tiny SSE event prevents proxy idle
+                // timeouts and lets the UI show a "pensando" state.
+                send({ type: "thinking" });
               }
             } else if (ev.type === "content_block_delta") {
               const d = ev.delta;
               if (d.type === "text_delta") {
                 send({ type: "text_delta", text: d.text });
-                const ord = blockIndexToOrdinal.get(ev.index);
-                if (ord !== undefined) {
-                  const blk = accumulatedContent[ord];
-                  if (blk && blk.type === "text") blk.text += d.text;
-                }
               } else if (d.type === "input_json_delta") {
                 const buf = toolBuffers.get(ev.index);
                 if (buf) buf.json += d.partial_json;
               }
+              // thinking_delta / signature_delta: nothing to do — display is
+              // omitted by default and signatures ride in finalMessage().
             } else if (ev.type === "content_block_stop") {
               const buf = toolBuffers.get(ev.index);
               if (!buf) continue;
@@ -203,13 +213,6 @@ export async function POST(req: Request) {
               } catch {
                 // partial / malformed JSON — bail with empty object so the
                 // tool can return an error message rather than crashing.
-              }
-              const ord = blockIndexToOrdinal.get(ev.index);
-              if (ord !== undefined) {
-                const blk = accumulatedContent[ord];
-                if (blk && blk.type === "tool_use") {
-                  (blk as { input: unknown }).input = input;
-                }
               }
               send({ type: "tool_input", id: buf.id, input });
               let ok: boolean;
@@ -235,12 +238,25 @@ export async function POST(req: Request) {
                 is_error: !ok,
               });
               toolBuffers.delete(ev.index);
-            } else if (ev.type === "message_delta") {
-              if (ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
             }
           }
 
-          if (stopReason !== "tool_use" || toolResults.length === 0) {
+          // Full assistant message with thinking blocks + signatures intact
+          // and tool_use inputs fully parsed.
+          const finalMessage = await sdkStream.finalMessage();
+
+          // Always push the assistant turn and — when tools ran — the
+          // matching tool_results user message as an inseparable pair.
+          // An assistant turn containing tool_use blocks MUST be directly
+          // followed by the tool_results ("tool_use ids were found without
+          // tool_result blocks" 400 otherwise), and thinking blocks ride
+          // along verbatim inside finalMessage.content.
+          conversation.push({ role: "assistant", content: finalMessage.content });
+          if (toolResults.length > 0) {
+            conversation.push({ role: "user", content: toolResults });
+          }
+
+          if (finalMessage.stop_reason !== "tool_use" || toolResults.length === 0) {
             // Visual review pass (Phase D). Before letting the agent end its
             // turn, render the current plan to PNG and ask multimodal
             // Claude to spot blocking / overlap / orientation mistakes.
@@ -248,11 +264,11 @@ export async function POST(req: Request) {
             // model that keeps tweaking forever.
             if (pendingVisualReview && visualReviews < MAX_VISUAL_REVIEWS) {
               try {
-                const png = await renderPlanPng(localPlan);
+                const png = await renderPlanPng(localPlan, REVIEW_PNG_WIDTH);
                 const b64 = png.toString("base64");
                 visualReviews += 1;
                 pendingVisualReview = false;
-                conversation.push({ role: "assistant", content: accumulatedContent });
+                // Consecutive user messages are legal — the API merges them.
                 conversation.push({
                   role: "user",
                   content: [
@@ -284,14 +300,6 @@ export async function POST(req: Request) {
             }
             break;
           }
-
-          // Append the assistant message AND the synthesized tool_results
-          // user message so the next iteration of the agent sees the full
-          // conversation context. Missing this pair was the cause of the
-          // "tool_use ids were found without tool_result blocks" 400 from
-          // the Anthropic API after the Fase T2 refactor.
-          conversation.push({ role: "assistant", content: accumulatedContent });
-          conversation.push({ role: "user", content: toolResults });
 
           // After mutations, run validators and surface issues to the agent.
           // Cap at MAX_VALIDATOR_ROUNDS to avoid infinite self-correction loops.

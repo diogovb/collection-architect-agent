@@ -8,8 +8,6 @@ import { t } from "@/lib/i18n";
 import type { ChatBlock, SeededMessage, ToolCallStatus } from "@/lib/mock-data";
 import { USER_ACTION_EVENT, type UserActionPayload } from "@/lib/scene/user-action-log";
 
-type ModelId = "claude-opus-4-7" | "claude-sonnet-4-6";
-
 interface Props {
   plan: FloorPlan;
   selected: SelectedElement | null;
@@ -132,7 +130,6 @@ export function ChatPanel({
 }: Props) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [model, setModel] = useState<ModelId>("claude-opus-4-7");
   const [streamingId, setStreamingId] = useState<string | null>(null);
   // Block-based streaming state (Fase 4A): chronological text/tool blocks
   // accumulated as events arrive. Renders verbatim — tools appear exactly
@@ -142,7 +139,6 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const planRef = useRef(plan); planRef.current = plan;
   const selectedRef = useRef(selected); selectedRef.current = selected;
-  const modelRef = useRef(model); modelRef.current = model;
   const toolNameByIdRef = useRef<Map<string, ToolName>>(new Map());
 
   const ctx = selected ? resolveSelection(plan, selected) : null;
@@ -395,7 +391,6 @@ export function ChatPanel({
           messages: apiHistory,
           plan: planRef.current,
           selection: selectedRef.current ? resolveSelection(planRef.current, selectedRef.current) : null,
-          model: modelRef.current,
         }),
       });
       if (!resp.ok || !resp.body) {
@@ -420,6 +415,9 @@ export function ChatPanel({
           try { ev = JSON.parse(json); } catch { continue; }
           if (ev.type === "text_delta") {
             appendText(ev.text);
+          } else if (ev.type === "thinking") {
+            // Keep-alive ping while the model reasons; the pulse label
+            // already conveys the "pensando" state, nothing to render.
           } else if (ev.type === "tool_start") {
             toolNameByIdRef.current.set(ev.id, ev.name);
             startTool(ev.id, ev.name);
@@ -545,7 +543,6 @@ export function ChatPanel({
           <div className="flex items-center gap-1 pt-1.5 border-t border-line/60">
             <IconChip>◐</IconChip>
             <IconChip>@</IconChip>
-            <ModelChip model={model} onChange={setModel} disabled={busy} />
             <button
               onClick={() => send(input)}
               disabled={busy || !input.trim()}
@@ -811,34 +808,3 @@ function IconChip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ModelChip({ model, onChange, disabled }: {
-  model: ModelId; onChange: (m: ModelId) => void; disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className="px-2 py-1 rounded-md text-[10.5px] font-mono uppercase tracking-wider text-muted hover:bg-panel hover:text-ink transition-colors flex items-center gap-1"
-      >
-        {model === "claude-opus-4-7" ? "OPUS 4.7" : "SONNET 4.6"}
-        <span className="text-[8px]">▾</span>
-      </button>
-      {open && (
-        <div className="absolute bottom-full left-0 mb-1 bg-panel border border-line rounded-md shadow-md p-1 min-w-[140px] z-30">
-          {(["claude-opus-4-7", "claude-sonnet-4-6"] as ModelId[]).map((m) => (
-            <button
-              key={m}
-              onClick={() => { onChange(m); setOpen(false); }}
-              className={`w-full text-left px-2 py-1.5 rounded text-[11px] hover:bg-panel-alt ${model === m ? "text-accent" : ""}`}
-            >
-              {m === "claude-opus-4-7" ? "Opus 4.7 — Mais inteligente" : "Sonnet 4.6 — Mais rápido"}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

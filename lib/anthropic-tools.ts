@@ -276,7 +276,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "add_furniture",
     description:
-      "Adiciona UM ÚNICO móvel num cômodo. relative_x/relative_y são 0..1 dentro do cômodo (0,0 = canto superior-esquerdo). PREFIRA `place_furniture_intent` quando for mobiliar um cômodo INTEIRO — ele aceita âncoras semânticas (wall:north@mid, corner:NE) e o solver calcula coords respeitando clearances + relações ergonômicas.",
+      "Adiciona UM ÚNICO móvel num cômodo. Chame quando o cliente pedir um item avulso ou um ajuste pontual. relative_x/relative_y são 0..1 dentro do cômodo (0,0 = canto superior-esquerdo). Para mobiliar um cômodo INTEIRO prefira `place_furniture_intent` (âncoras semânticas wall:north@mid / corner:NE + solver com clearances e relações ergonômicas); para bancadas/marcenaria (cozinha, banheiro, closet, lavanderia) use `add_millwork_run` — nunca esta ferramenta.",
     input_schema: {
       type: "object",
       properties: {
@@ -607,7 +607,8 @@ export const tools: Anthropic.Tool[] = [
   },
   {
     name: "furnish_room",
-    description: "Mobilia automaticamente um cômodo com móveis adequados ao tipo dele.",
+    description:
+      "Mobilia automaticamente um cômodo com móveis adequados ao tipo dele. Chame quando o cliente pedir para mobiliar um cômodo (ou vários) de uma vez sem especificar peças; quando ele pedir controle fino de posicionamento, use place_furniture_intent peça a peça.",
     input_schema: {
       type: "object",
       properties: {
