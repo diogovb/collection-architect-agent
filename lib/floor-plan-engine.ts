@@ -20,6 +20,15 @@ import { FURN_DEFS, defaultFurnitureLabel, defaultFurnitureSize } from "./furnit
 import { validatePlacement, summarizeRoomLayout } from "./scene/placement-validators";
 import { solvePlacement, formatSolverResult } from "./scene/placement-solver";
 import { doAddMillworkRun, doRemoveMillworkRun, doUpdateMillworkModule } from "./scene/millwork-engine";
+import {
+  openingInterval,
+  openingsOverlap1D,
+  rectOverlapArea,
+  wallSideLabel,
+  worldAABB,
+} from "./plan-geometry";
+import { chooseDoorSwing } from "./scene/door-swing";
+import { DOOR_DEDUP_RADIUS_M, TOL_CONTACT_M } from "./scene/tolerances";
 
 // ---------- ID + helpers ----------
 
@@ -207,6 +216,26 @@ function doCreateRoom(plan: FloorPlan, input: ToolInputs["create_room"]): ApplyR
     const spot = bestSpot(plan, width, height);
     x = spot.x;
     y = spot.y;
+  } else {
+    // Explicit coords: reject overlaps with existing (non-exterior) rooms.
+    // Edge-to-edge contact is fine — only real area overlap (> 1 cm²-ish)
+    // counts, so apartment layouts with shared walls keep working.
+    const candidate = { x, y, w: width, h: height };
+    const conflict = plan.rooms.find(
+      (r) =>
+        !r.isExterior &&
+        rectOverlapArea(candidate, { x: r.x, y: r.y, w: r.width, h: r.height }) > 0.01
+    );
+    if (conflict) {
+      const spot = bestSpot(plan, width, height);
+      return {
+        ok: false,
+        message:
+          `Posição (${x},${y}) de '${name}' sobrepõe '${conflict.name}' ` +
+          `(${conflict.x},${conflict.y},${conflict.width}×${conflict.height}m). ` +
+          `Posição livre sugerida: (${spot.x.toFixed(1)},${spot.y.toFixed(1)}).`,
+      };
+    }
   }
   const isExterior = /(jardim|quintal|gramado|varanda|terraço|terraco|piscina|deck)/i.test(name);
   const room: Room = {
@@ -277,11 +306,88 @@ function doDuplicateRoom(plan: FloorPlan, input: ToolInputs["duplicate_room"]): 
   return { ok: true, message: `Cômodo '${room.name}' duplicado como '${newName}'.` };
 }
 
+/** Margem mínima entre a borda de uma abertura e o canto da parede. */
+const OPENING_CORNER_MARGIN = 0.05;
+
+/** Valida o encaixe de uma abertura na parede: rejeita quando maior que a
+ *  parede e clampa a posição para o vão caber inteiro. */
+function fitOpening(
+  room: Room,
+  wall: Wall,
+  position: number,
+  size: number,
+  kindLabel: string,
+): { ok: true; position: number; adjusted: boolean } | { ok: false; message: string } {
+  const wallLen = wall === "north" || wall === "south" ? room.width : room.height;
+  if (size > wallLen - 2 * OPENING_CORNER_MARGIN) {
+    return {
+      ok: false,
+      message: `${kindLabel} de ${size.toFixed(2)}m não cabe na parede ${wallSideLabel(wall)} de '${room.name}' (${wallLen.toFixed(2)}m). Use um vão menor ou outra parede.`,
+    };
+  }
+  const posMin = (size / 2 + OPENING_CORNER_MARGIN) / wallLen;
+  const posMax = 1 - posMin;
+  const clamped = Math.max(posMin, Math.min(posMax, position));
+  return { ok: true, position: clamped, adjusted: Math.abs(clamped - position) > 0.005 };
+}
+
+/** Abertura existente (porta/janela) colidindo no MESMO trecho de parede.
+ *  Compara intervalos 1D no espaço do mundo, então pega tanto aberturas do
+ *  próprio cômodo quanto do vizinho que compartilha a parede. */
+function findOpeningConflict(
+  plan: FloorPlan,
+  room: Room,
+  wall: Wall,
+  position: number,
+  size: number,
+  opts?: { ignoreDoorId?: string },
+): { kind: "porta" | "janela"; roomName: string; wall: Wall } | null {
+  const target = openingInterval(room, wall, position, size);
+  for (const d of plan.doors) {
+    if (opts?.ignoreDoorId && d.id === opts.ignoreDoorId) continue;
+    const dRoom = plan.rooms.find((r) => r.id === d.roomId);
+    if (!dRoom) continue;
+    if (openingsOverlap1D(target, openingInterval(dRoom, d.wall, d.position, d.size)) > 0) {
+      return { kind: "porta", roomName: dRoom.name, wall: d.wall };
+    }
+  }
+  for (const w of plan.windows) {
+    const wRoom = plan.rooms.find((r) => r.id === w.roomId);
+    if (!wRoom) continue;
+    if (openingsOverlap1D(target, openingInterval(wRoom, w.wall, w.position, w.size)) > 0) {
+      return { kind: "janela", roomName: wRoom.name, wall: w.wall };
+    }
+  }
+  return null;
+}
+
+/** Cômodo do outro lado da parede `wall` de `room` (para swing "out"). */
+function neighborAcrossWall(plan: FloorPlan, room: Room, wall: Wall, position: number): Room | null {
+  const c = doorWorldCenter(room, wall, position);
+  const probe = 0.15;
+  const p =
+    wall === "north" ? { x: c.x, y: c.y - probe } :
+    wall === "south" ? { x: c.x, y: c.y + probe } :
+    wall === "west" ? { x: c.x - probe, y: c.y } :
+    { x: c.x + probe, y: c.y };
+  return (
+    plan.rooms.find(
+      (r) =>
+        r.id !== room.id &&
+        !r.isExterior &&
+        p.x >= r.x && p.x <= r.x + r.width &&
+        p.y >= r.y && p.y <= r.y + r.height
+    ) ?? null
+  );
+}
+
 function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
-  const position = clamp01(input.position ?? 0.5);
   const size = input.size ?? 0.9;
+  const fit = fitOpening(room, input.wall, clamp01(input.position ?? 0.5), size, "Porta");
+  if (!fit.ok) return { ok: false, message: fit.message };
+  const position = fit.position;
 
   // Dedup: skip if there's already a door whose world centre is within
   // ~50 cm of the new one. Catches both repeated calls on the same
@@ -293,7 +399,7 @@ function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult 
     const dRoom = plan.rooms.find((r) => r.id === d.roomId);
     if (!dRoom) continue;
     const c = doorWorldCenter(dRoom, d.wall, d.position);
-    if (Math.hypot(c.x - newCenter.x, c.y - newCenter.y) < 0.5) {
+    if (Math.hypot(c.x - newCenter.x, c.y - newCenter.y) < DOOR_DEDUP_RADIUS_M) {
       return {
         ok: true,
         message: `Porta já existe próximo a '${room.name}' (${input.wall}); pulando duplicata.`,
@@ -301,15 +407,41 @@ function doAddDoor(plan: FloorPlan, input: ToolInputs["add_door"]): ApplyResult 
     }
   }
 
+  // Aberturas parcialmente sobrepostas (centros a mais de 50 cm, mas vãos
+  // colidindo) e colisões porta×janela são erro de projeto — rejeitar.
+  const conflict = findOpeningConflict(plan, room, input.wall, position, size);
+  if (conflict) {
+    return {
+      ok: false,
+      message: `Porta na parede ${wallSideLabel(input.wall)} de '${room.name}' sobrepõe a ${conflict.kind} existente de '${conflict.roomName}'. Escolha outra position na parede ou outra parede.`,
+    };
+  }
+
+  // Swing automático: dobradiça no lado mais próximo do canto (folha aberta
+  // descansa na parede perpendicular), abrindo para dentro; alternativas são
+  // testadas contra os móveis existentes (Capacidade B).
+  const ownFurniture = plan.furniture.filter((f) => f.roomId === room.id);
+  const neighbor = neighborAcrossWall(plan, room, input.wall, position);
+  const neighborFurniture = neighbor
+    ? plan.furniture.filter((f) => f.roomId === neighbor.id)
+    : [];
+  const swingChoice = chooseDoorSwing(room, input.wall, position, size, ownFurniture, neighborFurniture);
+
   const door: Door = {
     id: nextId("door"),
     roomId: room.id,
     wall: input.wall,
     position,
     size,
+    hinge: swingChoice.hinge,
+    swing: swingChoice.swing,
   };
   plan.doors.push(door);
-  return { ok: true, message: `Porta adicionada em '${room.name}' (${input.wall}).` };
+  const notes: string[] = [];
+  if (fit.adjusted) notes.push(`posição ajustada para ${position.toFixed(2)} para o vão caber na parede`);
+  if (swingChoice.blockedBy) notes.push(`atenção: o arco de abertura colide com ${swingChoice.blockedBy} — mova o móvel ou inverta a porta`);
+  const suffix = notes.length > 0 ? ` (${notes.join("; ")})` : "";
+  return { ok: true, message: `Porta adicionada em '${room.name}' (${input.wall})${suffix}.` };
 }
 
 /** World-space centre of a door given its (room, wall, position) tuple.
@@ -334,15 +466,44 @@ function doorWorldCenter(
 function doAddWindow(plan: FloorPlan, input: ToolInputs["add_window"]): ApplyResult {
   const room = findRoom(plan, input.room_name);
   if (!room) return { ok: false, message: `Cômodo '${input.room_name}' não encontrado.` };
+  const size = input.size ?? 1.5;
+  const fit = fitOpening(room, input.wall, clamp01(input.position ?? 0.5), size, "Janela");
+  if (!fit.ok) return { ok: false, message: fit.message };
+  const position = fit.position;
+
+  // Dedup amigável: janela praticamente no mesmo lugar (cômodos vizinhos
+  // registrando a mesma janela, ou chamada repetida) — pula sem erro.
+  const newCenter = doorWorldCenter(room, input.wall, position);
+  for (const w of plan.windows) {
+    const wRoom = plan.rooms.find((r) => r.id === w.roomId);
+    if (!wRoom) continue;
+    const c = doorWorldCenter(wRoom, w.wall, w.position);
+    if (Math.hypot(c.x - newCenter.x, c.y - newCenter.y) < DOOR_DEDUP_RADIUS_M) {
+      return {
+        ok: true,
+        message: `Janela já existe próximo a '${room.name}' (${input.wall}); pulando duplicata.`,
+      };
+    }
+  }
+
+  const conflict = findOpeningConflict(plan, room, input.wall, position, size);
+  if (conflict) {
+    return {
+      ok: false,
+      message: `Janela na parede ${wallSideLabel(input.wall)} de '${room.name}' sobrepõe a ${conflict.kind} existente de '${conflict.roomName}'. Escolha outra position na parede ou outra parede.`,
+    };
+  }
+
   const win: PlanWindow = {
     id: nextId("win"),
     roomId: room.id,
     wall: input.wall,
-    position: clamp01(input.position ?? 0.5),
-    size: input.size ?? 1.5,
+    position,
+    size,
   };
   plan.windows.push(win);
-  return { ok: true, message: `Janela adicionada em '${room.name}'.` };
+  const suffix = fit.adjusted ? ` (posição ajustada para ${position.toFixed(2)} para o vão caber na parede)` : "";
+  return { ok: true, message: `Janela adicionada em '${room.name}'${suffix}.` };
 }
 
 function doDeleteWall(plan: FloorPlan, input: ToolInputs["delete_wall"]): ApplyResult {
@@ -606,6 +767,7 @@ function doAddFurniture(
   // diagnostic error first — "geladeira precisa canto" beats "geladeira
   // sobrepõe ar". Skipped for `add_furniture_group` calls (which use
   // hand-curated layouts that already mostly respect the rules).
+  let advisories: string[] = [];
   if (!opts?.skipOverlapCheck) {
     const placementCheck = validatePlacement(
       { type: t, x: fx, y: fy, width: size.w, height: size.h, label: input.label ?? def.label },
@@ -620,6 +782,7 @@ function doAddFurniture(
           `${summarizeRoomLayout(room, plan)}`,
       };
     }
+    advisories = placementCheck.advisories ?? [];
   }
 
   // Overlap check (Bug "agente cria coisas em cima da outra"). Rejects
@@ -659,7 +822,8 @@ function doAddFurniture(
     height: size.h,
   };
   plan.furniture.push(item);
-  return { ok: true, message: `${item.label} adicionado em '${room.name}'.` };
+  const suffix = advisories.length > 0 ? ` ${advisories.join(" ")}` : "";
+  return { ok: true, message: `${item.label} adicionado em '${room.name}'.${suffix}` };
 }
 
 /** True if `type` is the kind of low/flat object (rug, mat) that
@@ -669,10 +833,10 @@ function isRugLike(type: string): boolean {
   return /^rug|carpet|mat/i.test(type);
 }
 
-/** Find an existing furniture (same room, non-rug) whose AABB intersects
- *  the candidate rectangle. Returns the first conflict or null. Uses an
- *  inset of 1 cm so flush edges (sofa touching a wall-mounted shelf)
- *  don't trip the check. */
+/** Find an existing furniture (same room, non-rug) whose VISUAL AABB
+ *  (rotation-aware) intersects the candidate rectangle. Returns the first
+ *  conflict or null. Uses an inset of 1 cm so flush edges (sofa touching a
+ *  wall-mounted shelf) don't trip the check. */
 function findFurnitureOverlap(
   plan: FloorPlan,
   roomId: string,
@@ -680,16 +844,19 @@ function findFurnitureOverlap(
   y: number,
   w: number,
   h: number,
+  excludeId?: string,
 ): Furniture | null {
-  const inset = 0.01;
+  const inset = TOL_CONTACT_M;
   for (const f of plan.furniture) {
     if (f.roomId !== roomId) continue;
+    if (excludeId && f.id === excludeId) continue;
     if (isRugLike(f.type)) continue;
+    const fb = worldAABB(f);
     const overlap =
-      f.x + f.width - inset > x &&
-      f.x + inset < x + w &&
-      f.y + f.height - inset > y &&
-      f.y + inset < y + h;
+      fb.x + fb.w - inset > x &&
+      fb.x + inset < x + w &&
+      fb.y + fb.h - inset > y &&
+      fb.y + inset < y + h;
     if (overlap) return f;
   }
   return null;
@@ -710,15 +877,23 @@ function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furnit
   for (const s of result.solved) {
     const def = FURN_DEFS[s.intent.type];
     if (!def) continue;
+    // O solver devolve o bbox VISUAL (já transposto para rotações 90/270).
+    // O bbox armazenado guarda as dimensões do glifo SEM rotação com o mesmo
+    // centro — o renderer aplica a rotação em torno do centro.
+    const rotated = ((s.intent.rotation ?? 0) % 180 + 180) % 180 === 90;
+    const w = rotated ? s.height : s.width;
+    const h = rotated ? s.width : s.height;
+    const x = s.x + (s.width - w) / 2;
+    const y = s.y + (s.height - h) / 2;
     const item: Furniture = {
       id: nextId("furn"),
       roomId: room.id,
       type: s.intent.type,
       label: s.intent.label ?? def.label,
-      x: s.x,
-      y: s.y,
-      width: s.width,
-      height: s.height,
+      x,
+      y,
+      width: w,
+      height: h,
       ...(s.intent.rotation ? { rotation: s.intent.rotation } : {}),
     };
     plan.furniture.push(item);
@@ -734,12 +909,45 @@ function doPlaceFurnitureIntent(plan: FloorPlan, input: ToolInputs["place_furnit
 function doSwapFurniture(plan: FloorPlan, input: ToolInputs["swap_furniture"]): ApplyResult {
   const f = plan.furniture.find((ff) => ff.id === input.furniture_id);
   if (!f) return { ok: false, message: "Móvel não encontrado." };
+  if (f.runId) {
+    return {
+      ok: false,
+      message: `${f.label} faz parte de um run de marcenaria (${f.runId}). Use update_millwork_module para trocar o módulo.`,
+    };
+  }
   const def = FURN_DEFS[input.new_type];
   if (!def) return { ok: false, message: `Tipo desconhecido: ${input.new_type}` };
+
+  const room = plan.rooms.find((r) => r.id === f.roomId);
+  const newW = def.sizeM.w;
+  const newH = def.sizeM.h;
+  let nx = f.x;
+  let ny = f.y;
+  if (room) {
+    if (newW > room.width + TOL_CONTACT_M || newH > room.height + TOL_CONTACT_M) {
+      return {
+        ok: false,
+        message: `${def.label} (${newW}×${newH}m) não cabe em '${room.name}' (${room.width}×${room.height}m).`,
+      };
+    }
+    // Keep inside the room when the new piece is bigger.
+    nx = Math.max(room.x, Math.min(room.x + room.width - newW, f.x));
+    ny = Math.max(room.y, Math.min(room.y + room.height - newH, f.y));
+    const bb = worldAABB({ x: nx, y: ny, width: newW, height: newH, rotation: f.rotation });
+    const conflict = findFurnitureOverlap(plan, room.id, bb.x, bb.y, bb.w, bb.h, f.id);
+    if (conflict) {
+      return {
+        ok: false,
+        message: `Trocar por ${def.label} (${newW}×${newH}m) sobreporia '${conflict.label}'. Mova ou remova o vizinho antes. ${summarizeRoomLayout(room, plan)}`,
+      };
+    }
+  }
   f.type = input.new_type;
   f.label = def.label;
-  f.width = def.sizeM.w;
-  f.height = def.sizeM.h;
+  f.width = newW;
+  f.height = newH;
+  f.x = nx;
+  f.y = ny;
   return { ok: true, message: `Móvel trocado por ${def.label}.` };
 }
 
@@ -796,9 +1004,56 @@ function doSplitFloor(plan: FloorPlan, input: ToolInputs["split_floor"]): ApplyR
 function doMoveFurniture(plan: FloorPlan, input: ToolInputs["move_furniture"]): ApplyResult {
   const f = plan.furniture.find((f) => f.id === input.furniture_id);
   if (!f) return { ok: false, message: "Móvel não encontrado." };
+  if (f.runId) {
+    return {
+      ok: false,
+      message: `${f.label} faz parte de um run de marcenaria (${f.runId}) — módulos não se movem individualmente. Use update_millwork_module ou remove_millwork_run + add_millwork_run.`,
+    };
+  }
+
+  // Destination room = the one containing the new visual-bbox center.
+  const bb = worldAABB({ ...f, x: input.new_x, y: input.new_y });
+  const cx = bb.x + bb.w / 2;
+  const cy = bb.y + bb.h / 2;
+  const destRoom = plan.rooms.find(
+    (r) => cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
+  );
+  if (!destRoom) {
+    return {
+      ok: false,
+      message: `Posição (${input.new_x},${input.new_y}) de ${f.label} fica fora de qualquer cômodo. Cômodos: ${plan.rooms.map((r) => `${r.name}(${r.x},${r.y},${r.width}×${r.height})`).join(", ")}.`,
+    };
+  }
+
+  // Hard checks no destino: overlap com outros móveis e arco de porta.
+  // Âncora/clearance viram avisos (o pedido de mover é explícito do
+  // agente/cliente; bloquear a intenção declarada cria loop de correção).
+  const conflict = findFurnitureOverlap(plan, destRoom.id, bb.x, bb.y, bb.w, bb.h, f.id);
+  if (conflict) {
+    return {
+      ok: false,
+      message: `Mover ${f.label} para (${input.new_x},${input.new_y}) sobrepõe '${conflict.label}'. ${summarizeRoomLayout(destRoom, plan)}`,
+    };
+  }
+  const othersPlan: FloorPlan = { ...plan, furniture: plan.furniture.filter((ff) => ff.id !== f.id) };
+  const check = validatePlacement(
+    { type: f.type, x: bb.x, y: bb.y, width: bb.w, height: bb.h, label: f.label },
+    destRoom,
+    othersPlan,
+  );
+  if (!check.ok && /arco de abertura|arco da porta/.test(check.reason ?? "")) {
+    return {
+      ok: false,
+      message: `Mover ${f.label}: ${check.reason} ${summarizeRoomLayout(destRoom, plan)}`,
+    };
+  }
+
   f.x = input.new_x;
   f.y = input.new_y;
-  return { ok: true, message: `${f.label} movido.` };
+  if (f.roomId !== destRoom.id) f.roomId = destRoom.id;
+  const warn = !check.ok && check.reason ? ` Aviso: ${check.reason}` : "";
+  const adv = check.ok && check.advisories?.length ? ` ${check.advisories.join(" ")}` : "";
+  return { ok: true, message: `${f.label} movido para '${destRoom.name}'.${warn}${adv}` };
 }
 
 // ---------- Layout transformations ----------

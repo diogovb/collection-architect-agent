@@ -16,6 +16,7 @@
 import type {
   AnyNode,
   BuildingNode,
+  DiagnosticIssue,
   DoorNode,
   FloorMaterial,
   FurnitureNode,
@@ -34,6 +35,8 @@ import type { Door, FloorPlan, Furniture, Room, Wall as WallSide, Window as Plan
 import { outsetPolygon, polygonAbsArea } from "./types";
 import { polygonSignature } from "./signature";
 import { categoryFromName, defaultFloorForCategory } from "./slab-sync";
+import { SNAP_ROOM_GRID_M, TOL_LINE_M, TOL_VERTEX_M } from "./tolerances";
+import { estimatedHeightM } from "./furniture-heights";
 
 const EXTERNAL_THICKNESS = 0.15;
 const INTERNAL_THICKNESS = 0.10;
@@ -49,7 +52,7 @@ const LEVEL_ID = "level:0";
 interface Interval { start: number; end: number; }
 interface SweepResult { start: number; end: number; aHas: boolean; bHas: boolean }
 
-const EPS = 1e-3;
+const EPS = TOL_LINE_M;
 
 function classify(setA: Interval[], setB: Interval[]): SweepResult[] {
   const events: { x: number; delta: number; which: 0 | 1 }[] = [];
@@ -96,7 +99,7 @@ interface SegmentSpec {
  *  5 cm grid before the sweep guarantees that walls coming from different
  *  agent calls land at IDENTICAL endpoints — no sub-mm epsilon left between
  *  neighbours, which translates to crisp junctions in 3D. */
-const COORD_SNAP_M = 0.05;
+const COORD_SNAP_M = SNAP_ROOM_GRID_M;
 const snapCoord = (n: number): number => Math.round(n / COORD_SNAP_M) * COORD_SNAP_M;
 
 function buildSegments(plan: FloorPlan): SegmentSpec[] {
@@ -251,7 +254,7 @@ function findOwnerSegment(
   edge: RoomEdge,
   positionAlong: number,
   size: number,
-): { seg: SegmentSpec; localOffset: number } | null {
+): { seg: SegmentSpec; localOffset: number; snapped: boolean } | null {
   const halfSize = size / 2;
   // Absolute position of opening center along the edge.
   const centerAbs = edge.start + positionAlong * (edge.end - edge.start);
@@ -263,26 +266,57 @@ function findOwnerSegment(
     if (s.axis !== edge.axis) continue;
     if (Math.abs(s.fixed - edge.fixed) > EPS) continue;
     if (startAbs >= s.start - EPS && endAbs <= s.end + EPS) {
-      return { seg: s, localOffset: centerAbs - s.start };
+      return { seg: s, localOffset: centerAbs - s.start, snapped: false };
     }
   }
   // Fallback: closest segment on the same line that contains the center.
+  // The opening is SNAPPED into the segment: the local offset is clamped so
+  // the opening never overflows past a junction (it used to render across
+  // two walls). Segments shorter than the opening are not eligible.
   let best: { seg: SegmentSpec; dist: number } | null = null;
   for (const s of segments) {
     if (s.axis !== edge.axis) continue;
     if (Math.abs(s.fixed - edge.fixed) > EPS) continue;
+    const segLen = s.end - s.start;
+    if (segLen < size + 0.1) continue; // doesn't fit — not a valid owner
     if (centerAbs >= s.start - EPS && centerAbs <= s.end + EPS) {
       const dist = Math.min(centerAbs - s.start, s.end - centerAbs);
       if (!best || dist < best.dist) best = { seg: s, dist };
     }
   }
-  if (best) return { seg: best.seg, localOffset: centerAbs - best.seg.start };
+  if (best) {
+    const segLen = best.seg.end - best.seg.start;
+    const raw = centerAbs - best.seg.start;
+    const clamped = Math.max(halfSize, Math.min(segLen - halfSize, raw));
+    return { seg: best.seg, localOffset: clamped, snapped: Math.abs(clamped - raw) > EPS };
+  }
   return null;
 }
 
+const WALL_PT: Record<WallSide, string> = {
+  north: "norte",
+  south: "sul",
+  east: "leste",
+  west: "oeste",
+};
+
+/** Mapeia (hinge, swing) legados para as convenções do DoorNode/DoorSvg.
+ *  Segmentos correm sempre em +eixo (h: +x, v: +z) e o DoorSvg interpreta
+ *  swingDirection "in" como o lado +perp da parede (perp = (-dz, dx)):
+ *  +perp aponta para o sul nas paredes horizontais e para o oeste nas
+ *  verticais. Logo, "abrir para dentro do cômodo dono" vira:
+ *    north → in   (cômodo ao sul da parede = lado +perp)
+ *    south → out  (cômodo ao norte = lado -perp)
+ *    east  → in   (cômodo a oeste = lado +perp)
+ *    west  → out  (cômodo a leste = lado -perp)
+ *  hinge "near" (borda com menor coordenada ao longo da parede) → "start". */
 function inferHinge(d: Door): { side: HingeSide; dir: SwingDirection } {
-  // Default: hinge at start, swing into the room (heuristic).
-  return { side: "start", dir: "in" };
+  const hinge = d.hinge ?? "near";
+  const swing = d.swing ?? "in";
+  const side: HingeSide = hinge === "near" ? "start" : "end";
+  const inMeansScenIn = d.wall === "north" || d.wall === "east";
+  const dir: SwingDirection = (swing === "in") === inMeansScenIn ? "in" : "out";
+  return { side, dir };
 }
 
 function createDoorNode(
@@ -331,7 +365,7 @@ function createFurnitureNode(f: Furniture): FurnitureNode {
     label: f.label,
     position: { x: f.x, y: 0, z: f.y },
     rotation: ((f.rotation ?? 0) * Math.PI) / 180,
-    dimensions: { x: f.width, y: 0.5, z: f.height },
+    dimensions: { x: f.width, y: estimatedHeightM(f.type), z: f.height },
     ...(f.runId ? { runId: f.runId } : {}),
     ...(f.cutouts ? { cutouts: f.cutouts } : {}),
   };
@@ -340,10 +374,15 @@ function createFurnitureNode(f: Furniture): FurnitureNode {
 export interface MigrationResult {
   scene: Pick<SceneState, "nodes" | "rootId" | "activeLevelId">;
   warnings: string[];
+  /** Problemas estruturais detectados na migração (porta/janela perdida ou
+   *  reposicionada). Diferente de `warnings` (strings de debug), estes são
+   *  DiagnosticIssue prontos para o agente e para o painel da UI. */
+  issues: DiagnosticIssue[];
 }
 
 export function floorPlanToScene(plan: FloorPlan): MigrationResult {
   const warnings: string[] = [];
+  const issues: DiagnosticIssue[] = [];
   const nodes: Record<NodeId, AnyNode> = {};
 
   const building: BuildingNode = {
@@ -396,7 +435,21 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       warnings.push(
         `door ${d.id}: no wall segment found on ${d.wall} of room ${room.name} at position ${d.position}`
       );
+      issues.push({
+        code: "OPENING_LOST",
+        severity: "error",
+        message: `Porta de '${room.name}' (parede ${WALL_PT[d.wall]}) não pôde ser anexada a nenhuma parede — ela NÃO aparece na planta. Reposicione com add_door (a parede pode ter sido aberta, dividida ou ser curta demais).`,
+        nodeIds: [`room:legacy-${room.id}`],
+      });
       continue;
+    }
+    if (found.snapped) {
+      issues.push({
+        code: "OPENING_SNAPPED",
+        severity: "warning",
+        message: `Porta de '${room.name}' (parede ${WALL_PT[d.wall]}) foi reposicionada para caber no trecho de parede existente — confira se ficou onde você queria.`,
+        nodeIds: [`door:${d.id}`],
+      });
     }
     const wallId = segmentId(found.seg);
     const door = createDoorNode(d, wallId, found.localOffset);
@@ -418,7 +471,21 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
       warnings.push(
         `window ${w.id}: no wall segment found on ${w.wall} of room ${room.name} at position ${w.position}`
       );
+      issues.push({
+        code: "OPENING_LOST",
+        severity: "error",
+        message: `Janela de '${room.name}' (parede ${WALL_PT[w.wall]}) não pôde ser anexada a nenhuma parede — ela NÃO aparece na planta. Reposicione com add_window.`,
+        nodeIds: [`room:legacy-${room.id}`],
+      });
       continue;
+    }
+    if (found.snapped) {
+      issues.push({
+        code: "OPENING_SNAPPED",
+        severity: "warning",
+        message: `Janela de '${room.name}' (parede ${WALL_PT[w.wall]}) foi reposicionada para caber no trecho de parede existente.`,
+        nodeIds: [`window:${w.id}`],
+      });
     }
     const wallId = segmentId(found.seg);
     const window = createWindowNode(w, wallId, found.localOffset);
@@ -481,7 +548,7 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
     // Anchor each polygon vertex to a wall endpoint so the polygon (and
     // therefore the slab, area and zones) follows wall drags live. We
     // use 1 mm precision — same quantization the wall mitering uses.
-    const ANCHOR_TOL = 0.001;
+    const ANCHOR_TOL = TOL_VERTEX_M;
     const boundaryAnchors: { vertexIndex: number; wallId: NodeId; endpoint: "start" | "end" }[] = [];
     for (let i = 0; i < roomPolygon.length; i++) {
       const v = roomPolygon[i];
@@ -542,5 +609,6 @@ export function floorPlanToScene(plan: FloorPlan): MigrationResult {
   return {
     scene: { nodes, rootId: ROOT_ID, activeLevelId: LEVEL_ID },
     warnings,
+    issues,
   };
 }

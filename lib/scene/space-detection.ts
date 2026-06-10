@@ -17,10 +17,11 @@
 
 import type { Vec2, WallNode } from "./types";
 import { v2Angle, v2Sub, polygonArea, polygonAbsArea } from "./types";
+import { MIN_ROOM_AREA_M2, TOL_VERTEX_M } from "./tolerances";
 
 /** Grid resolution for vertex deduplication: 1mm. */
-const VERT_RES = 0.001;
-const MIN_ROOM_AREA = 0.5;
+const VERT_RES = TOL_VERTEX_M;
+const MIN_ROOM_AREA = MIN_ROOM_AREA_M2;
 
 interface VertId { key: string; pos: Vec2; }
 

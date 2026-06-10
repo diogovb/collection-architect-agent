@@ -267,6 +267,12 @@ export interface Door {
    *  Used when two adjacent rooms share a doorway: both rooms get a Door so
    *  each room's wall is cut, but only the room the door swings INTO renders the arc. */
   silent?: boolean;
+  /** Lado da dobradiça: "near" = borda do vão mais próxima do início da
+   *  parede (north/south correm em +x; west/east em +y). Opcional —
+   *  ausente vale a heurística padrão ("near"/"in"). */
+  hinge?: "near" | "far";
+  /** Sentido de abertura: "in" abre para dentro do cômodo dono. */
+  swing?: "in" | "out";
 }
 
 export interface Window {

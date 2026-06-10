@@ -11,6 +11,7 @@
 
 import type { Vec2, Vec3, WallNode } from "./types";
 import { computeWallCorners } from "./wall-mitering";
+import { TOL_CONTACT_M } from "./tolerances";
 
 export interface RectXZ {
   cx: number;
@@ -96,7 +97,7 @@ function wallQuads(walls: WallNode[]): Vec2[][] {
 export function rectIntersectsWalls(
   rect: RectXZ,
   walls: WallNode[],
-  epsilon = 0.01
+  epsilon = TOL_CONTACT_M
 ): boolean {
   if (epsilon !== 0) {
     rect = { ...rect, width: Math.max(0, rect.width - 2 * epsilon), depth: Math.max(0, rect.depth - 2 * epsilon) };

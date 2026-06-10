@@ -25,8 +25,9 @@ import {
   type Vec2,
   type WallNode,
 } from "./types";
+import { PARALLEL_EPS } from "./tolerances";
 
-const EPS = 1e-4;
+const EPS = PARALLEL_EPS;
 
 export interface WallCorners {
   startLeft: Vec2;

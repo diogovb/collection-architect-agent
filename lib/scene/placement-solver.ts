@@ -201,7 +201,11 @@ export function solvePlacement(input: SolverInput): SolverOutput {
       failed.push({ intent: it, reason: `tipo desconhecido: ${it.type}` });
       continue;
     }
-    const size = def.sizeM;
+    // Rotação 90/270: o footprint visível é o transposto do glifo. Todo o
+    // solver opera no bbox VISUAL; o engine reconverte para o bbox de
+    // armazenamento (dims originais + rotation) ao materializar.
+    const rotated = (((it.rotation ?? 0) % 180) + 180) % 180 === 90;
+    const size = rotated ? { w: def.sizeM.h, h: def.sizeM.w } : def.sizeM;
     if (size.w > room.width + 0.01 || size.h > room.height + 0.01) {
       failed.push({
         intent: it,

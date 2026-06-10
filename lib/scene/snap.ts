@@ -2,8 +2,9 @@
 
 import type { Vec2, Vec3, WallNode } from "./types";
 import { v2Dist } from "./types";
+import { SNAP_UI_GRID_M } from "./tolerances";
 
-const GRID_M = 0.10; // 10cm grid
+const GRID_M = SNAP_UI_GRID_M;
 
 export function snapToGrid(value: number, step: number = GRID_M): number {
   return Math.round(value / step) * step;

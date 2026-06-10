@@ -8,9 +8,11 @@ import { validateScene } from "../scene/validators";
 import type { DiagnosticIssue } from "../scene/types";
 
 export function validatePlan(plan: FloorPlan): DiagnosticIssue[] {
-  const { scene } = floorPlanToScene(plan);
+  const { scene, issues } = floorPlanToScene(plan);
   const derived = runDerivation(scene.nodes, scene.activeLevelId);
-  return validateScene({ nodes: derived.nodes });
+  // Migration issues (porta/janela perdida) come FIRST — the agent believes
+  // the opening exists, so silently dropping it was the worst failure mode.
+  return [...issues, ...validateScene({ nodes: derived.nodes })];
 }
 
 export function formatIssuesForAgent(issues: DiagnosticIssue[]): string {

@@ -22,6 +22,7 @@ import type {
 } from "../types";
 import type { ApplyResult } from "../floor-plan-engine";
 import { MODULE_DEFS, isFullHeightKind, allowsUpperAbove, cutoutKind, moduleFurnitureType } from "../millwork-modules";
+import { openingInterval, openingsOverlap1D, spanInterval, wallSideLabel } from "../plan-geometry";
 
 const RUN_DEFAULTS: {
   lowerHeight: Record<RunType, number>;
@@ -222,6 +223,47 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
     };
   }
 
+  // A bancada não pode cobrir uma porta — nem a do próprio cômodo nem a do
+  // vizinho que compartilha a parede (comparação 1D no espaço do mundo).
+  const runSpan = spanInterval(room, wall, startOffset, totalLength);
+  for (const d of plan.doors) {
+    const dRoom = plan.rooms.find((r) => r.id === d.roomId);
+    if (!dRoom) continue;
+    const di = openingInterval(dRoom, d.wall, d.position, d.size);
+    if (openingsOverlap1D(runSpan, di) > 0) {
+      const doorCenterAlong =
+        (di.start + di.end) / 2 - (wall === "north" || wall === "south" ? room.x : room.y);
+      return {
+        ok: false,
+        message:
+          `A bancada cobriria a porta de '${dRoom.name}' na parede ${wallSideLabel(wall)} ` +
+          `(centro a ${doorCenterAlong.toFixed(2)}m do início da parede). ` +
+          `Reduza os módulos, use start_offset para começar depois da porta, ou use outra parede.`,
+      };
+    }
+  }
+
+  // Módulos altos (despensa, torre de forno) na frente de janela: aviso.
+  const windowWarnings: string[] = [];
+  {
+    let probe = startOffset;
+    for (const m of normalized) {
+      if (m.isFullHeight) {
+        const mSpan = spanInterval(room, wall, probe, m.width);
+        for (const w of plan.windows) {
+          const wRoom = plan.rooms.find((r) => r.id === w.roomId);
+          if (!wRoom) continue;
+          if (openingsOverlap1D(mSpan, openingInterval(wRoom, w.wall, w.position, w.size)) > 0) {
+            windowWarnings.push(
+              `${m.label ?? MODULE_DEFS[m.kind].label} (módulo alto) cobre a janela da parede ${wallSideLabel(wall)}`
+            );
+          }
+        }
+      }
+      probe += m.width;
+    }
+  }
+
   const runType: RunType = input.type ?? "custom";
   const lowerHeight = input.lower_height ?? RUN_DEFAULTS.lowerHeight[runType] ?? 0.9;
 
@@ -365,9 +407,10 @@ export function doAddMillworkRun(plan: FloorPlan, input: ToolInputs["add_millwor
 
   const moduleSummary = normalized.map((m) => `${MODULE_DEFS[m.kind].label}(${m.width.toFixed(2)}m)`).join(" + ");
   const ctTag = countertopFurniture ? ` + bancada ${countertopFurniture.label.replace("Bancada ", "")}` : "";
+  const warnTag = windowWarnings.length > 0 ? ` Atenção: ${windowWarnings.join("; ")}.` : "";
   return {
     ok: true,
-    message: `Run '${run.id}' criado em '${room.name}' (parede ${wall}, ${totalLength.toFixed(2)}m): ${moduleSummary}${ctTag}.`,
+    message: `Run '${run.id}' criado em '${room.name}' (parede ${wall}, ${totalLength.toFixed(2)}m): ${moduleSummary}${ctTag}.${warnTag}`,
   };
 }
 

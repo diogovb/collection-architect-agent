@@ -19,14 +19,14 @@ export function useFloorPlanBridge(plan: FloorPlan): void {
   const replaceScene = useSceneStore((s) => s.replaceScene);
 
   useEffect(() => {
-    const { scene, warnings } = floorPlanToScene(plan);
+    const { scene, warnings, issues } = floorPlanToScene(plan);
     if (warnings.length > 0 && process.env.NODE_ENV !== "production") {
       for (const w of warnings) console.warn(`[migrate] ${w}`);
     }
     const derived = runDerivation(scene.nodes, scene.activeLevelId);
     const walls = Object.values(derived.nodes).filter((n): n is WallNode => n.type === "wall");
     const withDims = applyAutoDimensions(derived.nodes, walls);
-    const diagnostics = validateScene({ nodes: withDims });
+    const diagnostics = [...issues, ...validateScene({ nodes: withDims })];
     replaceScene({
       nodes: withDims,
       rootId: scene.rootId,

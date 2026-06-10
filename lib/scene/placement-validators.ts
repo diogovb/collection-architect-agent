@@ -12,8 +12,11 @@
 import type { Door, FloorPlan, Furniture, Room, Window } from "../types";
 import type { FurniturePlacement } from "../types";
 import { getPlacement } from "../furniture-placement";
+import { worldAABB } from "../plan-geometry";
+import { legacySwingGeometry, quarterDiscIntersectsRect } from "./door-swing";
+import { TOL_CONTACT_M, TOL_WALL_TOUCH_M } from "./tolerances";
 
-const EPS = 0.01;
+const EPS = TOL_CONTACT_M;
 
 interface BBox {
   x: number;
@@ -22,8 +25,10 @@ interface BBox {
   h: number;
 }
 
-function bboxOf(f: { x: number; y: number; width: number; height: number }): BBox {
-  return { x: f.x, y: f.y, w: f.width, h: f.height };
+/** Bbox VISUAL do móvel — transpõe largura/altura quando rotacionado 90/270°
+ *  (o renderer gira o glifo em torno do centro do bbox armazenado). */
+function bboxOf(f: { x: number; y: number; width: number; height: number; rotation?: number }): BBox {
+  return worldAABB(f);
 }
 
 function bboxOverlap(a: BBox, b: BBox, inset = 0.001): boolean {
@@ -38,11 +43,14 @@ function bboxOverlap(a: BBox, b: BBox, inset = 0.001): boolean {
 export interface PlacementResult {
   ok: boolean;
   reason?: string;
+  /** Avisos ergonômicos NÃO bloqueantes (relações sofá↔TV etc.) — anexados
+   *  à mensagem de sucesso para o agente avaliar sem ser travado. */
+  advisories?: string[];
 }
 
 /** True when a side of the bbox sits flush with one of the room's 4 walls
  *  (axis-aligned tolerance). */
-function touchedWalls(bb: BBox, room: Room, tol = 0.05): { north: boolean; south: boolean; east: boolean; west: boolean } {
+function touchedWalls(bb: BBox, room: Room, tol = TOL_WALL_TOUCH_M): { north: boolean; south: boolean; east: boolean; west: boolean } {
   return {
     north: Math.abs(bb.y - room.y) <= tol,
     south: Math.abs(bb.y + bb.h - (room.y + room.height)) <= tol,
@@ -146,55 +154,76 @@ export function validateAnchor(
   return { ok: true };
 }
 
+/** Front-zone rect on a given side of the bbox. */
+function frontZoneRect(bb: BBox, side: "north" | "south" | "east" | "west", depth: number): BBox {
+  if (side === "north") return { x: bb.x, y: bb.y - depth, w: bb.w, h: depth };
+  if (side === "south") return { x: bb.x, y: bb.y + bb.h, w: bb.w, h: depth };
+  if (side === "west") return { x: bb.x - depth, y: bb.y, w: depth, h: bb.h };
+  return { x: bb.x + bb.w, y: bb.y, w: depth, h: bb.h };
+}
+
+const OPPOSITE: Record<"north" | "south" | "east" | "west", "north" | "south" | "east" | "west"> = {
+  north: "south",
+  south: "north",
+  east: "west",
+  west: "east",
+};
+
 /** Validates that the FRONT clearance rectangle is empty of non-rug
  *  furniture. Side clearances (left/right) are silently skipped — in
  *  real kitchens/bathrooms appliances sit shoulder-to-shoulder against
  *  a wall (fogão+pia+geladeira em linha), and enforcing 30-60cm side
  *  gaps on every appliance makes the solver impossible. Front clearance
  *  IS the one that matters for usability (you need to open oven door,
- *  pull a chair, kneel to clean). */
+ *  pull a chair, kneel to clean).
+ *
+ *  Which side is "front": for wall-anchored items, the side OPPOSITE the
+ *  touched wall (the back). Checking every inside-room zone — the old
+ *  behaviour — falsely rejected side-by-side furniture (criado-mudo ao
+ *  lado da cama tropeçava na distância FRONTAL da cama). */
 export function validateClearance(
   bb: BBox,
   room: Room,
   placement: FurniturePlacement,
   existing: Furniture[]
 ): PlacementResult {
-  // We only enforce FRONT clearance. Front direction is "into the room"
-  // — for items anchored against a wall, that's the side opposite the
-  // wall they touch. We approximate by checking all 4 cardinal "outer"
-  // rectangles around the bbox and rejecting if ANY direction has a
-  // non-rug obstacle within the front-clearance distance. This catches
-  // the common case (fogão facing away from wall has 80cm front zone)
-  // without prescribing which face is the front.
   const front = placement.clearance.front;
   if (front <= EPS) return { ok: true };
-  const offset = 0.001;
-  // 4 candidate front zones — only one is the real front, the others
-  // face walls. We skip a zone whose midpoint falls outside the room
-  // polygon (i.e. the wall side). That way appliances face-towards-room
-  // get checked; appliances back-against-wall don't get falsely flagged.
-  const candidates = [
-    { name: "norte", rect: { x: bb.x - offset, y: bb.y - front, w: bb.w, h: front } },
-    { name: "sul", rect: { x: bb.x - offset, y: bb.y + bb.h, w: bb.w, h: front } },
-    { name: "oeste", rect: { x: bb.x - front, y: bb.y - offset, w: front, h: bb.h } },
-    { name: "leste", rect: { x: bb.x + bb.w, y: bb.y - offset, w: front, h: bb.h } },
-  ];
-  for (const c of candidates) {
-    // Skip zones that fall mostly outside the room (i.e. they'd stick
-    // through a wall — that's the BACK of the appliance, not the front).
-    const cx = c.rect.x + c.rect.w / 2;
-    const cy = c.rect.y + c.rect.h / 2;
-    const insideRoom =
-      cx >= room.x - 0.01 && cx <= room.x + room.width + 0.01 &&
-      cy >= room.y - 0.01 && cy <= room.y + room.height + 0.01;
-    if (!insideRoom) continue;
-    // Only reject if there's a non-rug obstacle AND the zone is the
-    // SHORTEST side (likely the front, opposite the wall).
+
+  const t = touchedWalls(bb, room);
+  const touched = (["north", "south", "east", "west"] as const).filter((k) => t[k]);
+
+  let zonesToCheck: BBox[];
+  if (touched.length >= 1) {
+    // Back wall = the touched wall along the item's LONGER contact side
+    // (a bed touches the headboard wall with its width). Front = opposite.
+    const contactLen = (k: "north" | "south" | "east" | "west") =>
+      k === "north" || k === "south" ? bb.w : bb.h;
+    let back = touched[0];
+    for (const k of touched) if (contactLen(k) > contactLen(back)) back = k;
+    zonesToCheck = [frontZoneRect(bb, OPPOSITE[back], front)];
+  } else {
+    // Free-standing item: any blocked surrounding zone counts (mesas e
+    // poltronas precisam de acesso ao redor). Zones outside the room are
+    // skipped (they face a wall).
+    zonesToCheck = (["north", "south", "east", "west"] as const)
+      .map((side) => frontZoneRect(bb, side, front))
+      .filter((z) => {
+        const cx = z.x + z.w / 2;
+        const cy = z.y + z.h / 2;
+        return (
+          cx >= room.x - EPS && cx <= room.x + room.width + EPS &&
+          cy >= room.y - EPS && cy <= room.y + room.height + EPS
+        );
+      });
+  }
+
+  for (const zone of zonesToCheck) {
     for (const f of existing) {
       if (f.roomId !== room.id) continue;
       const fp = getPlacement(f.type);
       if (fp.category === "rug" || fp.category === "decor") continue;
-      if (bboxOverlap(c.rect, bboxOf(f), 0.01)) {
+      if (bboxOverlap(zone, bboxOf(f), EPS)) {
         return {
           ok: false,
           reason: `clearance frontal violado (precisa ${front.toFixed(2)}m livres na frente, mas '${f.label}' está bloqueando).`,
@@ -210,7 +239,11 @@ export function validateClearance(
  *  in small rooms (cozinha 3m fundo) that ate half the room and made
  *  the solver mathematically unable to fit kitchen+door+window+three
  *  appliances. Real architects allow furniture pretty close to the
- *  door wall as long as it doesn't fall in the 90° swing radius. */
+ *  door wall as long as it doesn't fall in the 90° swing radius.
+ *
+ *  Uses the REAL quarter-disc of the door (hinge side + swing direction),
+ *  not the old size×size bounding square — the square rejected valid
+ *  spots in the corner the leaf never sweeps. */
 export function validateDoorClearance(
   bb: BBox,
   room: Room,
@@ -218,37 +251,26 @@ export function validateDoorClearance(
 ): PlacementResult {
   for (const d of doors) {
     if (d.roomId !== room.id) continue;
-    const w = d.wall;
     const size = d.size ?? 0.8;
     const pos = d.position ?? 0.5;
-    let cx: number, cy: number;
-    if (w === "north") {
-      cx = room.x + pos * room.width;
-      cy = room.y;
-    } else if (w === "south") {
-      cx = room.x + pos * room.width;
-      cy = room.y + room.height;
-    } else if (w === "west") {
-      cx = room.x;
-      cy = room.y + pos * room.height;
-    } else {
-      cx = room.x + room.width;
-      cy = room.y + pos * room.height;
-    }
-    // Swing arc only: a square of door.size × door.size attached to the
-    // door panel side, INSIDE the room. Approximation of the 90° quarter
-    // circle (we check the bounding square — slightly conservative but
-    // way less aggressive than the old 1.4m approach zone).
-    let zone: BBox;
-    if (w === "north") zone = { x: cx - size / 2, y: cy, w: size, h: size };
-    else if (w === "south") zone = { x: cx - size / 2, y: cy - size, w: size, h: size };
-    else if (w === "west") zone = { x: cx, y: cy - size / 2, w: size, h: size };
-    else zone = { x: cx - size, y: cy - size / 2, w: size, h: size };
-
-    if (bboxOverlap(zone, bb, 0.05)) {
+    const hinge = d.hinge ?? (pos <= 0.5 ? "near" : "far");
+    const swing = d.swing ?? "in";
+    if (swing === "out") continue; // a folha abre para o cômodo vizinho
+    const g = legacySwingGeometry(room, d.wall, pos, size, hinge, swing);
+    // Encolhe o bbox 5 cm para perdoar contatos de borda (mesmo inset do
+    // antigo bboxOverlap(zone, bb, 0.05)).
+    const inset = 0.05;
+    const shrunk: BBox = {
+      x: bb.x + inset,
+      y: bb.y + inset,
+      w: Math.max(0, bb.w - 2 * inset),
+      h: Math.max(0, bb.h - 2 * inset),
+    };
+    if (quarterDiscIntersectsRect(g, shrunk)) {
+      const lado = hinge === "near" ? "início" : "fim";
       return {
         ok: false,
-        reason: `cai dentro do arco da porta da parede ${w} (raio ${size}m). Posicione fora do quadrado de abertura.`,
+        reason: `cai dentro do arco de abertura da porta da parede ${d.wall} (raio ${size.toFixed(2)}m, dobradiça no ${lado} da parede). Posicione fora do quadrante de giro da folha.`,
       };
     }
   }
@@ -270,37 +292,42 @@ export function validateWindowClearance(
 }
 
 /** Validates ergonomic relations declared in metadata (kitchen triangle,
- *  sofa↔TV viewing distance). NON-BLOCKING — relations are advisory: we
- *  report the violation in the result so the agent SEES it, but we let
- *  the placement happen. The visual review pass + the agent's own
- *  judgment decide whether to fix or accept. Hard-blocking the
- *  triangle in a 3.5×3m kitchen leaves no valid layout (geladeira-pia-
- *  fogão sobre duas paredes sempre estoura 2.7m). */
+ *  sofa↔TV viewing distance). NON-BLOCKING — relations are advisory: the
+ *  violation goes into `advisories` so the agent SEES it, but the
+ *  placement happens. Hard-blocking the triangle in a 3.5×3m kitchen
+ *  leaves no valid layout (geladeira-pia-fogão sobre duas paredes sempre
+ *  estoura 2.7m). */
 export function validateRelations(
   bb: BBox,
   room: Room,
   placement: FurniturePlacement,
-  existing: Furniture[]
+  existing: Furniture[],
+  label?: string,
 ): PlacementResult {
   if (!placement.relations || placement.relations.length === 0) return { ok: true };
   const cx = bb.x + bb.w / 2;
   const cy = bb.y + bb.h / 2;
+  const advisories: string[] = [];
   for (const rel of placement.relations) {
     const partners = existing.filter((f) => f.roomId === room.id && f.type === rel.withType);
     if (partners.length === 0) continue;
     let closest: { f: Furniture; d: number } | null = null;
     for (const p of partners) {
-      const px = p.x + p.width / 2;
-      const py = p.y + p.height / 2;
+      const pb = bboxOf(p);
+      const px = pb.x + pb.w / 2;
+      const py = pb.y + pb.h / 2;
       const d = Math.hypot(px - cx, py - cy);
       if (!closest || d < closest.d) closest = { f: p, d };
     }
-    void closest;
-    // We could log/return advisory text here, but the visual review
-    // already flags weird kitchen layouts. Keep this validator silent
-    // for now — no rejection.
+    if (!closest) continue;
+    if (closest.d < rel.minDist || closest.d > rel.maxDist) {
+      const hint = rel.hint ? ` — ${rel.hint}` : "";
+      advisories.push(
+        `Atenção: ${label ?? "o item"} ficou a ${closest.d.toFixed(2)}m de ${closest.f.label} (recomendado ${rel.minDist.toFixed(1)}–${rel.maxDist.toFixed(1)}m${hint}).`
+      );
+    }
   }
-  return { ok: true };
+  return { ok: true, ...(advisories.length > 0 ? { advisories } : {}) };
 }
 
 /** All-in-one entry point. Runs every validator in order; first failure
@@ -326,10 +353,10 @@ export function validatePlacement(
   const r4 = validateClearance(bb, room, placement, existing);
   if (!r4.ok) return r4;
 
-  const r5 = validateRelations(bb, room, placement, existing);
+  const r5 = validateRelations(bb, room, placement, existing, proposed.label);
   if (!r5.ok) return r5;
 
-  return { ok: true };
+  return { ok: true, ...(r5.advisories ? { advisories: r5.advisories } : {}) };
 }
 
 /** Build a one-line summary of the room's free space + occupied corners
