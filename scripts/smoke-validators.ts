@@ -4,6 +4,8 @@
 import { applyTool, emptyPlan } from "../lib/floor-plan-engine";
 import { validatePlan } from "../lib/agent/validate-plan";
 import { usableRect, worldAABB, openingInterval, openingsOverlap1D } from "../lib/plan-geometry";
+import { legacySwingGeometry } from "../lib/scene/door-swing";
+import { renderPlanSvg } from "../lib/canvas/render-png";
 import type { FloorPlan, Furniture, Room } from "../lib/types";
 
 let failures = 0;
@@ -339,6 +341,32 @@ if (sofaF) {
   const i19b = validatePlan(p19);
   check("em cima da parede: FURNITURE_ON_WALL aparece", i19b.some((i) => i.code === "FURNITURE_ON_WALL"),
     i19b.map((i) => i.code).join(", "));
+}
+
+// ---------- Cenário 20: renderer desenha o giro REAL (hinge/swing) ----------
+console.log("\n[20] renderPlanSvg: folha da porta ancora na dobradiça real (hinge:far)");
+{
+  const p20 = emptyPlan();
+  applyTool(p20, "create_room", { name: "Sala", width: 4.0, height: 4.0, x: 0, y: 0 });
+  const d20 = applyTool(p20, "add_door", { room_name: "Sala", wall: "north", position: 0.7, size: 0.9 });
+  check("porta criada", d20.ok, d20.message);
+  const door = p20.doors[0];
+  // Força o caso que o renderer antigo errava: dobradiça no lado "far".
+  door.hinge = "far";
+  door.swing = "in";
+  const g = legacySwingGeometry(p20.rooms[0], door.wall, door.position, door.size, "far", "in");
+  const svg = renderPlanSvg(p20);
+  const leaf = /<line class="door-leaf" x1="([-\d.]+)" y1="([-\d.]+)"/.exec(svg);
+  check("linha da folha presente", leaf !== null);
+  if (leaf) {
+    const hx = parseFloat(leaf[1]);
+    const hy = parseFloat(leaf[2]);
+    check(
+      "folha parte da dobradiça de legacySwingGeometry",
+      Math.abs(hx - g.hinge.x) < 1e-6 && Math.abs(hy - g.hinge.y) < 1e-6,
+      `render=(${hx},${hy}) esperado=(${g.hinge.x},${g.hinge.y})`
+    );
+  }
 }
 
 console.log(`\n${failures === 0 ? "TODOS OS CENÁRIOS PASSARAM" : `${failures} FALHA(S)`}`);
