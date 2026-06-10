@@ -36,7 +36,10 @@ const VISUAL_TRIGGER_TOOLS: ReadonlySet<string> = new Set([
   "update_millwork_module",
 ]);
 
-const MAX_VISUAL_REVIEWS = 2;
+// Com auto-render a cada iteração, a revisão final é redundância barata —
+// UMA passada basta (cada turno extra de imagem custa dezenas de segundos
+// dentro do teto do maxDuration).
+const MAX_VISUAL_REVIEWS = 1;
 
 /** Orçamento GLOBAL de imagens mid-flight por request (auto-render +
  *  preview_plan; a revisão final da Fase D fica FORA do teto). O agente
@@ -71,8 +74,10 @@ const tools = legacyTools as Anthropic.Tool[];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// xhigh effort + up to 8 tool iterations can legitimately run for minutes.
-export const maxDuration = 300;
+// xhigh effort + composição iterativa rodam por VÁRIOS minutos — 300s
+// cortava o studio inteiro durante o primeiro pensamento (plano Pro
+// permite 800s com Fluid Compute).
+export const maxDuration = 800;
 
 const MODEL = "claude-fable-5";
 const MAX_TOKENS = 64000;

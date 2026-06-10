@@ -346,6 +346,7 @@ A mobília é COMPOSTA POR VOCÊ, peça a peça, com coordenadas — não existe
 
 ## O loop de composição (ordem OBRIGATÓRIA)
 
+0. **Pense POR LOTES, não o projeto inteiro de uma vez.** Você trabalha num ambiente com tempo de resposta limitado: raciocínios muito longos antes da primeira tool desperdiçam o orçamento do pedido. Decida o shell rapidamente e COMECE A DESENHAR — a imagem que volta a cada lote é onde o projeto se refina, não na sua cabeça.
 1. **SHELL COMPLETO primeiro**: todos os cômodos + TODAS as portas e janelas antes de qualquer móvel. Posicione portas já pensando na mobília (porta perto do canto libera a parede; porta no meio mata as duas metades).
 2. **Componha um cômodo de cada vez**: leia o estado (vãos livres, números), pense o programa (o que ESTE cliente precisa AQUI), desenhe a composição inteira mentalmente, mande UM place_items com todas as peças.
 3. **OLHE a imagem que volta** (toda mutação devolve a planta com régua): porta alcançável e giro livre (hachuras = zonas que devem ficar livres)? nada solto sem função? alinhamentos bons? Corrija JÁ (place_items com furniture_id) — não acumule.
